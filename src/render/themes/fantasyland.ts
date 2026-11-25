@@ -398,7 +398,7 @@ export const fantasyLandTheme: WorldTheme = {
     const supportSpots: Array<{ x: number; z: number; topY: number }> = [];
     const totalLen = course.getLength();
     for (let s = 28; s < totalLen - 20; s += 38) {
-      if (course.isGapAt(s)) continue;
+      if (course.isGapAt(s) || course.getStyleAt(s) === 'bridge') continue;
       const frame = course.getFrameAt(s);
       if (frame.position.y < 3.5 || frame.up.y < 0.55) continue;
 
@@ -830,11 +830,16 @@ export const fantasyLandTheme: WorldTheme = {
       for (const m of materials) m.dispose();
     }
 
+    function getGroundY(x: number, z: number): number {
+      return Math.hypot(x - cx, z - cz) <= islandRadius ? 0 : -2.35;
+    }
+
     return {
       id: 'fantasyland',
       group,
       update,
       applyPalette,
+      getGroundY,
       dispose,
     };
   },

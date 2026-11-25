@@ -30,6 +30,7 @@ export interface SceneContext {
   updateSunShadowTarget: (focusPos: THREE.Vector3) => void;
   setQuality: (level: QualityLevel) => void;
   applyPalette: (name: VisualPresetName) => void;
+  getGroundY: (x: number, z: number) => number;
   getViewportSize: () => { width: number; height: number };
   dispose: () => void;
 }
@@ -828,6 +829,10 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     activeTheme?.update(cameraPos, dt);
   }
 
+  function getGroundY(x: number, z: number): number {
+    return activeTheme?.getGroundY ? activeTheme.getGroundY(x, z) : 0;
+  }
+
   function setRoomBounds(bounds: CourseBounds): void {
     const dim = computeRoomDimensions(bounds);
     rebuildRoomShell(dim);
@@ -1018,6 +1023,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     updateSunShadowTarget,
     setQuality,
     applyPalette,
+    getGroundY,
     getViewportSize,
     dispose,
   };

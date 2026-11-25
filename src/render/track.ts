@@ -406,6 +406,27 @@ function splitSolidSpans(samples: readonly TrackFrame[]): TrackFrame[][] {
   return spans;
 }
 
+function splitRailSpans(course: Course, solidSpans: readonly TrackFrame[][]): TrackFrame[][] {
+  const railSpans: TrackFrame[][] = [];
+  for (const span of solidSpans) {
+    let current: TrackFrame[] = [];
+    for (const sample of span) {
+      if (course.getStyleAt(sample.s) === 'bridge') {
+        if (current.length >= 2) {
+          railSpans.push(current);
+        }
+        current = [];
+      } else {
+        current.push(sample);
+      }
+    }
+    if (current.length >= 2) {
+      railSpans.push(current);
+    }
+  }
+  return railSpans;
+}
+
 function sliceSpanFramesForRange(
   course: Course,
   spanFrames: readonly TrackFrame[],
@@ -888,6 +909,7 @@ export function buildTrackMesh(
     : cfg.railTileMeters;
 
   const spans = splitSolidSpans(course.getSamples());
+  const railSpans = splitRailSpans(course, spans);
   const chunks: CourseChunkRange[] = course.getChunks(CONFIG.render.trackChunkLength);
   const group = new THREE.Group();
   group.name = 'TrackGroup';
@@ -975,10 +997,10 @@ export function buildTrackMesh(
   );
   const endDomeGeom = new THREE.SphereGeometry(cfg.railEndPostRadius, 14, 10);
 
-  // Collect global rail post & end-post S coordinates once, then assign to chunks
+  // Collect global rail post & end-post S coordinates once (skipping bridge segments), then assign to chunks
   const allPostS: number[] = [];
   const allEndPostS: number[] = [];
-  for (const span of spans) {
+  for (const span of railSpans) {
     const spanStart = span[0].s;
     const spanEnd = span[span.length - 1].s;
     if (!isClosed || spanStart > 1e-4) {
@@ -1016,7 +1038,7 @@ export function buildTrackMesh(
     const inChunk = (s: number): boolean =>
       s >= chunk.startS && (isLastChunk ? s <= chunk.endS + 1e-4 : s < chunk.endS);
 
-    // 1 & 2. Track deck + guardrails sliced cleanly across chunk boundaries without inner bevels/gaps
+    // 1. Track deck sliced cleanly across chunk boundaries without inner bevels/gaps
     for (const spanFrames of spans) {
       const spanStart = spanFrames[0].s;
       const spanEnd = spanFrames[spanFrames.length - 1].s;
@@ -1054,7 +1076,24 @@ export function buildTrackMesh(
       trackMesh.receiveShadow = true;
       trackMesh.frustumCulled = true;
       chunkGroup.add(trackMesh);
+    }
 
+    // 2. Solid blue guardrails on non-bridge spans
+    for (const railSpanFrames of railSpans) {
+      const spanStart = railSpanFrames[0].s;
+      const spanEnd = railSpanFrames[railSpanFrames.length - 1].s;
+      const subStart = Math.max(spanStart, chunk.startS);
+      const subEnd = Math.min(spanEnd, chunk.endS);
+      if (subEnd - subStart < 0.05) {
+        continue;
+      }
+
+      const chunkFrames = sliceSpanFramesForRange(course, railSpanFrames, subStart, subEnd);
+      const closedSeamStart = isClosed && subStart <= 1e-4;
+      const closedSeamEnd = isClosed && subEnd >= totalLen - 1e-4;
+      const startBevel =
+        closedSeamStart || subStart > spanStart + 1e-4 ? 0 : cfg.endCapBevelLength;
+      const endBevel = closedSeamEnd || subEnd < spanEnd - 1e-4 ? 0 : cfg.endCapBevelLength;
       const railStartBevel = startBevel > 0 ? startBevel * 0.75 : 0;
       const railEndBevel = endBevel > 0 ? endBevel * 0.75 : 0;
 

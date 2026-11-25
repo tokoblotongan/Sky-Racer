@@ -32,6 +32,7 @@ import {
 } from './core/state';
 import { createKeyboardControls } from './input/controls';
 import { createTouchControls } from './input/touch';
+import { buildBridgeMesh, type BridgeVisual } from './render/bridge';
 import { buildCarMesh, type CarVisual } from './render/car';
 import type { CarDesignId } from './render/carDesigns';
 import { ChaseCamera } from './render/chaseCamera';
@@ -41,6 +42,8 @@ import { createPostFx } from './render/postfx';
 import { createQualityManager, type QualityLevel } from './render/quality';
 import { createSceneContext } from './render/scene';
 import { buildTrackMesh, type TrackVisual } from './render/track';
+import { buildTrackAccents, type TrackAccentsVisual } from './render/trackAccents';
+import { buildTunnelMesh, type TunnelVisual } from './render/tunnel';
 import {
   clearRecords,
   exportSummaryText,
@@ -57,6 +60,7 @@ import {
   hideLapPopup,
   hideLoadingOverlay,
   hideSplitPopup,
+  hideZoneToast,
   setHudProgressCheckpoints,
   showAirtimePopup,
   showCountdownOverlay,
@@ -64,6 +68,7 @@ import {
   showLapPopup,
   showLoadingOverlay,
   showSplitPopup,
+  showZoneToast,
   updateHud,
   updateTitleScreen,
   type HudViewModel,
@@ -324,6 +329,25 @@ function bootstrap(): void {
   const initialQuality = qualityManager.getLevel();
   sceneCtx.setQuality(initialQuality);
   sceneCtx.setTheme(course, initialQuality);
+
+  let bridgeVisual: BridgeVisual = buildBridgeMesh(
+    course,
+    (x, z) => sceneCtx.getGroundY(x, z),
+    sceneCtx.maxAnisotropy,
+    activePreset,
+  );
+  sceneCtx.scene.add(bridgeVisual.group);
+
+  let tunnelVisual: TunnelVisual = buildTunnelMesh(course, sceneCtx.maxAnisotropy, activePreset);
+  sceneCtx.scene.add(tunnelVisual.group);
+
+  let trackAccentsVisual: TrackAccentsVisual = buildTrackAccents(
+    course,
+    sceneCtx.maxAnisotropy,
+    activePreset,
+  );
+  sceneCtx.scene.add(trackAccentsVisual.group);
+
   particles = createParticles(sceneCtx.scene, initialQuality);
   postfx = createPostFx(
     sceneCtx.renderer,
@@ -350,6 +374,9 @@ function bootstrap(): void {
     activePreset = name;
     sceneCtx.applyPalette(name);
     trackVisual.applyPalette(name);
+    bridgeVisual.applyPalette(name);
+    tunnelVisual.applyPalette(name);
+    trackAccentsVisual.applyPalette(name);
     carVisual.applyPalette(name);
     postfx.applyPalette(name);
     syncHudPalette(name);
@@ -552,6 +579,16 @@ function bootstrap(): void {
     hideLoadingOverlay(hud);
   }
 
+  let zoneStarts = course.getZoneStarts();
+  const enteredZonesInLap = new Set<number>();
+  let lastZoneLap = raceState.currentLap;
+
+  function resetZoneTracking(): void {
+    enteredZonesInLap.clear();
+    lastZoneLap = raceState.currentLap;
+    hideZoneToast(hud);
+  }
+
   function loadCourse(id: string): void {
     clearPendingCourseSwitch();
     const nextDef = getCourse(id);
@@ -561,11 +598,19 @@ function bootstrap(): void {
 
     sceneCtx.scene.remove(trackVisual.group);
     trackVisual.dispose();
+    sceneCtx.scene.remove(bridgeVisual.group);
+    bridgeVisual.dispose();
+    sceneCtx.scene.remove(tunnelVisual.group);
+    tunnelVisual.dispose();
+    sceneCtx.scene.remove(trackAccentsVisual.group);
+    trackAccentsVisual.dispose();
     sceneCtx.scene.remove(gates.group);
     gates.dispose();
 
     course = new Course(buildCourseConfigFromDefinition(activeCourseDef));
     raceState = createRaceState(course);
+    zoneStarts = course.getZoneStarts();
+    resetZoneTracking();
     wrongWayDetector.reset();
     wrongWayActive = false;
 
@@ -583,6 +628,20 @@ function bootstrap(): void {
     trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy);
     trackVisual.applyPalette(activePreset);
     sceneCtx.scene.add(trackVisual.group);
+
+    bridgeVisual = buildBridgeMesh(
+      course,
+      (x, z) => sceneCtx.getGroundY(x, z),
+      sceneCtx.maxAnisotropy,
+      activePreset,
+    );
+    sceneCtx.scene.add(bridgeVisual.group);
+
+    tunnelVisual = buildTunnelMesh(course, sceneCtx.maxAnisotropy, activePreset);
+    sceneCtx.scene.add(tunnelVisual.group);
+
+    trackAccentsVisual = buildTrackAccents(course, sceneCtx.maxAnisotropy, activePreset);
+    sceneCtx.scene.add(trackAccentsVisual.group);
 
     gates = buildGates(course, sceneCtx.maxAnisotropy);
     sceneCtx.scene.add(gates.group);
@@ -729,6 +788,7 @@ function bootstrap(): void {
       } else if (ev.type === 'finish') {
         lastFinishData = ev;
         lastFinishRecords = getRecords(course.getId(), course.getMedals());
+        hideZoneToast(hud);
         chaseCamera.setMode('finish');
       } else if (ev.type === 'resultReady') {
         if (lastFinishData) {
@@ -755,6 +815,7 @@ function bootstrap(): void {
       if (selectedCourseId !== loadedCourseId) {
         loadCourse(selectedCourseId);
       }
+      resetZoneTracking();
       sound.handleEvents([{ type: 'uiConfirm' }]);
       particles.reset();
       postfx.setSpeedIntensity(0);
@@ -776,6 +837,7 @@ function bootstrap(): void {
 
     sound.reset();
     const events = restartRace(raceState);
+    resetZoneTracking();
     chaseCamera.setMode('chase');
 
     if (CONFIG.camera.snapOnReset && !CONFIG.camera.debugOrbitMode) {
@@ -808,6 +870,7 @@ function bootstrap(): void {
 
     sound.reset();
     const events = returnToTitle(raceState, course);
+    resetZoneTracking();
     chaseCamera.setMode('title');
 
     if (!CONFIG.camera.debugOrbitMode) {
@@ -841,6 +904,7 @@ function bootstrap(): void {
     wrongWayDetector.reset();
     wrongWayActive = false;
     hideAirtimePopup(hud);
+    hideZoneToast(hud);
     sound.handleEvents([{ type: 'respawn' }]);
 
     if (CONFIG.camera.snapOnReset && !CONFIG.camera.debugOrbitMode) {
@@ -961,6 +1025,23 @@ function bootstrap(): void {
       step,
     );
 
+    const activeZoneS = currState.mode === 'grounded' ? currState.s : currState.sApprox;
+    if (raceState.phase === 'RACING' && zoneStarts.length > 0 && !wrongWayActive) {
+      if (raceState.currentLap !== lastZoneLap) {
+        enteredZonesInLap.clear();
+        lastZoneLap = raceState.currentLap;
+      }
+      const wrappedZoneS = isClosedCourse ? course.wrapDistance(activeZoneS) : activeZoneS;
+      for (let zi = 0; zi < zoneStarts.length; zi++) {
+        if (enteredZonesInLap.has(zi)) continue;
+        const zone = zoneStarts[zi];
+        if (wrappedZoneS >= zone.s && wrappedZoneS <= zone.s + 24) {
+          enteredZonesInLap.add(zi);
+          showZoneToast(hud, zone.name);
+        }
+      }
+    }
+
     if (CONFIG.camera.debugOrbitMode) {
       prevOrbitAngle = currOrbitAngle;
       currOrbitAngle += CONFIG.camera.orbitSpeed * step;
@@ -969,6 +1050,8 @@ function bootstrap(): void {
 
   function render(alpha: number, realDt: number): void {
     trackVisual.update(realDt);
+    tunnelVisual.update(realDt);
+    trackAccentsVisual.update(realDt);
 
     interpolateCarState(prevState, currState, alpha, renderState);
     getCarPose(renderState, course, renderPose);
@@ -1160,6 +1243,9 @@ function bootstrap(): void {
     particles.dispose();
     postfx.dispose();
     trackVisual.dispose();
+    bridgeVisual.dispose();
+    tunnelVisual.dispose();
+    trackAccentsVisual.dispose();
     gates.dispose();
     carVisual.dispose();
     sceneCtx.dispose();

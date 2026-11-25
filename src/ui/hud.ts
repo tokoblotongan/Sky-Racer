@@ -87,6 +87,7 @@ export interface HudHandle {
   splitSlotEl: HTMLElement;
   airtimeSlotEl: HTMLElement;
   lapPopupSlotEl: HTMLElement;
+  zoneToastEl: HTMLElement;
   wrongWayEl: HTMLElement;
   loadingOverlayEl: HTMLElement;
   titleScreenEl: HTMLElement;
@@ -120,6 +121,7 @@ export interface HudHandle {
   airtimeTimerId: number | null;
   splitTimerId: number | null;
   lapPopupTimerId: number | null;
+  zoneToastTimerId: number | null;
   countdownHideTimerId: number | null;
   copyResetTimerId: number | null;
   clearHoldRafId: number;
@@ -266,6 +268,7 @@ export function createHud(
     <div class="sr-hud-panel sr-split-slot sr-hud-hidden" data-slot="split"></div>
     <div class="sr-hud-panel sr-airtime-slot sr-hud-hidden" data-slot="airtime"></div>
     <div class="sr-hud-panel sr-lap-popup sr-hud-hidden" data-slot="lap-popup"></div>
+    <div class="sr-hud-panel sr-zone-toast sr-hud-hidden" data-slot="zone-toast"></div>
     <div class="sr-hud-panel sr-wrong-way sr-hud-hidden" role="alert" aria-live="assertive">
       <svg class="sr-wrong-way-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 3L2 20h20L12 3z" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linejoin="round" />
@@ -594,6 +597,7 @@ export function createHud(
     splitSlotEl: root.querySelector('[data-slot="split"]') as HTMLElement,
     airtimeSlotEl: root.querySelector('[data-slot="airtime"]') as HTMLElement,
     lapPopupSlotEl: root.querySelector('[data-slot="lap-popup"]') as HTMLElement,
+    zoneToastEl: root.querySelector('[data-slot="zone-toast"]') as HTMLElement,
     wrongWayEl: root.querySelector('.sr-wrong-way') as HTMLElement,
     loadingOverlayEl: root.querySelector('.sr-loading-overlay') as HTMLElement,
     titleScreenEl: root.querySelector('.sr-title-screen') as HTMLElement,
@@ -627,6 +631,7 @@ export function createHud(
     airtimeTimerId: null,
     splitTimerId: null,
     lapPopupTimerId: null,
+    zoneToastTimerId: null,
     countdownHideTimerId: null,
     copyResetTimerId: null,
     clearHoldRafId: 0,
@@ -871,6 +876,33 @@ export function hideLapPopup(hud: HudHandle): void {
   }
   hud.lapPopupSlotEl.classList.add('sr-hud-hidden');
   hud.lapPopupSlotEl.classList.remove('sr-lap-popup-active');
+}
+
+export function showZoneToast(hud: HudHandle, title: string): void {
+  if (hud.zoneToastTimerId !== null) {
+    window.clearTimeout(hud.zoneToastTimerId);
+    hud.zoneToastTimerId = null;
+  }
+
+  hud.zoneToastEl.textContent = title;
+  hud.zoneToastEl.classList.remove('sr-hud-hidden', 'sr-zone-toast-active');
+  void hud.zoneToastEl.offsetWidth;
+  hud.zoneToastEl.classList.add('sr-zone-toast-active');
+
+  hud.zoneToastTimerId = window.setTimeout(() => {
+    hud.zoneToastEl.classList.add('sr-hud-hidden');
+    hud.zoneToastEl.classList.remove('sr-zone-toast-active');
+    hud.zoneToastTimerId = null;
+  }, CONFIG.styles.zoneToast.durationMs);
+}
+
+export function hideZoneToast(hud: HudHandle): void {
+  if (hud.zoneToastTimerId !== null) {
+    window.clearTimeout(hud.zoneToastTimerId);
+    hud.zoneToastTimerId = null;
+  }
+  hud.zoneToastEl.classList.add('sr-hud-hidden');
+  hud.zoneToastEl.classList.remove('sr-zone-toast-active');
 }
 
 export function showCountdownOverlay(hud: HudHandle, label: string, isGo: boolean): void {
@@ -1205,6 +1237,7 @@ export function disposeHud(hud: HudHandle): void {
   hideAirtimePopup(hud);
   hideSplitPopup(hud);
   hideLapPopup(hud);
+  hideZoneToast(hud);
   hideCountdownOverlay(hud);
   hideFinishScreen(hud);
   hud.disposeEvents();

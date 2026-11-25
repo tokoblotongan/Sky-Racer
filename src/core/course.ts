@@ -3,10 +3,22 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config';
 import { getCourse, type CourseDefinition } from '../courses';
-import type { CourseMedals, CourseSegmentConfig, ThemeId } from '../courses/types';
+import type { CourseMedals, CourseSegmentConfig, ThemeId, TrackStyle } from '../courses/types';
 import { solveClosure, type ClosureReport } from './courseClosure';
 
 export type CourseSegmentType = CourseSegmentConfig['type'];
+
+export interface StyleRun {
+  style: TrackStyle;
+  startS: number;
+  endS: number;
+  name?: string;
+}
+
+export interface ZoneStart {
+  name: string;
+  s: number;
+}
 
 export interface GapRange {
   startS: number;
@@ -50,6 +62,8 @@ export interface CourseSegmentMeta {
   startS: number;
   endS: number;
   length: number;
+  style: TrackStyle;
+  name?: string;
   config: CourseSegmentConfig;
 }
 
@@ -353,6 +367,8 @@ export class Course {
   private readonly closureReport: ClosureReport | null;
   private cachedSamples: TrackFrame[] | null = null;
   private readonly segmentMeta: CourseSegmentMeta[];
+  private readonly styleRuns: StyleRun[];
+  private readonly zoneStarts: ZoneStart[];
   private readonly totalLength: number;
   private readonly bounds: CourseBounds;
   private readonly gapRanges: GapRange[];
@@ -726,6 +742,8 @@ export class Course {
         startS: segStartS,
         endS: turtle.s,
         length: turtle.s - segStartS,
+        style: seg.style ?? 'road',
+        name: seg.name,
         config: seg,
       });
     }
@@ -746,6 +764,40 @@ export class Course {
     this.segmentMeta = segmentMeta;
     this.gapRanges = gapRanges;
     this.totalLength = this.sTable[count - 1];
+
+    const styleRuns: StyleRun[] = [];
+    for (const meta of segmentMeta) {
+      const prev = styleRuns[styleRuns.length - 1];
+      if (prev && prev.style === meta.style && Math.abs(prev.endS - meta.startS) < 1e-3) {
+        prev.endS = meta.endS;
+        if (!prev.name && meta.name) {
+          prev.name = meta.name;
+        }
+      } else {
+        styleRuns.push({
+          style: meta.style,
+          startS: meta.startS,
+          endS: meta.endS,
+          name: meta.name,
+        });
+      }
+    }
+    this.styleRuns = styleRuns;
+
+    const zoneStarts: ZoneStart[] = [];
+    let lastZoneName: string | undefined;
+    for (const meta of segmentMeta) {
+      const trimmed = meta.name?.trim();
+      if (trimmed) {
+        if (trimmed !== lastZoneName) {
+          zoneStarts.push({ name: trimmed, s: meta.startS });
+        }
+        lastZoneName = trimmed;
+      } else {
+        lastZoneName = undefined;
+      }
+    }
+    this.zoneStarts = zoneStarts;
 
     // Closed-circuit seam closure blend over the last blendLength meters + exact endpoint snap
     if (this.closed && count >= 3) {
@@ -1478,5 +1530,23 @@ export class Course {
           type: SEGMENT_TYPE_LIST[this.segTypeTable[idx1]],
           progress: this.segProgressTable[idx1],
         };
+  }
+
+  getStyleAt(s: number): TrackStyle {
+    const seg = this.getSegmentAt(s);
+    return this.segmentMeta[seg.index]?.style ?? 'road';
+  }
+
+  getStyleRuns(): readonly StyleRun[] {
+    return this.styleRuns;
+  }
+
+  getSegmentNameAt(s: number): string | undefined {
+    const seg = this.getSegmentAt(s);
+    return this.segmentMeta[seg.index]?.name;
+  }
+
+  getZoneStarts(): readonly ZoneStart[] {
+    return this.zoneStarts;
   }
 }

@@ -1,7 +1,7 @@
 {
   "courseId": "sky-circuit",
   "courseName": "Sky Circuit",
-  "buildMs": 49.6,
+  "buildMs": 76.44,
   "recommendedMedals": {
     "gold": 28.86,
     "silver": 34.1,
@@ -17,6 +17,14 @@
   "lapTimes": [],
   "bestLap": null,
   "minNonAdjacentClearanceM": 17.84,
+  "minStyleClearanceM": null,
+  "tunnelClearance": {
+    "hasTunnel": false,
+    "cameraHeightM": 3.35,
+    "interiorHeightM": 11.5,
+    "requiredHeightM": 9.35,
+    "ok": true
+  },
   "closure": null,
   "checkpointTimes": [
     2.217,
@@ -35,6 +43,8 @@
       "startS": 232.81,
       "endS": 311.35,
       "radius": 12.5,
+      "lateralOffset": 9.5,
+      "approachLengthM": 48,
       "entrySpeed": 51.8,
       "topSpeed": 43.74,
       "minApexSpeedRequired": 18.71,
@@ -45,6 +55,8 @@
       "startS": 937.24,
       "endS": 1003.21,
       "radius": 10.5,
+      "lateralOffset": -9.5,
+      "approachLengthM": 44,
       "entrySpeed": 51.8,
       "topSpeed": 44.65,
       "minApexSpeedRequired": 17.15,
@@ -58,6 +70,7 @@
       "endS": 463.34,
       "gapLength": 16,
       "takeoffSpeed": 51.12,
+      "minSpeedRequired": 31.59,
       "landed": true,
       "airtime": 0.933
     },
@@ -67,10 +80,12 @@
       "endS": 1059.21,
       "gapLength": 18,
       "takeoffSpeed": 56.31,
+      "minSpeedRequired": 33.53,
       "landed": true,
       "airtime": 1
     }
   ],
+  "zones": [],
   "railHits": 0,
   "stuckEvents": 0,
   "falls": 0,

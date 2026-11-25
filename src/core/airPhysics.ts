@@ -46,10 +46,11 @@ export function startAir(
 ): void {
   const cfg = CONFIG.physics;
   const gap = course.getGapRangeAt(state.s);
+  const lapLen = course.getLength();
+  const lapOffset =
+    course.isClosed() && lapLen > 1e-6 ? Math.floor(state.s / lapLen) * lapLen : 0;
   const takeoffS = gap
-    ? state.vForward >= 0
-      ? gap.startS
-      : gap.endS
+    ? lapOffset + (state.vForward >= 0 ? gap.startS : gap.endS)
     : state.s;
 
   course.getFrameAt(takeoffS, _frame);
@@ -78,8 +79,8 @@ export function startAir(
   state.airtime = 0;
   state.fallTimer = 0;
   state.sApprox = state.s;
-  state.lastGapEndS = gap ? gap.endS : state.s;
-  const rawSafeS = (gap ? gap.startS : takeoffS) - cfg.respawnBackoff;
+  state.lastGapEndS = gap ? lapOffset + gap.endS : state.s;
+  const rawSafeS = (gap ? lapOffset + gap.startS : takeoffS) - cfg.respawnBackoff;
   state.lastSafeS = course.isClosed() ? rawSafeS : Math.max(CONFIG.car.startS, rawSafeS);
   state.normalForce = 0;
 

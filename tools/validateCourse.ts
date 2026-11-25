@@ -34,13 +34,18 @@ function main(): void {
   const silver = Number((report.referenceTime * 1.3).toFixed(2));
   const bronze = Number((report.referenceTime * 1.6).toFixed(2));
 
-  const loopsOk = report.loops.every((l) => l.completed);
+  const loopsOk =
+    report.loops.every((l) => l.completed && l.topSpeed > l.minApexSpeedRequired) &&
+    !report.errors.some((e) => e.includes('Loop') || e.includes('loop'));
   const jumpsOk = report.jumps.every((j) => j.landed);
   const cpCount = course.getCheckpoints().length;
   const boostCount = course.getBoostPads().length;
   const geomOk = !report.errors.some(
     (e) => e.includes('Persilangan') || e.includes('bertabrakan') || e.includes('menutup'),
   );
+  const styleOk =
+    report.tunnelClearance.ok &&
+    !report.errors.some((e) => e.includes('jembatan/terowongan') || e.includes('terowongan'));
   const cpTargetOk = report.closed
     ? cpCount >= 4 && cpCount <= 12
     : cpCount >= 8 && cpCount <= 11;
@@ -71,12 +76,17 @@ function main(): void {
 
   rows.push(
     [
+      'Jembatan & Terowongan',
+      styleOk ? 'OK' : 'FAIL',
+      `headroom=${report.tunnelClearance.hasTunnel ? `${report.tunnelClearance.interiorHeightM.toFixed(1)}m (min ${report.tunnelClearance.requiredHeightM.toFixed(1)}m)` : 'n/a'}, minStyleDist=${report.minStyleClearanceM !== null ? `${report.minStyleClearanceM.toFixed(1)}m` : 'n/a'}`,
+    ],
+    [
       'Loop',
       loopsOk ? 'OK' : 'FAIL',
       report.loops
         .map(
           (l) =>
-            `#${l.segmentIndex} (masuk ${l.entrySpeed.toFixed(1)}, puncak ${l.topSpeed.toFixed(1)} m/s)`,
+            `#${l.segmentIndex} (r=${l.radius}m, masuk=${l.entrySpeed.toFixed(1)}, puncak=${l.topSpeed.toFixed(1)}>${l.minApexSpeedRequired.toFixed(1)} m/s)`,
         )
         .join('; ') || 'tidak ada',
     ],
@@ -86,7 +96,7 @@ function main(): void {
       report.jumps
         .map(
           (j) =>
-            `#${j.segmentIndex} (${j.gapLength.toFixed(0)}m, v=${j.takeoffSpeed.toFixed(1)} m/s, air=${j.airtime.toFixed(2)}s)`,
+            `#${j.segmentIndex} (${j.gapLength.toFixed(0)}m, v=${j.takeoffSpeed.toFixed(1)}/${j.minSpeedRequired.toFixed(1)} m/s, air=${j.airtime.toFixed(2)}s)`,
         )
         .join('; ') || 'tidak ada',
     ],
@@ -106,11 +116,11 @@ function main(): void {
   console.log(
     `=== VALIDASI LINTASAN: ${courseDef.name} (${courseDef.id}) [${report.closed ? `TERTUTUP ${report.laps} LAP` : 'SATU ARAH'}] ===`,
   );
-  console.log('--------------------------------------------------------------------------');
+  console.log('----------------------------------------------------------------------------------');
   for (const [check, status, detail] of rows) {
-    console.log(`${check.padEnd(20)} | ${status.padEnd(4)} | ${detail}`);
+    console.log(`${check.padEnd(22)} | ${status.padEnd(4)} | ${detail}`);
   }
-  console.log('--------------------------------------------------------------------------');
+  console.log('----------------------------------------------------------------------------------');
   console.log(
     `Reference Time : ${report.referenceTime.toFixed(2)} s | Reference Lap: ${report.referenceLapTime.toFixed(2)} s | Saran Medali -> Emas: ${gold.toFixed(2)} s (1.10x), Perak: ${silver.toFixed(2)} s (1.30x), Perunggu: ${bronze.toFixed(2)} s (1.60x)`,
   );
@@ -118,6 +128,16 @@ function main(): void {
     console.log(
       `Waktu Per Lap  : ${report.lapTimes.map((t, idx) => `Lap ${idx + 1}: ${t.toFixed(2)}s`).join(' | ')}${report.bestLap !== null ? ` (Best: ${report.bestLap.toFixed(2)}s)` : ''}`,
     );
+  }
+
+  if (report.zones.length > 0) {
+    console.log('');
+    console.log('Ringkasan Zona:');
+    for (const z of report.zones) {
+      console.log(
+        `  - ${z.name.padEnd(20)} [${z.style.padEnd(6)}] | s=${z.startS.toFixed(0).padStart(4)}-${z.endS.toFixed(0).padStart(4)}m (${z.lengthM.toFixed(0).padStart(3)}m) | t=${z.passTimeSec.toFixed(2)}s | masuk=${z.entrySpeedMs.toFixed(1)} m/s -> keluar=${z.exitSpeedMs.toFixed(1)} m/s`,
+      );
+    }
   }
 
   if (report.warnings.length > 0) {

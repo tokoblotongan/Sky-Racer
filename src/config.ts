@@ -286,6 +286,39 @@ export const CONFIG = {
   autopilot: {
     kLateral: 0.35,
     kYaw: 1.55,
+    padLookahead: 60,
+  },
+  loopRules: {
+    minRadius: 20,
+    offsetMargin: 6,
+    minApproachLength: 100,
+  },
+  styles: {
+    bridge: {
+      railHeight: 0.72,
+      postSpacing: 4,
+      cableCount: 3,
+      pylonSpacing: 28,
+      archHeight: 10,
+    },
+    tunnel: {
+      radius: 11.5,
+      interiorHeight: 11.5,
+      ribSpacing: 8,
+      lightSpeed: 3.2,
+      portalWidth: 24,
+      wallThickness: 0.85,
+    },
+    accents: {
+      pulseSpeed: 2.5,
+      hazardStripe: true,
+      loopStripWidth: 0.42,
+      loopStripLift: 0.018,
+      emissiveIntensity: 2.1,
+    },
+    zoneToast: {
+      durationMs: 1800,
+    },
   },
   sim: {
     fixedStep: 1 / 60,

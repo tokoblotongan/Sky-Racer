@@ -1,5 +1,7 @@
 // src/courses/types.ts
 
+export type TrackStyle = 'road' | 'bridge' | 'tunnel';
+
 export interface BoostPadSegmentConfig {
   readonly at: number; // pecahan 0..1 di dalam segmen
   readonly lateral: number; // offset dari tengah lintasan (meter)
@@ -14,6 +16,8 @@ export type CourseSegmentConfig =
       readonly checkpoint?: boolean;
       readonly boostPads?: readonly BoostPadSegmentConfig[];
       readonly adjust?: boolean;
+      readonly name?: string;
+      readonly style?: TrackStyle;
     }
   | {
       readonly type: 'curve';
@@ -24,6 +28,8 @@ export type CourseSegmentConfig =
       readonly checkpoint?: boolean;
       readonly boostPads?: readonly BoostPadSegmentConfig[];
       readonly adjust?: boolean;
+      readonly name?: string;
+      readonly style?: TrackStyle;
     }
   | {
       readonly type: 'slope';
@@ -33,6 +39,8 @@ export type CourseSegmentConfig =
       readonly checkpoint?: boolean;
       readonly boostPads?: readonly BoostPadSegmentConfig[];
       readonly adjust?: boolean;
+      readonly name?: string;
+      readonly style?: TrackStyle;
     }
   | {
       readonly type: 'pitchTo';
@@ -41,6 +49,8 @@ export type CourseSegmentConfig =
       readonly width?: number;
       readonly checkpoint?: boolean;
       readonly boostPads?: readonly BoostPadSegmentConfig[];
+      readonly name?: string;
+      readonly style?: TrackStyle;
     }
   | {
       readonly type: 'gap';
@@ -49,6 +59,8 @@ export type CourseSegmentConfig =
       readonly width?: number;
       readonly checkpoint?: boolean;
       readonly boostPads?: readonly BoostPadSegmentConfig[];
+      readonly name?: string;
+      readonly style?: TrackStyle;
     }
   | {
       readonly type: 'loop';
@@ -57,6 +69,8 @@ export type CourseSegmentConfig =
       readonly width?: number;
       readonly checkpoint?: boolean;
       readonly boostPads?: readonly BoostPadSegmentConfig[];
+      readonly name?: string;
+      readonly style?: TrackStyle;
     };
 
 export type ThemeId = 'toyroom' | 'fantasyland';

@@ -31,6 +31,7 @@ export interface ThemeInstance {
   group: THREE.Group;
   update: (cameraPos: THREE.Vector3, dt: number) => void;
   applyPalette: (name: VisualPresetName) => void;
+  getGroundY?: (x: number, z: number) => number;
   dispose: () => void;
 }
 

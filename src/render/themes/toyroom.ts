@@ -55,6 +55,9 @@ export const toyroomTheme: WorldTheme = {
       applyPalette(name: VisualPresetName): void {
         propsVisual.applyPalette(name);
       },
+      getGroundY(): number {
+        return 0;
+      },
       dispose(): void {
         propsVisual.dispose();
       },

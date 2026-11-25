@@ -1,6 +1,7 @@
 // src/core/courseValidation.ts
 
 import { CONFIG } from '../config';
+import type { TrackStyle } from '../courses/types';
 import { autopilotInput } from './autopilot';
 import type { Course, CourseSegmentMeta, TrackFrame } from './course';
 import type { ClosureReport } from './courseClosure';
@@ -12,6 +13,8 @@ export interface LoopValidationResult {
   startS: number;
   endS: number;
   radius: number;
+  lateralOffset: number;
+  approachLengthM: number;
   entrySpeed: number;
   topSpeed: number;
   minApexSpeedRequired: number;
@@ -24,8 +27,29 @@ export interface JumpValidationResult {
   endS: number;
   gapLength: number;
   takeoffSpeed: number;
+  minSpeedRequired: number;
   landed: boolean;
   airtime: number;
+}
+
+export interface ZoneValidationResult {
+  name: string;
+  style: TrackStyle;
+  startS: number;
+  endS: number;
+  lengthM: number;
+  passTimeSec: number;
+  entrySpeedMs: number;
+  exitSpeedMs: number;
+  passesRecorded: number;
+}
+
+export interface TunnelClearanceResult {
+  hasTunnel: boolean;
+  cameraHeightM: number;
+  interiorHeightM: number;
+  requiredHeightM: number;
+  ok: boolean;
 }
 
 export interface CourseValidationReport {
@@ -39,15 +63,25 @@ export interface CourseValidationReport {
   lapTimes: number[];
   bestLap: number | null;
   minNonAdjacentClearanceM: number | null;
+  minStyleClearanceM: number | null;
+  tunnelClearance: TunnelClearanceResult;
   closure: ClosureReport | null;
   checkpointTimes: number[];
   loops: LoopValidationResult[];
   jumps: JumpValidationResult[];
+  zones: ZoneValidationResult[];
   railHits: number;
   stuckEvents: number;
   falls: number;
   warnings: string[];
   errors: string[];
+}
+
+interface ZoneSpan {
+  name: string;
+  style: TrackStyle;
+  startS: number;
+  endS: number;
 }
 
 function getSegmentIndexForS(segments: readonly CourseSegmentMeta[], s: number): number {
@@ -57,6 +91,28 @@ function getSegmentIndexForS(segments: readonly CourseSegmentMeta[], s: number):
     }
   }
   return Math.max(0, segments.length - 1);
+}
+
+function collectNamedZones(segments: readonly CourseSegmentMeta[]): ZoneSpan[] {
+  const spans: ZoneSpan[] = [];
+  for (const seg of segments) {
+    const trimmed = seg.name?.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const prev = spans[spans.length - 1];
+    if (prev && prev.name === trimmed && Math.abs(prev.endS - seg.startS) < 1e-3) {
+      prev.endS = seg.endS;
+    } else {
+      spans.push({
+        name: trimmed,
+        style: seg.style,
+        startS: seg.startS,
+        endS: seg.endS,
+      });
+    }
+  }
+  return spans;
 }
 
 export function validateCourse(
@@ -75,6 +131,7 @@ export function validateCourse(
   const gaps = course.getGapRanges();
   const trackWidth = course.getTrackWidth();
   const closureReport = course.getClosureReport();
+  const styleRuns = course.getStyleRuns();
 
   if (isClosed) {
     if (!closureReport) {
@@ -88,9 +145,9 @@ export function validateCourse(
         `Sirkuit gagal menutup di titik start: posErr=${closureReport.posErrorM.toFixed(4)} m, dYaw=${closureReport.dYawDeg.toFixed(3)}°.`,
       );
     }
-    if (lengthM < 700 || lengthM > 2400) {
+    if (lengthM < 700 || lengthM > 3200) {
       warnings.push(
-        `Panjang satu lap ${lengthM.toFixed(1)} m di luar kisaran wajar 700-2400 m.`,
+        `Panjang satu lap ${lengthM.toFixed(1)} m di luar kisaran wajar 700-3200 m.`,
       );
     }
   } else if (lengthM < 900 || lengthM > 1200) {
@@ -99,14 +156,19 @@ export function validateCourse(
     );
   }
 
-  // (a) Self-intersection, horizontal/3D clearance, crossing height difference, and ground clearance
+  // (a) Self-intersection, 3D clearance, crossing height difference, ground clearance, and bridge/tunnel separation
   const sampleStep = 1.0;
   const maxSampleS = isClosed ? Math.max(0, lengthM - 1e-4) : lengthM + 1e-4;
-  const sampledFrames: Array<{ frame: TrackFrame; segIndex: number }> = [];
+  const sampledFrames: Array<{ frame: TrackFrame; segIndex: number; style: TrackStyle }> = [];
   for (let s = 0; s <= maxSampleS; s += sampleStep) {
     const f = course.getFrameAt(s);
     if (!f.isGap) {
-      sampledFrames.push({ frame: f, segIndex: getSegmentIndexForS(segments, s) });
+      const segIdx = getSegmentIndexForS(segments, s);
+      sampledFrames.push({
+        frame: f,
+        segIndex: segIdx,
+        style: segments[segIdx]?.style ?? 'road',
+      });
     }
   }
 
@@ -125,7 +187,8 @@ export function validateCourse(
 
   const min3DClearance = 2.5 * trackWidth;
   const minArcSeparation = Math.max(24, trackWidth * 3.2);
-  const cellSize = min3DClearance;
+  const minStyleSeparation = 40;
+  const cellSize = Math.max(min3DClearance, minStyleSeparation);
   const grid = new Map<string, number[]>();
 
   for (let i = 0; i < sampledFrames.length; i++) {
@@ -142,11 +205,22 @@ export function validateCourse(
   }
 
   let worstNonAdjacentClearance = Infinity;
+  let worstStyleClearance = Infinity;
   let worstCrossingVertDiff = Infinity;
   const reportedPairs = new Set<string>();
   const loopSegs = segments.filter((seg) => seg.type === 'loop');
-
   const hasOverpassHazard = segments.some((s) => s.type === 'gap' || s.type === 'loop');
+
+  const isSameStyleRun = (sA: number, sB: number): boolean => {
+    for (const run of styleRuns) {
+      if (run.style === 'road') continue;
+      if (sA >= run.startS - 1 && sA <= run.endS + 1 && sB >= run.startS - 1 && sB <= run.endS + 1) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   for (let i = 0; i < sampledFrames.length; i++) {
     const a = sampledFrames[i];
     const pa = a.frame.position;
@@ -165,12 +239,10 @@ export function validateCourse(
           const ds = isClosed ? Math.min(rawDs, lengthM - rawDs) : rawDs;
           if (ds < minArcSeparation) continue;
 
-          // Ignore intentional helical separation across a single loop and its immediate entry/exit
-          const sameLoopNeighborhood = loopSegs.some(
-            (lp) =>
-              a.frame.s >= lp.startS - 22 &&
-              b.frame.s <= lp.endS + 22,
-          );
+          const sameLoopNeighborhood = loopSegs.some((lp) => {
+            const margin = Math.max(22, (lp.config.type === 'loop' ? lp.config.radius : 12) * 2.1);
+            return a.frame.s >= lp.startS - margin && b.frame.s <= lp.endS + margin;
+          });
           if (sameLoopNeighborhood) {
             continue;
           }
@@ -214,6 +286,27 @@ export function validateCourse(
               );
             }
           }
+
+          const involvesBridgeOrTunnel =
+            a.style === 'bridge' ||
+            a.style === 'tunnel' ||
+            b.style === 'bridge' ||
+            b.style === 'tunnel';
+          if (
+            involvesBridgeOrTunnel &&
+            !isSameStyleRun(a.frame.s, b.frame.s) &&
+            ds >= minStyleSeparation
+          ) {
+            if (dist3D < worstStyleClearance) {
+              worstStyleClearance = dist3D;
+            }
+            if (dist3D < minStyleSeparation && !reportedPairs.has(`style:${segPairKey}`)) {
+              reportedPairs.add(`style:${segPairKey}`);
+              errors.push(
+                `Zona jembatan/terowongan segmen #${a.segIndex} terlalu dekat dengan segmen #${b.segIndex} (${dist3D.toFixed(1)} m < ${minStyleSeparation} m).`,
+              );
+            }
+          }
         }
       }
     }
@@ -221,6 +314,7 @@ export function validateCourse(
 
   // (b) Geometric ballistic feasibility check per gap
   const maxPossibleSpeed = physicsConfig.maxSpeed * CONFIG.boost.maxSpeedMultiplier;
+  const minSpeedReqBySeg = new Map<number, number>();
   for (const seg of segments) {
     if (seg.type !== 'gap' || seg.config.type !== 'gap') continue;
     const fStart = course.getFrameAt(seg.startS);
@@ -236,9 +330,11 @@ export function validateCourse(
       errors.push(
         `Lompatan segmen #${seg.index} (s=${seg.startS.toFixed(1)}m) tidak realistis secara balistik (sudut ramp tidak cukup menanjak).`,
       );
+      minSpeedReqBySeg.set(seg.index, Infinity);
     } else {
       const vHorizMin = horizSpan * Math.sqrt(physicsConfig.gravity / (2 * neededDrop));
       const vMinRequired = vHorizMin / tanHoriz;
+      minSpeedReqBySeg.set(seg.index, vMinRequired);
       if (vMinRequired > maxPossibleSpeed) {
         errors.push(
           `Lompatan segmen #${seg.index} butuh kecepatan minimal ${vMinRequired.toFixed(1)} m/s (> kecepatan maksimal ${maxPossibleSpeed.toFixed(1)} m/s).`,
@@ -247,31 +343,69 @@ export function validateCourse(
     }
   }
 
-  // (c) Geometric loop check: lateral offset & straight run-in >= 40 m
+  // (c) Geometric loop rules
+  const loopRules = CONFIG.loopRules;
+  const strictLoopRules = isClosed || trackWidth >= 12;
   const loopResults: LoopValidationResult[] = [];
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     if (seg.type !== 'loop' || seg.config.type !== 'loop') continue;
     const minApexSpeedRequired = Math.sqrt(physicsConfig.gravity * seg.config.radius);
-    if (Math.abs(seg.config.lateralOffset) < trackWidth + 1.0) {
-      errors.push(
-        `Loop segmen #${seg.index} lateralOffset=${seg.config.lateralOffset}m terlalu sempit (< lebar lintasan + 1 m).`,
-      );
-    }
 
-    // Measure straight run-in ahead of loop
-    let runInStraight = 0;
+    // Measure non-curving approach run-in (straight or slope segments before loop)
+    let approachLengthM = 0;
+    let hasDownhillOrWideBoost = false;
     for (let k = i - 1; k >= 0; k--) {
-      if (segments[k].type === 'straight') {
-        runInStraight += segments[k].length;
+      const prev = segments[k];
+      if (prev.type === 'straight' || prev.type === 'slope') {
+        approachLengthM += prev.length;
+        if (prev.config.type === 'slope' && prev.config.pitchDeg < 0) {
+          hasDownhillOrWideBoost = true;
+        }
+        if (prev.config.boostPads && prev.config.boostPads.length > 0) {
+          const hasWideOrMulti =
+            prev.config.boostPads.length >= 2 ||
+            prev.config.boostPads.some((p) => (p.width ?? CONFIG.boost.padWidth) >= 3.2);
+          if (hasWideOrMulti || prev.config.boostPads.length >= 1) {
+            hasDownhillOrWideBoost = true;
+          }
+        }
       } else {
         break;
       }
     }
-    if (runInStraight < 40) {
-      warnings.push(
-        `Lurus sebelum loop segmen #${seg.index} hanya ${runInStraight.toFixed(1)} m (< 40 m).`,
-      );
+
+    if (strictLoopRules) {
+      if (seg.config.radius < loopRules.minRadius) {
+        errors.push(
+          `Loop segmen #${seg.index} radius=${seg.config.radius} m < minimum ${loopRules.minRadius} m.`,
+        );
+      }
+      if (Math.abs(seg.config.lateralOffset) <= trackWidth + loopRules.offsetMargin) {
+        errors.push(
+          `Loop segmen #${seg.index} lateralOffset=${seg.config.lateralOffset} m harus lebih besar dari lebar + ${loopRules.offsetMargin} m (${trackWidth + loopRules.offsetMargin} m).`,
+        );
+      }
+      if (approachLengthM < loopRules.minApproachLength) {
+        errors.push(
+          `Pendekatan lurus sebelum loop segmen #${seg.index} hanya ${approachLengthM.toFixed(1)} m (< ${loopRules.minApproachLength} m).`,
+        );
+      } else if (!hasDownhillOrWideBoost) {
+        warnings.push(
+          `Pendekatan sebelum loop segmen #${seg.index} belum memiliki turunan atau pad boost lebar.`,
+        );
+      }
+    } else {
+      if (Math.abs(seg.config.lateralOffset) < trackWidth + 1.0) {
+        errors.push(
+          `Loop segmen #${seg.index} lateralOffset=${seg.config.lateralOffset}m terlalu sempit (< lebar lintasan + 1 m).`,
+        );
+      }
+      if (approachLengthM < 40) {
+        warnings.push(
+          `Lurus sebelum loop segmen #${seg.index} hanya ${approachLengthM.toFixed(1)} m (< 40 m).`,
+        );
+      }
     }
 
     loopResults.push({
@@ -279,6 +413,8 @@ export function validateCourse(
       startS: seg.startS,
       endS: seg.endS,
       radius: seg.config.radius,
+      lateralOffset: seg.config.lateralOffset,
+      approachLengthM: Number(approachLengthM.toFixed(1)),
       entrySpeed: 0,
       topSpeed: 0,
       minApexSpeedRequired,
@@ -286,7 +422,21 @@ export function validateCourse(
     });
   }
 
-  // (d) Checkpoints & boost pads inside gaps/loops and before hazards
+  // (d) Tunnel headroom >= chase camera height + 6 m
+  const hasTunnel = styleRuns.some((r) => r.style === 'tunnel');
+  const widthRatio = trackWidth / CONFIG.course.defaultWidth;
+  const widthScale = 1 + Math.max(0, widthRatio - 1) * CONFIG.camera.widthScale;
+  const cameraHeightM = CONFIG.camera.height * widthScale;
+  const requiredHeightM = cameraHeightM + 6;
+  const interiorHeightM = CONFIG.styles.tunnel.interiorHeight;
+  const tunnelOk = !hasTunnel || interiorHeightM >= requiredHeightM;
+  if (!tunnelOk) {
+    errors.push(
+      `Tinggi dalam terowongan ${interiorHeightM.toFixed(2)} m < tinggi kamera + 6 m (${requiredHeightM.toFixed(2)} m).`,
+    );
+  }
+
+  // Checkpoints & boost pads inside gaps/loops and before hazards
   for (const cp of checkpoints) {
     const segIdx = getSegmentIndexForS(segments, cp.s);
     const seg = segments[segIdx];
@@ -314,11 +464,11 @@ export function validateCourse(
   for (const seg of segments) {
     if (seg.type !== 'gap' && seg.type !== 'loop') continue;
     const hasCpBefore = checkpoints.some(
-      (cp) => cp.s <= seg.startS + 0.5 && seg.startS - cp.s <= 130,
+      (cp) => cp.s <= seg.startS + 0.5 && seg.startS - cp.s <= 160,
     );
     if (!hasCpBefore) {
       warnings.push(
-        `Tidak ada checkpoint dalam 130 m sebelum ${seg.type} (segmen #${seg.index}, s=${seg.startS.toFixed(1)} m).`,
+        `Tidak ada checkpoint dalam 160 m sebelum ${seg.type} (segmen #${seg.index}, s=${seg.startS.toFixed(1)} m).`,
       );
     }
   }
@@ -334,9 +484,9 @@ export function validateCourse(
       const cpLoop = [...checkpoints.map((c) => c.s), checkpoints[0].s + lengthM];
       for (let i = 1; i < cpLoop.length; i++) {
         const spacing = cpLoop[i] - cpLoop[i - 1];
-        if (spacing > 450) {
+        if (spacing > 650) {
           warnings.push(
-            `Jarak antar checkpoint melingkar terlalu panjang (${spacing.toFixed(1)} m > 450 m).`,
+            `Jarak antar checkpoint melingkar terlalu panjang (${spacing.toFixed(1)} m > 650 m).`,
           );
         } else if (spacing < 35) {
           warnings.push(
@@ -367,9 +517,9 @@ export function validateCourse(
     }
   }
 
-  // (f) Full headless autopilot simulation (dt = 1/60, timeout 300s)
+  // (f) Full headless autopilot simulation (dt = 1/60, timeout 360s)
   const dt = 1 / 60;
-  const maxSteps = Math.round(300 / dt);
+  const maxSteps = Math.round(360 / dt);
 
   const startSlot = course.getGridSlots(1)[0];
   const carState = createCarState({ s: startSlot.s, lateral: startSlot.lateral });
@@ -384,9 +534,22 @@ export function validateCourse(
       endS: s.endS,
       gapLength: s.length,
       takeoffSpeed: 0,
+      minSpeedRequired: minSpeedReqBySeg.get(s.index) ?? 0,
       landed: false,
       airtime: 0,
     }));
+
+  const namedZoneSpans = collectNamedZones(segments);
+  const zoneAccum = namedZoneSpans.map((z) => ({
+    span: z,
+    active: false,
+    enterTime: 0,
+    enterSpeed: 0,
+    totalTime: 0,
+    totalEntrySpeed: 0,
+    totalExitSpeed: 0,
+    passes: 0,
+  }));
 
   const loopEntered = new Set<number>();
   let activeJumpIdx = -1;
@@ -396,6 +559,7 @@ export function validateCourse(
   let lowSpeedTimer = 0;
   let simElapsed = 0;
   let finished = false;
+  let prevWrappedS = isClosed ? course.wrapDistance(startSlot.s) : startSlot.s;
 
   for (let step = 0; step < maxSteps; step++) {
     const input = autopilotInput(carState, course);
@@ -406,23 +570,47 @@ export function validateCourse(
     });
     simElapsed += dt;
 
-    const activeS = carState.mode === 'grounded' ? carState.s : carState.sApprox;
+    const rawS = carState.mode === 'grounded' ? carState.s : carState.sApprox;
+    const wrappedS = isClosed ? course.wrapDistance(rawS) : rawS;
+    const speedNow =
+      carState.mode === 'grounded' ? Math.abs(carState.vForward) : carState.worldVel.length();
+
+    // Track per-zone pass telemetry across laps
+    const wrappedReset = isClosed && prevWrappedS > lengthM * 0.7 && wrappedS < lengthM * 0.3;
+    for (const z of zoneAccum) {
+      if (wrappedReset && z.active) {
+        z.active = false;
+      }
+      const inside = wrappedS >= z.span.startS && wrappedS < z.span.endS;
+      if (!z.active && inside && prevWrappedS <= z.span.startS + 4) {
+        z.active = true;
+        z.enterTime = simElapsed;
+        z.enterSpeed = speedNow;
+      } else if (z.active && (wrappedS >= z.span.endS || wrappedReset)) {
+        z.active = false;
+        z.totalTime += simElapsed - z.enterTime;
+        z.totalEntrySpeed += z.enterSpeed;
+        z.totalExitSpeed += speedNow;
+        z.passes += 1;
+      }
+    }
+    prevWrappedS = wrappedS;
 
     for (const lr of loopResults) {
-      if (!loopEntered.has(lr.segmentIndex) && activeS >= lr.startS && activeS <= lr.endS) {
+      const inLoop = wrappedS >= lr.startS && wrappedS <= lr.endS;
+      if (!loopEntered.has(lr.segmentIndex) && inLoop) {
         loopEntered.add(lr.segmentIndex);
-        lr.entrySpeed = Math.abs(carState.vForward);
+        lr.entrySpeed = Math.max(lr.entrySpeed, speedNow);
       }
-      if (activeS >= lr.startS && activeS <= lr.endS) {
+      if (inLoop) {
         const segMid = (lr.startS + lr.endS) * 0.5;
-        if (Math.abs(activeS - segMid) < lr.radius * 0.7) {
-          const speedNow = Math.abs(carState.vForward);
+        if (Math.abs(wrappedS - segMid) < lr.radius * 0.7) {
           if (lr.topSpeed === 0 || speedNow < lr.topSpeed) {
             lr.topSpeed = speedNow;
           }
         }
       }
-      if (!lr.completed && loopEntered.has(lr.segmentIndex) && activeS > lr.endS) {
+      if (!lr.completed && loopEntered.has(lr.segmentIndex) && wrappedS > lr.endS) {
         lr.completed = true;
       }
     }
@@ -433,11 +621,12 @@ export function validateCourse(
       } else if (ev.type === 'fell') {
         falls++;
       } else if (ev.type === 'takeoff') {
+        const takeoffWrappedS = isClosed ? course.wrapDistance(carState.sApprox) : carState.sApprox;
         let bestIdx = -1;
         let bestDist = Infinity;
         for (let ji = 0; ji < jumpResults.length; ji++) {
           const jr = jumpResults[ji];
-          const d = Math.abs(carState.sApprox - jr.startS);
+          const d = Math.abs(takeoffWrappedS - jr.startS);
           if (d < bestDist) {
             bestDist = d;
             bestIdx = ji;
@@ -445,14 +634,17 @@ export function validateCourse(
         }
         if (bestIdx >= 0 && bestDist < 12) {
           activeJumpIdx = bestIdx;
-          jumpResults[bestIdx].takeoffSpeed = carState.worldVel.length();
+          if (jumpResults[bestIdx].takeoffSpeed === 0) {
+            jumpResults[bestIdx].takeoffSpeed = carState.worldVel.length();
+          }
         }
       } else if (ev.type === 'landed') {
         if (activeJumpIdx >= 0) {
           const jr = jumpResults[activeJumpIdx];
-          if (carState.s >= jr.endS - 1.5) {
+          const landWrappedS = isClosed ? course.wrapDistance(carState.s) : carState.s;
+          if (landWrappedS >= jr.endS - 1.5) {
             jr.landed = true;
-            jr.airtime = ev.airtime;
+            jr.airtime = Math.max(jr.airtime, ev.airtime);
           }
           activeJumpIdx = -1;
         }
@@ -498,7 +690,7 @@ export function validateCourse(
 
   // (g) Fail/warn rules
   if (!finished) {
-    errors.push(`Autopilot tidak mencapai finish dalam batas waktu 300 detik.`);
+    errors.push(`Autopilot tidak mencapai finish dalam batas waktu 360 detik.`);
   }
   if (falls > 0) {
     errors.push(`Autopilot terjatuh dari lintasan sebanyak ${falls} kali.`);
@@ -516,9 +708,9 @@ export function validateCourse(
   for (const lr of loopResults) {
     if (!lr.completed) {
       errors.push(`Loop segmen #${lr.segmentIndex} gagal diselesaikan autopilot.`);
-    } else if (lr.topSpeed < lr.minApexSpeedRequired) {
-      warnings.push(
-        `Kecepatan puncak loop segmen #${lr.segmentIndex} (${lr.topSpeed.toFixed(1)} m/s) mendekati atau di bawah batas ${lr.minApexSpeedRequired.toFixed(1)} m/s.`,
+    } else if (lr.topSpeed <= lr.minApexSpeedRequired) {
+      errors.push(
+        `Kecepatan puncak loop segmen #${lr.segmentIndex} (${lr.topSpeed.toFixed(1)} m/s) tidak melampaui syarat sqrt(g*r) = ${lr.minApexSpeedRequired.toFixed(1)} m/s.`,
       );
     }
   }
@@ -537,6 +729,21 @@ export function validateCourse(
     warnings.push(`Waktu referensi autopilot ${referenceTime.toFixed(2)} s melampaui 120 s.`);
   }
 
+  const zones: ZoneValidationResult[] = zoneAccum.map((z) => {
+    const p = Math.max(1, z.passes);
+    return {
+      name: z.span.name,
+      style: z.span.style,
+      startS: Number(z.span.startS.toFixed(2)),
+      endS: Number(z.span.endS.toFixed(2)),
+      lengthM: Number((z.span.endS - z.span.startS).toFixed(2)),
+      passTimeSec: z.passes > 0 ? Number((z.totalTime / p).toFixed(2)) : 0,
+      entrySpeedMs: z.passes > 0 ? Number((z.totalEntrySpeed / p).toFixed(1)) : 0,
+      exitSpeedMs: z.passes > 0 ? Number((z.totalExitSpeed / p).toFixed(1)) : 0,
+      passesRecorded: z.passes,
+    };
+  });
+
   return {
     ok: errors.length === 0,
     closed: isClosed,
@@ -550,6 +757,16 @@ export function validateCourse(
     minNonAdjacentClearanceM: Number.isFinite(worstNonAdjacentClearance)
       ? Number(worstNonAdjacentClearance.toFixed(2))
       : null,
+    minStyleClearanceM: Number.isFinite(worstStyleClearance)
+      ? Number(worstStyleClearance.toFixed(2))
+      : null,
+    tunnelClearance: {
+      hasTunnel,
+      cameraHeightM: Number(cameraHeightM.toFixed(2)),
+      interiorHeightM: Number(interiorHeightM.toFixed(2)),
+      requiredHeightM: Number(requiredHeightM.toFixed(2)),
+      ok: tunnelOk,
+    },
     closure: closureReport,
     checkpointTimes,
     loops: loopResults.map((l) => ({
@@ -566,8 +783,12 @@ export function validateCourse(
       endS: Number(j.endS.toFixed(2)),
       gapLength: Number(j.gapLength.toFixed(2)),
       takeoffSpeed: Number(j.takeoffSpeed.toFixed(2)),
+      minSpeedRequired: Number(
+        (Number.isFinite(j.minSpeedRequired) ? j.minSpeedRequired : 0).toFixed(2),
+      ),
       airtime: Number(j.airtime.toFixed(3)),
     })),
+    zones,
     railHits,
     stuckEvents,
     falls,

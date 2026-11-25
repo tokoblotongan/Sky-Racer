@@ -331,6 +331,51 @@
   animation: srSplitPopup 2.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+/* Zone entry title toast */
+.sr-zone-toast {
+  position: absolute;
+  top: clamp(90px, 14.5vh, 122px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 22px;
+  background: rgba(15, 23, 42, 0.92);
+  border-color: var(--sr-accent-yellow);
+  color: var(--sr-accent-yellow);
+  font-size: clamp(16px, 2.3vw, 24px);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-shadow: 0 2px 10px rgba(var(--sr-orange-rgb), 0.45);
+  box-shadow: 0 10px 26px rgba(var(--sr-yellow-rgb), 0.24);
+}
+
+.sr-zone-toast-active {
+  animation: srZoneToast 1.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes srZoneToast {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -10px) scale(0.9);
+  }
+  14% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1.04);
+  }
+  24% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  78% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -8px) scale(0.96);
+  }
+}
+
 /* Wrong-way alert banner */
 .sr-wrong-way {
   position: absolute;
@@ -1452,6 +1497,12 @@
   font-size: clamp(13px, 2vw, 18px);
 }
 
+.sr-hud.hud--touch .sr-zone-toast {
+  top: calc(max(8px, env(safe-area-inset-top, 0px)) + 64px);
+  padding: 5px 16px;
+  font-size: clamp(13px, 2vw, 18px);
+}
+
 .sr-hud.hud--touch .sr-wrong-way {
   top: calc(max(8px, env(safe-area-inset-top, 0px)) + 78px);
   padding: 5px 14px;
@@ -1542,6 +1593,7 @@
   .sr-split-active,
   .sr-airtime-active,
   .sr-lap-popup-active,
+  .sr-zone-toast-active,
   .sr-wrong-way {
     animation: none !important;
   }
