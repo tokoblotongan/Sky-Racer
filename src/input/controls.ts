@@ -9,10 +9,15 @@ export interface CarInput {
   handbrake: boolean;
   resetPressed: boolean;
   confirmPressed: boolean;
+  mutePressed?: boolean;
+}
+
+export interface SampledCarInput extends CarInput {
+  mutePressed: boolean;
 }
 
 export interface KeyboardControls {
-  sample: (dt: number) => CarInput;
+  sample: (dt: number) => SampledCarInput;
   dispose: () => void;
 }
 
@@ -33,6 +38,7 @@ export function createKeyboardControls(): KeyboardControls {
   const pressed = new Set<string>();
   let resetQueued = false;
   let confirmQueued = false;
+  let muteQueued = false;
 
   let throttle = 0;
   let brake = 0;
@@ -45,6 +51,10 @@ export function createKeyboardControls(): KeyboardControls {
 
     if (event.code === 'KeyR' && !event.repeat) {
       resetQueued = true;
+    }
+
+    if (event.code === 'KeyM' && !event.repeat) {
+      muteQueued = true;
     }
 
     if ((event.code === 'Enter' || event.code === 'NumpadEnter') && !event.repeat) {
@@ -67,7 +77,7 @@ export function createKeyboardControls(): KeyboardControls {
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onWindowBlur);
 
-  function sample(dt: number): CarInput {
+  function sample(dt: number): SampledCarInput {
     const cfg = CONFIG.input;
 
     const gasTarget = pressed.has('KeyW') || pressed.has('ArrowUp') ? 1 : 0;
@@ -104,6 +114,9 @@ export function createKeyboardControls(): KeyboardControls {
     const confirmPressed = confirmQueued;
     confirmQueued = false;
 
+    const mutePressed = muteQueued;
+    muteQueued = false;
+
     return {
       throttle,
       brake,
@@ -111,6 +124,7 @@ export function createKeyboardControls(): KeyboardControls {
       handbrake,
       resetPressed,
       confirmPressed,
+      mutePressed,
     };
   }
 

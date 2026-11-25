@@ -340,6 +340,150 @@ export const CONFIG = {
   storage: {
     key: 'sky-racer-best-v1',
   },
+  audio: {
+    masterVolume: 0.75, // volume utama seluruh game (naik = semua suara lebih keras, turun = lebih pelan)
+    sfxVolume: 0.85, // volume efek suara & loop permukaan (naik = efek lebih menonjol, turun = lebih kalem)
+    engineVolume: 0.42, // volume mesin mobil listrik (naik = mesin lebih dominan, turun = efek lebih mudah terdengar)
+    ambienceVolume: 0.25, // volume ambience ruangan (naik = suara latar ruangan lebih terasa, turun = lebih sunyi)
+    mutedByDefault: false, // status bisu awal sebelum pengguna mengubah dengan tombol M
+    storageKey: 'sky-racer-audio-v1', // kunci localStorage khusus preferensi audio (terpisah dari best time)
+    updateRateHz: 20, // frekuensi pembaruan parameter audio kontinu per detik (naik = respons lebih cepat/CPU sedikit naik, turun = lebih ringan)
+    maxVoices: 16, // batas maksimum efek one-shot aktif bersamaan (naik = lebih banyak suara tumpuk, turun = lebih hemat CPU)
+    limiter: {
+      threshold: -6, // ambang dB limiter sebelum pemotongan (naik mendekati 0 = lebih keras/berisiko padat, turun = lebih aman dari clipping)
+      ratio: 12, // rasio kompresi limiter (naik = pembatas puncak lebih keras, turun = kompresi lebih lembut)
+      attack: 0.003, // waktu tangkap puncak dalam detik (turun = tangkap transien lebih cepat)
+      release: 0.12, // waktu lepas kompresor dalam detik (naik = pemulihan volume lebih halus, turun = lebih cepat)
+    },
+    engine: {
+      idleFreq: 68, // frekuensi dasar mesin saat diam Hz (naik = dengung idle lebih tinggi, turun = lebih rendah/dalam)
+      maxFreq: 265, // frekuensi dasar mesin pada kecepatan puncak Hz (naik = lebih melengking, turun = lebih berat)
+      boostPitchMult: 1.24, // pengali nada mesin saat boost aktif (naik = lonjakan nada boost makin tinggi, turun = lebih kalem)
+      airRevMult: 1.18, // pengali nada mesin saat mobil melayang di udara (naik = suara ngegas udara lebih tinggi, turun = lebih datar)
+      filterBase: 320, // cutoff lowpass mesin saat idle Hz (naik = suara idle lebih cempreng/terbuka, turun = lebih teredam)
+      filterMax: 1650, // cutoff lowpass mesin pada gas penuh Hz (naik = lebih tajam/bising, turun = lebih hangat)
+      tireNoiseLevel: 0.09, // level lapisan noise ban bergulir (naik = desis ban lebih jelas, turun = mesin lebih bersih)
+      boostWhooshLevel: 0.14, // level lapisan angin boost pada mesin (naik = desis boost lebih kuat, turun = lebih tipis)
+      detuneCents: 7, // perbedaan tala dua osilator mesin dalam cent (naik = tekstur lebih tebal/kasar, turun = lebih halus)
+      idleGain: 0.08, // level gain mesin saat idle diam (naik = idle lebih terdengar, turun = hampir senyap)
+      driveGain: 0.34, // level gain mesin saat melaju penuh (naik = mesin lebih kencang, turun = lebih lembut)
+      fadeOutTime: 0.65, // durasi fade out mesin saat finish atau title dalam detik
+      fadeInTime: 0.25, // durasi fade in mesin saat masuk countdown/racing dalam detik
+    },
+    sfx: {
+      countdownTick: {
+        frequency: 660, // frekuensi nada hitung mundur 3-2-1 Hz
+        duration: 0.12, // durasi nada hitung mundur detik
+        gain: 0.36, // volume hitung mundur (naik = lebih lantang, turun = lebih halus)
+        cooldown: 0.08, // jeda minimum antar pemicu detik
+      },
+      go: {
+        frequency: 660, // nada dasar akor GO! Hz
+        frequencyHigh: 990, // nada harmonik atas akor GO! Hz
+        duration: 0.35, // durasi akor GO! detik
+        gain: 0.42, // volume akor GO!
+        cooldown: 0.2, // jeda minimum detik
+      },
+      checkpoint: {
+        frequency: 659.25, // nada awal E5 chime checkpoint Hz (naik 1 semitone tiap checkpoint)
+        frequencyHigh: 987.77, // nada kedua B5 chime checkpoint Hz
+        noteDuration: 0.14, // durasi tiap nada chime detik
+        noteGap: 0.075, // jarak jeda antar dua nada chime detik
+        duration: 0.28, // total durasi efek checkpoint detik
+        gain: 0.4, // volume chime checkpoint
+        cooldown: 0.12, // jeda minimum detik
+      },
+      finish: {
+        frequency: 523.25, // nada awal pentatonik finish C5 Hz (arpeggio [C5, D5, G5, A5])
+        notes: [523.25, 587.33, 783.99, 880.0], // tangga nada pentatonik naik orisinal (4 nada)
+        bestPeakFreq: 1046.5, // nada puncak berkilau tambahan saat newBest (C6) Hz
+        noteStep: 0.095, // jarak antar nada arpeggio finish detik
+        noteDuration: 0.24, // durasi tiap nada arpeggio detik
+        duration: 0.85, // total durasi arpeggio finish detik
+        gain: 0.42, // volume arpeggio finish
+        cooldown: 0.5, // jeda minimum detik
+      },
+      boost: {
+        frequency: 400, // frekuensi awal sapuan bandpass whoosh boost Hz
+        filterEnd: 2500, // frekuensi akhir sapuan bandpass whoosh boost Hz
+        sawStart: 180, // frekuensi awal swoosh saw boost Hz
+        sawEnd: 420, // frekuensi akhir swoosh saw boost Hz
+        duration: 0.5, // durasi efek boost detik
+        gain: 0.46, // volume efek boost
+        cooldown: 0.25, // jeda minimum detik
+      },
+      takeoff: {
+        frequency: 310, // frekuensi awal blip lepas landas Hz
+        endFrequency: 540, // frekuensi akhir blip lepas landas Hz
+        duration: 0.13, // durasi blip lepas landas detik
+        gain: 0.28, // volume blip lepas landas
+        cooldown: 0.18, // jeda minimum detik
+      },
+      landed: {
+        frequency: 120, // frekuensi awal thud pendaratan Hz
+        endFrequency: 50, // frekuensi akhir thud pendaratan Hz
+        clickFreq: 950, // frekuensi filter klik benturan pendaratan Hz
+        duration: 0.19, // durasi thud pendaratan detik
+        gain: 0.48, // volume maksimum thud saat pendaratan keras
+        cooldown: 0.12, // jeda minimum detik
+      },
+      railHit: {
+        frequency: 220, // frekuensi dasar klak plastik pagar Hz
+        noiseFilterFreq: 1900, // frekuensi highpass klik plastik pagar Hz
+        duration: 0.085, // durasi klak pagar detik
+        gain: 0.38, // volume maksimum klak pagar pada benturan penuh
+        cooldown: 0.08, // jeda minimum detik
+      },
+      fell: {
+        frequency: 600, // frekuensi awal slide jatuh Hz
+        endFrequency: 120, // frekuensi akhir slide jatuh Hz
+        duration: 0.8, // durasi slide jatuh detik
+        gain: 0.36, // volume suara jatuh
+        cooldown: 0.6, // jeda minimum detik
+      },
+      respawn: {
+        frequency: 280, // frekuensi awal pop respawn Hz
+        endFrequency: 560, // frekuensi akhir pop respawn Hz
+        duration: 0.18, // durasi efek respawn detik
+        gain: 0.32, // volume efek respawn
+        cooldown: 0.25, // jeda minimum detik
+      },
+      restart: {
+        frequency: 740, // frekuensi klik restart UI Hz
+        duration: 0.055, // durasi klik restart detik
+        gain: 0.24, // volume klik restart
+        cooldown: 0.15, // jeda minimum detik
+      },
+      uiConfirm: {
+        frequency: 820, // frekuensi klik konfirmasi UI Hz
+        duration: 0.06, // durasi klik konfirmasi detik
+        gain: 0.25, // volume klik konfirmasi
+        cooldown: 0.1, // jeda minimum detik
+      },
+    },
+    skid: {
+      slipThreshold: 0.14, // ambang slip radian sebelum decit ban berbunyi (naik = lebih jarang berdecit, turun = mudah berdecit)
+      gainMax: 0.28, // volume maksimum decit ban saat drift penuh (naik = decit lebih tajam, turun = lebih halus)
+      filterFreq: 1350, // frekuensi pusat bandpass decit ban Hz
+      filterQ: 3.8, // ketajaman resonansi decit ban (naik = lebih melengking, turun = lebih lebar seperti desis)
+    },
+    wind: {
+      gainMax: 0.24, // volume maksimum suara angin di kecepatan puncak (naik = angin lebih kencang, turun = lebih samar)
+      airBoost: 1.55, // pengali volume angin saat mobil melayang di udara (naik = efek melayang lebih dramatis)
+      filterBase: 260, // cutoff lowpass angin saat pelan Hz
+      filterMax: 1350, // cutoff lowpass angin saat ngebut Hz
+    },
+    railScrape: {
+      gainMax: 0.24, // volume maksimum desis gesekan pagar (naik = gesekan lebih keras, turun = lebih lembut)
+      filterFreq: 1650, // frekuensi pusat bandpass gesekan pagar Hz
+      filterQ: 2.8, // ketajaman bandpass gesekan pagar
+      decayRate: 6.0, // laju peluruhan fallback desis pagar per detik jika memakai event
+    },
+    ambience: {
+      level: 0.14, // level brown noise ruangan tipis (naik = ruangan lebih bergema, turun = lebih hening)
+      filterFreq: 220, // cutoff lowpass brown noise ambience Hz
+    },
+  },
   checkpointGate: {
     widthMargin: 0.85,
     height: 4.3,

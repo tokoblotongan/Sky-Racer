@@ -546,3 +546,50 @@
     display: none;
   }
 }
+
+/* Top-right: compact audio mute indicator */
+.sr-audio-btn {
+  position: absolute;
+  top: clamp(12px, 2.2vh, 24px);
+  right: clamp(12px, 2.4vw, 28px);
+  width: clamp(36px, 4.2vw, 42px);
+  height: clamp(36px, 4.2vw, 42px);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  color: #35d4ff;
+  border-color: rgba(53, 212, 255, 0.45);
+  pointer-events: auto;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.sr-audio-btn:hover {
+  transform: scale(1.05);
+  border-color: rgba(255, 210, 63, 0.72);
+}
+
+.sr-audio-icon {
+  width: clamp(18px, 2.2vw, 22px);
+  height: clamp(18px, 2.2vw, 22px);
+  display: block;
+}
+
+.sr-audio-icon-off {
+  display: none;
+}
+
+.sr-audio-btn.sr-audio-muted {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.4);
+}
+
+.sr-audio-btn.sr-audio-muted .sr-audio-icon-on {
+  display: none;
+}
+
+.sr-audio-btn.sr-audio-muted .sr-audio-icon-off {
+  display: block;
+}

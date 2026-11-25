@@ -12,6 +12,7 @@ export interface HudViewModel {
   cpPassed: number;
   cpTotal: number;
   bestTime: number | null;
+  muted: boolean;
 }
 
 export interface CheckpointSplitNotice {
@@ -44,6 +45,7 @@ export interface HudHandle {
   finishTimeEl: HTMLElement;
   finishBestEl: HTMLElement;
   finishSplitsEl: HTMLElement;
+  audioBtnEl: HTMLButtonElement;
   airtimeTimerId: number | null;
   splitTimerId: number | null;
   countdownHideTimerId: number | null;
@@ -56,6 +58,7 @@ export interface HudHandle {
   lastTimeText: string;
   lastCpText: string;
   lastTitleBestText: string;
+  lastMuted: boolean | null;
 }
 
 export function formatRaceTime(totalSeconds: number): string {
@@ -98,6 +101,17 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
       <div class="sr-hud-panel sr-checkpoint-slot" data-slot="checkpoint">CP 0 / 0</div>
     </div>
 
+    <button type="button" class="sr-hud-panel sr-audio-btn" aria-label="Suara aktif (M)" title="Suara (M)">
+      <svg class="sr-audio-icon sr-audio-icon-on" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9.5v5h4l5 4.5V5L8 9.5H4z" fill="currentColor" />
+        <path d="M16.2 8.8a4.8 4.8 0 0 1 0 6.4M18.8 6.3a8.2 8.2 0 0 1 0 11.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" />
+      </svg>
+      <svg class="sr-audio-icon sr-audio-icon-off" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9.5v5h4l5 4.5V5L8 9.5H4z" fill="currentColor" />
+        <path d="M16.5 9l4.5 6M21 9l-4.5 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+      </svg>
+    </button>
+
     <div class="sr-hud-panel sr-split-slot sr-hud-hidden" data-slot="split"></div>
     <div class="sr-hud-panel sr-airtime-slot sr-hud-hidden" data-slot="airtime"></div>
 
@@ -106,6 +120,7 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
       <span class="sr-hint-item"><span class="sr-key">Space</span> Drift</span>
       <span class="sr-hint-item"><span class="sr-key">R</span> Checkpoint</span>
       <span class="sr-hint-item"><span class="sr-key">Enter</span> Ulang</span>
+      <span class="sr-hint-item"><span class="sr-key">M</span> Suara</span>
     </div>
 
     <div class="sr-hud-panel sr-hud-bottom-right sr-hud-hidden">
@@ -164,6 +179,7 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
           <span class="sr-hint-item"><span class="sr-key">Space</span> Drift</span>
           <span class="sr-hint-item"><span class="sr-key">R</span> Checkpoint</span>
           <span class="sr-hint-item"><span class="sr-key">Enter</span> Mulai / Ulang</span>
+          <span class="sr-hint-item"><span class="sr-key">M</span> Suara</span>
         </div>
       </div>
     </div>
@@ -219,6 +235,7 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
     finishTimeEl: root.querySelector('.sr-finish-final-time') as HTMLElement,
     finishBestEl: root.querySelector('.sr-finish-best-time') as HTMLElement,
     finishSplitsEl: root.querySelector('.sr-finish-splits') as HTMLElement,
+    audioBtnEl: root.querySelector('.sr-audio-btn') as HTMLButtonElement,
     airtimeTimerId: null,
     splitTimerId: null,
     countdownHideTimerId: null,
@@ -231,6 +248,7 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
     lastTimeText: '00:00.00',
     lastCpText: 'CP 0 / 0',
     lastTitleBestText: '',
+    lastMuted: null,
   };
 }
 
@@ -385,6 +403,15 @@ export function showFinishScreen(
 }
 
 export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
+  if (viewModel.muted !== hud.lastMuted) {
+    hud.lastMuted = viewModel.muted;
+    hud.audioBtnEl.classList.toggle('sr-audio-muted', viewModel.muted);
+    hud.audioBtnEl.setAttribute(
+      'aria-label',
+      viewModel.muted ? 'Suara bisu (M)' : 'Suara aktif (M)',
+    );
+  }
+
   if (viewModel.phase !== hud.lastPhase) {
     hud.lastPhase = viewModel.phase;
     const isTitle = viewModel.phase === 'TITLE';

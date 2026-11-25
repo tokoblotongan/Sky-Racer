@@ -1,6 +1,7 @@
 // src/main.ts
 
 import * as THREE from 'three';
+import { createSound, type SoundSnapshot } from './audio/sound';
 import { CONFIG } from './config';
 import { Course } from './core/course';
 import {
@@ -150,6 +151,16 @@ function bootstrap(): void {
   const sceneCtx = createSceneContext(container);
   const debugOverlay = createDebugOverlay(container);
   const hud = createHud(container);
+  const sound = createSound();
+  sound.init();
+  sound.unlock();
+
+  function handleAudioButtonClick(): void {
+    sound.unlock();
+    sound.toggleMute();
+    hud.audioBtnEl.blur();
+  }
+  hud.audioBtnEl.addEventListener('click', handleAudioButtonClick);
 
   const course = new Course({
     segments: CONFIG.course.segments,
@@ -262,7 +273,21 @@ function bootstrap(): void {
     cpPassed: 0,
     cpTotal: raceState.totalCheckpoints,
     bestTime: raceState.bestTime,
+    muted: sound.getMuted(),
   };
+
+  const soundSnapshot: SoundSnapshot = {
+    phase: raceState.phase,
+    speedNorm: 0,
+    throttle: 0,
+    boostActive: false,
+    slip: 0,
+    grounded: true,
+    airborne: false,
+    falling: false,
+    railContact: false,
+  };
+  let lastThrottle = 0;
 
   getCarPose(currState, course, renderPose);
   carVisual.group.position.copy(renderPose.position);
@@ -284,6 +309,8 @@ function bootstrap(): void {
   let disposed = false;
 
   function handleRaceEvents(events: readonly RaceEvent[]): void {
+    sound.setPhase(raceState.phase);
+    sound.handleEvents(events);
     for (const ev of events) {
       if (ev.type === 'countdownTick') {
         showCountdownOverlay(hud, String(ev.n), false);
@@ -300,7 +327,9 @@ function bootstrap(): void {
   }
 
   function handleConfirmAction(): void {
+    sound.unlock();
     if (raceState.phase === 'TITLE') {
+      sound.handleEvents([{ type: 'uiConfirm' }]);
       const events = startCountdown(raceState);
       chaseCamera.setMode('chase');
       handleRaceEvents(events);
@@ -313,6 +342,7 @@ function bootstrap(): void {
     hideAirtimePopup(hud);
     hideSplitPopup(hud);
 
+    sound.reset();
     const events = restartRace(raceState);
     referenceBestSplits = raceState.bestSplits ? [...raceState.bestSplits] : null;
     chaseCamera.setMode('chase');
@@ -331,6 +361,7 @@ function bootstrap(): void {
     applyManualResetPenalty(raceState);
     copyCarState(currState, prevState);
     hideAirtimePopup(hud);
+    sound.handleEvents([{ type: 'respawn' }]);
 
     if (CONFIG.camera.snapOnReset && !CONFIG.camera.debugOrbitMode) {
       getCarPose(currState, course, renderPose);
@@ -341,15 +372,23 @@ function bootstrap(): void {
   function update(step: number): void {
     const input = controls.sample(step);
 
+    if (input.mutePressed) {
+      sound.toggleMute();
+    }
+
     if (input.confirmPressed) {
+      lastThrottle = 0;
       handleConfirmAction();
       return;
     }
 
     if (input.resetPressed && raceState.phase === 'RACING') {
+      lastThrottle = 0;
       handleCheckpointReset();
       return;
     }
+
+    lastThrottle = raceState.phase === 'RACING' ? input.throttle : 0;
 
     copyCarState(currState, prevState);
     const respawnTarget = getRespawnTarget(raceState, course);
@@ -388,6 +427,8 @@ function bootstrap(): void {
         }
       }
     }
+
+    sound.handleEvents(physicsEvents);
 
     const raceEvents = updateRace(
       raceState,
@@ -452,6 +493,17 @@ function bootstrap(): void {
         : 0;
     postfx.setSpeedIntensity(speedLineIntensity);
 
+    soundSnapshot.phase = raceState.phase;
+    soundSnapshot.speedNorm = speedRatio;
+    soundSnapshot.throttle = lastThrottle;
+    soundSnapshot.boostActive = renderState.boostTimeLeft > 0;
+    soundSnapshot.slip = renderState.slip;
+    soundSnapshot.grounded = renderState.mode === 'grounded';
+    soundSnapshot.airborne = renderState.mode === 'airborne';
+    soundSnapshot.falling = renderState.mode === 'falling';
+    soundSnapshot.railContact = renderState.railContactTimer > 0;
+    sound.update(soundSnapshot, realDt);
+
     hudViewModel.phase = raceState.phase;
     hudViewModel.speedKmh = speedMs * CONFIG.hud.speedScale;
     hudViewModel.boost01 =
@@ -462,6 +514,7 @@ function bootstrap(): void {
     hudViewModel.cpPassed = raceState.passedCheckpoints.length;
     hudViewModel.cpTotal = raceState.totalCheckpoints;
     hudViewModel.bestTime = raceState.bestTime;
+    hudViewModel.muted = sound.getMuted();
     updateHud(hud, hudViewModel);
 
     postfx.render(realDt);
@@ -531,7 +584,9 @@ function bootstrap(): void {
     window.cancelAnimationFrame(frameHandle);
     window.clearTimeout(frameHandle);
     window.removeEventListener('resize', handleWindowResize);
+    hud.audioBtnEl.removeEventListener('click', handleAudioButtonClick);
     controls.dispose();
+    sound.dispose();
     disposeHud(hud);
     debugOverlay?.dispose();
     qualityManager.dispose();
