@@ -2,15 +2,19 @@
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { CONFIG } from '../config';
+import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
 import type { CarState } from '../core/physics';
 
 export interface CarVisual {
   group: THREE.Group;
   update: (state: CarState, dt: number) => void;
+  applyPalette: (name: VisualPresetName) => void;
 }
 
-function createBodyPaintTexture(maxAnisotropy: number): THREE.CanvasTexture {
+function createBodyPaintTexture(
+  maxAnisotropy: number,
+  preset: VisualPreset,
+): THREE.CanvasTexture {
   const size = 256;
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -18,16 +22,14 @@ function createBodyPaintTexture(maxAnisotropy: number): THREE.CanvasTexture {
   const ctx = canvas.getContext('2d');
 
   if (ctx) {
-    // Warm cream base
-    ctx.fillStyle = CONFIG.car.bodyColor;
+    ctx.fillStyle = preset.car.bodyColor;
     ctx.fillRect(0, 0, size, size);
 
-    // Twin red-and-yellow racing stripes down the center
-    ctx.fillStyle = CONFIG.car.stripeColor;
+    ctx.fillStyle = preset.car.stripeColor;
     ctx.fillRect(size * 0.41, 0, size * 0.075, size);
     ctx.fillRect(size * 0.515, 0, size * 0.075, size);
 
-    ctx.fillStyle = CONFIG.car.accentColor;
+    ctx.fillStyle = preset.car.accentColor;
     ctx.fillRect(size * 0.488, 0, size * 0.024, size);
   }
 
@@ -77,8 +79,12 @@ function createWheelAssembly(
   return { steerPivot, spinMesh };
 }
 
-export function buildCarMesh(maxAnisotropy = 8): CarVisual {
+export function buildCarMesh(
+  maxAnisotropy = 8,
+  initialPreset: VisualPresetName = CONFIG.visual.activePreset,
+): CarVisual {
   const cfg = CONFIG.car;
+  const activePreset = VISUAL_PRESETS[initialPreset];
   const root = new THREE.Group();
   root.name = 'PlayerCar';
 
@@ -86,7 +92,7 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
   const sprungBody = new THREE.Group();
   root.add(sprungBody);
 
-  const bodyTexture = createBodyPaintTexture(maxAnisotropy);
+  let bodyTexture = createBodyPaintTexture(maxAnisotropy, activePreset);
   const bodyMaterial = new THREE.MeshPhysicalMaterial({
     map: bodyTexture,
     clearcoat: cfg.bodyClearcoat,
@@ -96,7 +102,7 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
   });
 
   const stripeMaterial = new THREE.MeshPhysicalMaterial({
-    color: cfg.stripeColor,
+    color: activePreset.car.stripeColor,
     clearcoat: cfg.bodyClearcoat,
     clearcoatRoughness: cfg.bodyClearcoatRoughness,
     roughness: cfg.bodyRoughness,
@@ -104,7 +110,7 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
   });
 
   const accentMaterial = new THREE.MeshPhysicalMaterial({
-    color: cfg.accentColor,
+    color: activePreset.car.accentColor,
     clearcoat: cfg.bodyClearcoat,
     clearcoatRoughness: 0.1,
     roughness: 0.2,
@@ -112,7 +118,7 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
   });
 
   const cabinMaterial = new THREE.MeshPhysicalMaterial({
-    color: cfg.cabinColorHex,
+    color: activePreset.car.cabinColorHex,
     clearcoat: 1.0,
     clearcoatRoughness: 0.05,
     roughness: 0.08,
@@ -120,7 +126,7 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
   });
 
   const trimMaterial = new THREE.MeshStandardMaterial({
-    color: cfg.bumperColorHex,
+    color: activePreset.car.bumperColorHex,
     roughness: 0.52,
     metalness: 0.25,
   });
@@ -140,7 +146,7 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
   });
 
   const exhaustGlowMaterial = new THREE.MeshBasicMaterial({
-    color: cfg.exhaustGlowColorHex,
+    color: activePreset.car.exhaustGlowColorHex,
     transparent: true,
     opacity: 0.25,
     blending: THREE.AdditiveBlending,
@@ -148,20 +154,20 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
   });
 
   const exhaustCoreMaterial = new THREE.MeshStandardMaterial({
-    color: cfg.exhaustGlowColorHex,
-    emissive: cfg.exhaustGlowColorHex,
+    color: activePreset.car.exhaustGlowColorHex,
+    emissive: activePreset.car.exhaustGlowColorHex,
     emissiveIntensity: cfg.exhaustEmissiveIntensity,
     roughness: 0.2,
   });
 
   const tireMaterial = new THREE.MeshStandardMaterial({
-    color: cfg.tireColorHex,
+    color: activePreset.car.tireColorHex,
     roughness: 0.84,
     metalness: 0.05,
   });
 
   const rimMaterial = new THREE.MeshPhysicalMaterial({
-    color: cfg.rimColorHex,
+    color: activePreset.car.rimColorHex,
     metalness: cfg.rimMetalness,
     roughness: cfg.rimRoughness,
     clearcoat: 0.6,
@@ -414,8 +420,28 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
     }
   }
 
+  function applyPalette(name: VisualPresetName): void {
+    const p = VISUAL_PRESETS[name].car;
+    const prevBodyTex = bodyTexture;
+    bodyTexture = createBodyPaintTexture(maxAnisotropy, VISUAL_PRESETS[name]);
+    bodyMaterial.map = bodyTexture;
+    bodyMaterial.needsUpdate = true;
+    prevBodyTex.dispose();
+
+    stripeMaterial.color.set(p.stripeColor);
+    accentMaterial.color.set(p.accentColor);
+    cabinMaterial.color.setHex(p.cabinColorHex);
+    trimMaterial.color.setHex(p.bumperColorHex);
+    tireMaterial.color.setHex(p.tireColorHex);
+    rimMaterial.color.setHex(p.rimColorHex);
+    exhaustGlowMaterial.color.setHex(p.exhaustGlowColorHex);
+    exhaustCoreMaterial.color.setHex(p.exhaustGlowColorHex);
+    exhaustCoreMaterial.emissive.setHex(p.exhaustGlowColorHex);
+  }
+
   return {
     group: root,
     update,
+    applyPalette,
   };
 }

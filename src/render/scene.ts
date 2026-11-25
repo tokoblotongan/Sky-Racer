@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CONFIG } from '../config';
+import { CONFIG, type VisualPreset, type VisualPresetName } from '../config';
 import type { CourseBounds } from '../core/course';
 import type { QualityLevel } from './quality';
 
@@ -26,6 +26,7 @@ export interface SceneContext {
   setCameraOrbitAngle: (angleRad: number) => void;
   updateSunShadowTarget: (focusPos: THREE.Vector3) => void;
   setQuality: (level: QualityLevel) => void;
+  applyPalette: (name: VisualPresetName) => void;
   getViewportSize: () => { width: number; height: number };
   dispose: () => void;
 }
@@ -83,7 +84,7 @@ function mergeRoomGeoms(geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return merged ?? new THREE.BoxGeometry(1, 1, 1);
 }
 
-function createSkyDome(): {
+function createSkyDome(preset: VisualPreset): {
   mesh: THREE.Mesh;
   geometry: THREE.BufferGeometry;
   material: THREE.ShaderMaterial;
@@ -92,9 +93,9 @@ function createSkyDome(): {
   const geometry = new THREE.SphereGeometry(radius, 32, 24);
   const material = new THREE.ShaderMaterial({
     uniforms: {
-      uSkyTop: { value: new THREE.Color(CONFIG.visual.skyTop) },
-      uSkyHorizon: { value: new THREE.Color(CONFIG.visual.skyHorizon) },
-      uGroundBounce: { value: new THREE.Color(CONFIG.props.floorColor.dark) },
+      uSkyTop: { value: new THREE.Color(preset.skyTop) },
+      uSkyHorizon: { value: new THREE.Color(preset.skyHorizon) },
+      uGroundBounce: { value: new THREE.Color(preset.room.floorColor.dark) },
     },
     vertexShader: /* glsl */ `
       varying vec3 vLocalDir;
@@ -137,12 +138,17 @@ function createSkyDome(): {
   return { mesh, geometry, material };
 }
 
-function createWoodFloorTextures(maxAnisotropy: number): {
+function createWoodFloorTextures(
+  maxAnisotropy: number,
+  preset: VisualPreset,
+  repeatX: number = CONFIG.floor.textureRepeat,
+  repeatZ: number = CONFIG.floor.textureRepeat,
+): {
   colorMap: THREE.CanvasTexture;
   roughnessMap: THREE.CanvasTexture;
 } {
   const size = CONFIG.floor.textureSize;
-  const fc = CONFIG.props.floorColor;
+  const fc = preset.room.floorColor;
 
   const colorCanvas = document.createElement('canvas');
   colorCanvas.width = size;
@@ -165,28 +171,28 @@ function createWoodFloorTextures(maxAnisotropy: number): {
       cCtx.fillStyle = baseColor;
       cCtx.fillRect(0, y, size, plankHeight);
 
-      cCtx.fillStyle = 'rgba(255, 224, 180, 0.08)';
-      cCtx.fillRect(0, y + 2, size, 4);
+      cCtx.fillStyle = 'rgba(255, 214, 165, 0.06)';
+      cCtx.fillRect(0, y + 2, size, 3);
 
-      const roughBase = 216 + (row % 3) * 12;
+      const roughBase = 212 + (row % 3) * 14;
       rCtx.fillStyle = `rgb(${roughBase},${roughBase},${roughBase})`;
       rCtx.fillRect(0, y, size, plankHeight);
 
-      for (let g = 0; g < 32; g++) {
+      for (let g = 0; g < 36; g++) {
         const gy = y + 3 + ((g * 6 + row * 11) % (plankHeight - 6));
-        cCtx.strokeStyle = g % 3 === 0 ? fc.light : CONFIG.colors.woodGrain;
-        cCtx.globalAlpha = g % 3 === 0 ? 0.18 : 0.26 + (g % 3) * 0.08;
-        cCtx.lineWidth = 1 + (g % 2) * 0.75;
+        cCtx.strokeStyle = g % 4 === 0 ? fc.light : preset.colors.woodGrain;
+        cCtx.globalAlpha = g % 4 === 0 ? 0.24 : 0.36 + (g % 3) * 0.1;
+        cCtx.lineWidth = 1.1 + (g % 2) * 0.85;
         cCtx.beginPath();
         cCtx.moveTo(0, gy);
         for (let x = 0; x <= size; x += 32) {
-          const wave = Math.sin((x / size) * Math.PI * 4 + row * 1.3 + g * 0.7) * 2.4;
+          const wave = Math.sin((x / size) * Math.PI * 4 + row * 1.3 + g * 0.7) * 2.6;
           cCtx.lineTo(x, gy + wave);
         }
         cCtx.stroke();
 
-        rCtx.strokeStyle = `rgb(${Math.min(255, roughBase + 22)},${Math.min(255, roughBase + 22)},${Math.min(255, roughBase + 22)})`;
-        rCtx.globalAlpha = 0.24;
+        rCtx.strokeStyle = `rgb(${Math.min(255, roughBase + 26)},${Math.min(255, roughBase + 26)},${Math.min(255, roughBase + 26)})`;
+        rCtx.globalAlpha = 0.28;
         rCtx.lineWidth = 1;
         rCtx.beginPath();
         rCtx.moveTo(0, gy);
@@ -197,35 +203,33 @@ function createWoodFloorTextures(maxAnisotropy: number): {
       cCtx.globalAlpha = 1;
       rCtx.globalAlpha = 1;
 
-      cCtx.fillStyle = CONFIG.colors.woodSeam;
-      cCtx.globalAlpha = 0.85;
-      cCtx.fillRect(0, y, size, 2.5);
+      cCtx.fillStyle = preset.colors.woodSeam;
+      cCtx.globalAlpha = 0.92;
+      cCtx.fillRect(0, y, size, 3);
       cCtx.globalAlpha = 1;
 
       rCtx.fillStyle = 'rgb(255,255,255)';
-      rCtx.fillRect(0, y, size, 2.5);
+      rCtx.fillRect(0, y, size, 3);
 
       const jointX = ((row * 197 + 90) % (size - 40)) + 20;
-      cCtx.fillStyle = CONFIG.colors.woodSeam;
-      cCtx.globalAlpha = 0.75;
-      cCtx.fillRect(jointX, y, 2.5, plankHeight);
+      cCtx.fillStyle = preset.colors.woodSeam;
+      cCtx.globalAlpha = 0.85;
+      cCtx.fillRect(jointX, y, 3, plankHeight);
       cCtx.globalAlpha = 1;
     }
   }
-
-  const repeat = CONFIG.floor.textureRepeat;
 
   const colorMap = new THREE.CanvasTexture(colorCanvas);
   colorMap.colorSpace = THREE.SRGBColorSpace;
   colorMap.wrapS = THREE.RepeatWrapping;
   colorMap.wrapT = THREE.RepeatWrapping;
-  colorMap.repeat.set(repeat, repeat);
+  colorMap.repeat.set(repeatX, repeatZ);
   colorMap.anisotropy = maxAnisotropy;
 
   const roughnessMap = new THREE.CanvasTexture(roughCanvas);
   roughnessMap.wrapS = THREE.RepeatWrapping;
   roughnessMap.wrapT = THREE.RepeatWrapping;
-  roughnessMap.repeat.set(repeat, repeat);
+  roughnessMap.repeat.set(repeatX, repeatZ);
   roughnessMap.anisotropy = maxAnisotropy;
 
   return { colorMap, roughnessMap };
@@ -260,30 +264,30 @@ function createWallTexture(
       ctx.fillRect(0, y, width, 1);
     }
 
-    // Subtle atmospheric wall gradient so corners & baseboards stay grounded cleanly without fog
-    const topGrad = ctx.createLinearGradient(0, 0, 0, height * 0.22);
-    topGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.16)');
+    // Atmospheric wall gradient: darker near floor & corners for depth without white clipping
+    const topGrad = ctx.createLinearGradient(0, 0, 0, height * 0.24);
+    topGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.1)');
     topGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
     ctx.fillStyle = topGrad;
-    ctx.fillRect(0, 0, width, height * 0.22);
+    ctx.fillRect(0, 0, width, height * 0.24);
 
-    const bottomGrad = ctx.createLinearGradient(0, height * 0.56, 0, height);
-    bottomGrad.addColorStop(0.0, 'rgba(12, 34, 48, 0.0)');
-    bottomGrad.addColorStop(1.0, 'rgba(12, 34, 48, 0.22)');
+    const bottomGrad = ctx.createLinearGradient(0, height * 0.48, 0, height);
+    bottomGrad.addColorStop(0.0, 'rgba(8, 22, 36, 0.0)');
+    bottomGrad.addColorStop(1.0, 'rgba(8, 22, 36, 0.34)');
     ctx.fillStyle = bottomGrad;
-    ctx.fillRect(0, height * 0.56, width, height * 0.44);
+    ctx.fillRect(0, height * 0.48, width, height * 0.52);
 
-    const leftGrad = ctx.createLinearGradient(0, 0, width * 0.12, 0);
-    leftGrad.addColorStop(0.0, 'rgba(10, 28, 42, 0.2)');
-    leftGrad.addColorStop(1.0, 'rgba(10, 28, 42, 0.0)');
+    const leftGrad = ctx.createLinearGradient(0, 0, width * 0.16, 0);
+    leftGrad.addColorStop(0.0, 'rgba(8, 22, 36, 0.32)');
+    leftGrad.addColorStop(1.0, 'rgba(8, 22, 36, 0.0)');
     ctx.fillStyle = leftGrad;
-    ctx.fillRect(0, 0, width * 0.12, height);
+    ctx.fillRect(0, 0, width * 0.16, height);
 
-    const rightGrad = ctx.createLinearGradient(width * 0.88, 0, width, 0);
-    rightGrad.addColorStop(0.0, 'rgba(10, 28, 42, 0.0)');
-    rightGrad.addColorStop(1.0, 'rgba(10, 28, 42, 0.2)');
+    const rightGrad = ctx.createLinearGradient(width * 0.84, 0, width, 0);
+    rightGrad.addColorStop(0.0, 'rgba(8, 22, 36, 0.0)');
+    rightGrad.addColorStop(1.0, 'rgba(8, 22, 36, 0.32)');
     ctx.fillStyle = rightGrad;
-    ctx.fillRect(width * 0.88, 0, width * 0.12, height);
+    ctx.fillRect(width * 0.84, 0, width * 0.16, height);
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -293,28 +297,33 @@ function createWallTexture(
   return tex;
 }
 
-function createCeilingTexture(maxAnisotropy: number): THREE.CanvasTexture {
+function createCeilingTexture(
+  maxAnisotropy: number,
+  preset: VisualPreset,
+  repeatX = 4,
+  repeatZ = 4,
+): THREE.CanvasTexture {
   const size = 512;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    ctx.fillStyle = CONFIG.props.ceilingColor;
+    ctx.fillStyle = preset.room.ceilingColor;
     ctx.fillRect(0, 0, size, size);
 
     // Subtle coffered ceiling grid & airy skylight panels
-    ctx.strokeStyle = 'rgba(148, 175, 204, 0.34)';
+    ctx.strokeStyle = 'rgba(110, 148, 190, 0.36)';
     ctx.lineWidth = 10;
     ctx.strokeRect(5, 5, size - 10, size - 10);
 
     const inset = 54;
-    ctx.fillStyle = CONFIG.props.ceilingSkylightColor;
-    ctx.globalAlpha = 0.42;
+    ctx.fillStyle = preset.room.ceilingSkylightColor;
+    ctx.globalAlpha = 0.45;
     ctx.fillRect(inset, inset, size - inset * 2, size - inset * 2);
     ctx.globalAlpha = 1;
 
-    ctx.strokeStyle = 'rgba(201, 194, 182, 0.55)';
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.5)';
     ctx.lineWidth = 6;
     ctx.strokeRect(inset, inset, size - inset * 2, size - inset * 2);
 
@@ -329,6 +338,7 @@ function createCeilingTexture(maxAnisotropy: number): THREE.CanvasTexture {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeatX, repeatZ);
   tex.anisotropy = maxAnisotropy;
   return tex;
 }
@@ -360,6 +370,8 @@ function disposeObjectResources(root: THREE.Object3D): void {
 export function createSceneContext(container: HTMLElement): SceneContext {
   const isSoftwareGl = detectSoftwareWebGL();
   const vis = CONFIG.visual;
+  let activePresetName: VisualPresetName = vis.activePreset;
+  let activePreset: VisualPreset = vis.presets[activePresetName];
 
   const renderer = new THREE.WebGLRenderer({
     antialias: !isSoftwareGl,
@@ -367,7 +379,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = vis.exposure;
+  renderer.toneMappingExposure = activePreset.exposure;
   renderer.setPixelRatio(
     isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, CONFIG.renderer.maxPixelRatio),
   );
@@ -385,16 +397,16 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   );
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(vis.skyHorizon);
+  scene.background = new THREE.Color(activePreset.skyHorizon);
 
-  const skyDome = createSkyDome();
+  const skyDome = createSkyDome(activePreset);
   scene.add(skyDome.mesh);
 
   // Default path: scene.fog = null unless visual.fogEnabled === true (no FogExp2/Fog by default)
   let debugFog: THREE.Fog | null = null;
   const ensureDebugFog = (): THREE.Fog => {
     if (!debugFog) {
-      debugFog = new THREE.Fog(vis.fogColor, vis.fogNear, vis.fogFar);
+      debugFog = new THREE.Fog(activePreset.fogColor, vis.fogNear, vis.fogFar);
     }
     return debugFog;
   };
@@ -405,7 +417,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   const roomEnvironment = new RoomEnvironment();
   const envRenderTarget = pmremGenerator.fromScene(roomEnvironment, CONFIG.renderer.envBlur);
   scene.environment = envRenderTarget.texture;
-  scene.environmentIntensity = vis.envIntensity;
+  scene.environmentIntensity = activePreset.envIntensity;
   roomEnvironment.dispose();
   pmremGenerator.dispose();
 
@@ -434,7 +446,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   let currentShadowMapSize: number = CONFIG.renderer.shadowMapSize;
   let currentShadowFollowRadius: number = CONFIG.lighting.sunShadowExtent;
 
-  const sunLight = new THREE.DirectionalLight(vis.sunColor, vis.sunIntensity);
+  const sunLight = new THREE.DirectionalLight(activePreset.sunColor, activePreset.sunIntensity);
   sunLight.position.copy(sunOffsetVec);
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(currentShadowMapSize, currentShadowMapSize);
@@ -451,16 +463,25 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   scene.add(sunLight.target);
 
   const hemiLight = new THREE.HemisphereLight(
-    vis.hemisphereSkyColor,
-    vis.hemisphereGroundColor,
-    vis.hemisphereIntensity,
+    activePreset.hemisphereSkyColor,
+    activePreset.hemisphereGroundColor,
+    activePreset.hemisphereIntensity,
   );
   hemiLight.position.set(0, 120, 0);
   scene.add(hemiLight);
 
   // Room shell: seamless floor + 4 walls + baseboards + ceiling with full anisotropic textures
-  const { colorMap: woodColorMap, roughnessMap: woodRoughnessMap } =
-    createWoodFloorTextures(maxAnisotropy);
+  let plankRepeatX: number = CONFIG.floor.textureRepeat;
+  let plankRepeatZ: number = CONFIG.floor.textureRepeat;
+  let ceilingRepeatX = 4;
+  let ceilingRepeatZ = 4;
+
+  let { colorMap: woodColorMap, roughnessMap: woodRoughnessMap } = createWoodFloorTextures(
+    maxAnisotropy,
+    activePreset,
+    plankRepeatX,
+    plankRepeatZ,
+  );
   const floorMaterial = new THREE.MeshStandardMaterial({
     map: woodColorMap,
     roughnessMap: woodRoughnessMap,
@@ -468,9 +489,9 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     metalness: CONFIG.floor.metalness,
   });
 
-  const backWallTex = createWallTexture(
-    CONFIG.props.wallColor,
-    CONFIG.props.palette.wallStripe,
+  let backWallTex = createWallTexture(
+    activePreset.room.wallColor,
+    activePreset.room.wallStripe,
     maxAnisotropy,
   );
   const backWallMat = new THREE.MeshStandardMaterial({
@@ -479,9 +500,9 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     metalness: 0.0,
   });
 
-  const sideWallTex = createWallTexture(
-    CONFIG.props.sideWallColor,
-    CONFIG.props.palette.sideWallStripe,
+  let sideWallTex = createWallTexture(
+    activePreset.room.sideWallColor,
+    activePreset.room.sideWallStripe,
     maxAnisotropy,
   );
   const sideWallMat = new THREE.MeshStandardMaterial({
@@ -491,18 +512,23 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   });
 
   const baseboardMat = new THREE.MeshStandardMaterial({
-    color: CONFIG.props.baseboardColor,
+    color: activePreset.room.baseboardColor,
     roughness: 0.66,
     metalness: 0.02,
   });
 
-  const ceilingTex = createCeilingTexture(maxAnisotropy);
+  let ceilingTex = createCeilingTexture(
+    maxAnisotropy,
+    activePreset,
+    ceilingRepeatX,
+    ceilingRepeatZ,
+  );
   const ceilingMat = new THREE.MeshStandardMaterial({
     map: ceilingTex,
     roughness: 0.88,
     metalness: 0.0,
-    emissive: new THREE.Color(CONFIG.props.ceilingColor),
-    emissiveIntensity: 0.24,
+    emissive: new THREE.Color(activePreset.room.ceilingColor),
+    emissiveIntensity: 0.18,
   });
 
   const roomShellGroup = new THREE.Group();
@@ -521,8 +547,8 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     const wallThickness = 4;
     const floorW = dim.width + wallThickness * 4;
     const floorD = dim.depth + wallThickness * 4;
-    const plankRepeatX = Math.max(12, Math.round(floorW / 12.5));
-    const plankRepeatZ = Math.max(12, Math.round(floorD / 12.5));
+    plankRepeatX = Math.max(12, Math.round(floorW / 12.5));
+    plankRepeatZ = Math.max(12, Math.round(floorD / 12.5));
     woodColorMap.repeat.set(plankRepeatX, plankRepeatZ);
     woodRoughnessMap.repeat.set(plankRepeatX, plankRepeatZ);
 
@@ -615,10 +641,9 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     trimMesh.matrixAutoUpdate = false;
     roomShellGroup.add(trimMesh);
 
-    ceilingTex.repeat.set(
-      Math.max(4, Math.round(floorW / 95)),
-      Math.max(4, Math.round(floorD / 95)),
-    );
+    ceilingRepeatX = Math.max(4, Math.round(floorW / 95));
+    ceilingRepeatZ = Math.max(4, Math.round(floorD / 95));
+    ceilingTex.repeat.set(ceilingRepeatX, ceilingRepeatZ);
     const ceilingGeom = new THREE.PlaneGeometry(floorW, floorD);
     ceilingGeom.rotateX(Math.PI / 2);
     roomGeometries.push(ceilingGeom);
@@ -643,7 +668,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
 
   // Visual debug keys (F3 fog, F4 bloom, [ / ] exposure) & compact bottom-center status badge
   let bloomDebugEnabled = true;
-  let currentExposure: number = vis.exposure;
+  let currentExposure: number = activePreset.exposure;
   scene.userData.visualDebugBloomEnabled = bloomDebugEnabled;
 
   let debugPanel: HTMLDivElement | null = null;
@@ -652,7 +677,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     const fogLabel = fogEnabled ? `ON (${vis.fogNear}-${vis.fogFar}m)` : 'OFF';
     const bloomLabel = bloomDebugEnabled ? 'ON' : 'OFF';
     debugPanel.textContent =
-      `FOG [F3]: ${fogLabel} | BLOOM [F4]: ${bloomLabel} | EXP [[ / ]]: ${currentExposure.toFixed(2)}`;
+      `PALET [F5]: ${activePresetName.toUpperCase()} | FOG [F3]: ${fogLabel} | BLOOM [F4]: ${bloomLabel} | EXP [[ / ]]: ${currentExposure.toFixed(2)}`;
   };
 
   const handleDebugKeyDown = (event: KeyboardEvent): void => {
@@ -830,6 +855,84 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     }
   }
 
+  function applyPalette(name: VisualPresetName): void {
+    activePresetName = name;
+    activePreset = vis.presets[name];
+
+    currentExposure = activePreset.exposure;
+    renderer.toneMappingExposure = currentExposure;
+
+    scene.background = new THREE.Color(activePreset.skyHorizon);
+    skyDome.material.uniforms.uSkyTop.value.set(activePreset.skyTop);
+    skyDome.material.uniforms.uSkyHorizon.value.set(activePreset.skyHorizon);
+    skyDome.material.uniforms.uGroundBounce.value.set(activePreset.room.floorColor.dark);
+
+    if (debugFog) {
+      debugFog.color.set(activePreset.fogColor);
+    }
+
+    scene.environmentIntensity = activePreset.envIntensity;
+
+    sunLight.color.set(activePreset.sunColor);
+    sunLight.intensity = activePreset.sunIntensity;
+
+    hemiLight.color.set(activePreset.hemisphereSkyColor);
+    hemiLight.groundColor.set(activePreset.hemisphereGroundColor);
+    hemiLight.intensity = activePreset.hemisphereIntensity;
+
+    const prevWoodColor = woodColorMap;
+    const prevWoodRough = woodRoughnessMap;
+    const nextWood = createWoodFloorTextures(
+      maxAnisotropy,
+      activePreset,
+      plankRepeatX,
+      plankRepeatZ,
+    );
+    woodColorMap = nextWood.colorMap;
+    woodRoughnessMap = nextWood.roughnessMap;
+    floorMaterial.map = woodColorMap;
+    floorMaterial.roughnessMap = woodRoughnessMap;
+    floorMaterial.needsUpdate = true;
+    prevWoodColor.dispose();
+    prevWoodRough.dispose();
+
+    const prevBackTex = backWallTex;
+    backWallTex = createWallTexture(
+      activePreset.room.wallColor,
+      activePreset.room.wallStripe,
+      maxAnisotropy,
+    );
+    backWallMat.map = backWallTex;
+    backWallMat.needsUpdate = true;
+    prevBackTex.dispose();
+
+    const prevSideTex = sideWallTex;
+    sideWallTex = createWallTexture(
+      activePreset.room.sideWallColor,
+      activePreset.room.sideWallStripe,
+      maxAnisotropy,
+    );
+    sideWallMat.map = sideWallTex;
+    sideWallMat.needsUpdate = true;
+    prevSideTex.dispose();
+
+    baseboardMat.color.set(activePreset.room.baseboardColor);
+
+    const prevCeilingTex = ceilingTex;
+    ceilingTex = createCeilingTexture(
+      maxAnisotropy,
+      activePreset,
+      ceilingRepeatX,
+      ceilingRepeatZ,
+    );
+    ceilingMat.map = ceilingTex;
+    ceilingMat.emissive.set(activePreset.room.ceilingColor);
+    ceilingMat.needsUpdate = true;
+    prevCeilingTex.dispose();
+
+    updateVisualDebugOverlay();
+  }
+
   return {
     renderer,
     scene,
@@ -841,6 +944,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     setCameraOrbitAngle,
     updateSunShadowTarget,
     setQuality,
+    applyPalette,
     getViewportSize,
     dispose,
   };

@@ -7,7 +7,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
-import { CONFIG } from '../config';
+import { CONFIG, VISUAL_PRESETS, type VisualPresetName } from '../config';
 import type { QualityLevel } from './quality';
 
 export interface PostFxHandle {
@@ -15,6 +15,7 @@ export interface PostFxHandle {
   resize: (width: number, height: number) => void;
   setQuality: (level: QualityLevel) => void;
   setSpeedIntensity: (intensity: number) => void;
+  applyPalette: (name: VisualPresetName) => void;
   dispose: () => void;
 }
 
@@ -103,12 +104,25 @@ const ColorGradeShader = {
       vec4 base = texture2D(tDiffuse, vUv);
       vec3 rgb = max(base.rgb, vec3(0.0));
 
-      // Saturation in linear space
+      // Highlight-safe saturation in linear space: dampen extra saturation on bright HDR highlights
       float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
-      rgb = max(vec3(0.0), mix(vec3(luma), rgb, uSaturation));
+      float peak = max(rgb.r, max(rgb.g, rgb.b));
+      float satProtect = 1.0 - smoothstep(0.65, 1.5, peak) * 0.6;
+      float effectiveSat = mix(1.0, uSaturation, satProtect);
+      rgb = mix(vec3(luma), rgb, effectiveSat);
 
-      // Gentle contrast pivot around linear mid-gray (0.18) without crushing blacks or clipping HDR
-      rgb = pow(max(rgb / 0.18, vec3(0.0)), vec3(uContrast)) * 0.18;
+      // Soft gamut safety without clipping negative channels abruptly
+      float minChan = min(rgb.r, min(rgb.g, rgb.b));
+      if (minChan < 0.0) {
+        float k = luma / max(1e-4, luma - minChan);
+        rgb = mix(vec3(luma), rgb, k);
+      }
+      rgb = max(rgb, vec3(0.0));
+
+      // Gentle contrast pivot around linear mid-gray (0.18) with highlight roll-off to avoid clipping
+      vec3 contrasted = pow(max(rgb / 0.18, vec3(0.0)), vec3(uContrast)) * 0.18;
+      float highProtect = smoothstep(0.42, 1.25, peak);
+      rgb = mix(contrasted, rgb, highProtect * 0.78);
 
       // Subtle radial vignette
       vec2 centered = vUv - 0.5;
@@ -272,6 +286,13 @@ export function createPostFx(
     composer.render();
   }
 
+  function applyPalette(name: VisualPresetName): void {
+    const grade = VISUAL_PRESETS[name].grade;
+    colorGradePass.uniforms.uSaturation.value = grade.saturation;
+    colorGradePass.uniforms.uContrast.value = grade.contrast;
+    colorGradePass.uniforms.uVignette.value = grade.vignette;
+  }
+
   function dispose(): void {
     bloomPass.dispose();
     speedLinesPass.dispose();
@@ -288,6 +309,7 @@ export function createPostFx(
     resize,
     setQuality,
     setSpeedIntensity,
+    applyPalette,
     dispose,
   };
 }

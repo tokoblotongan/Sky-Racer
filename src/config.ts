@@ -7,6 +7,265 @@ export type { BoostPadSegmentConfig, CourseSegmentConfig };
 const CAR_BODY_LENGTH = 3.35;
 const CAR_BODY_WIDTH = 1.7;
 
+export type VisualPresetName = 'vivid' | 'pastel';
+
+export interface VisualPreset {
+  name: VisualPresetName;
+  exposure: number;
+  skyTop: string;
+  skyHorizon: string;
+  fogColor: string;
+  hemisphereIntensity: number;
+  hemisphereSkyColor: string;
+  hemisphereGroundColor: string;
+  sunIntensity: number;
+  sunColor: string;
+  envIntensity: number;
+  trackEnvIntensity: number;
+  trackClearcoatRoughness: number;
+  grade: {
+    saturation: number;
+    contrast: number;
+    vignette: number;
+  };
+  colors: {
+    track: string;
+    trackEdge: string;
+    trackGroove: string;
+    trackCenterDash: string;
+    rail: string;
+    railHighlight: string;
+    boost: string;
+    boostBase: string;
+    boostStripeLight: string;
+    boostEmissiveIntensity: number;
+    accent: string;
+    jumpStripeDark: string;
+    woodGrain: string;
+    woodSeam: string;
+  };
+  room: {
+    wallColor: string;
+    wallStripe: string;
+    sideWallColor: string;
+    sideWallStripe: string;
+    baseboardColor: string;
+    ceilingColor: string;
+    ceilingSkylightColor: string;
+    floorColor: {
+      light: string;
+      mid: string;
+      dark: string;
+    };
+    windowFrame: string;
+    windowSky: string;
+    sunbeamColor: string;
+    rugBase: string;
+    rugBorder: string;
+    rugPattern: string;
+    woodLight: string;
+    woodDark: string;
+    paperCream: string;
+    lampMetal: string;
+    lampShade: string;
+    propColors: readonly string[];
+  };
+  car: {
+    bodyColor: string;
+    stripeColor: string;
+    accentColor: string;
+    cabinColorHex: number;
+    bumperColorHex: number;
+    tireColorHex: number;
+    rimColorHex: number;
+    exhaustGlowColorHex: number;
+  };
+  hud: {
+    accentYellow: string;
+    accentBlue: string;
+    accentCyan: string;
+    accentOrange: string;
+  };
+}
+
+export const VISUAL_PRESETS: Record<VisualPresetName, VisualPreset> = {
+  vivid: {
+    name: 'vivid',
+    exposure: 0.95,
+    skyTop: '#1E90FF',
+    skyHorizon: '#8FD3FF',
+    fogColor: '#75C3FF',
+    hemisphereIntensity: 0.62,
+    hemisphereSkyColor: '#5CB8FF',
+    hemisphereGroundColor: '#7A4622',
+    sunIntensity: 2.9,
+    sunColor: '#FFE0AD',
+    envIntensity: 0.45,
+    trackEnvIntensity: 0.35,
+    trackClearcoatRoughness: 0.2,
+    grade: {
+      saturation: 1.25,
+      contrast: 1.12,
+      vignette: 0.15,
+    },
+    colors: {
+      track: '#FF5A00',
+      trackEdge: '#FF8A1F',
+      trackGroove: '#CC4400',
+      trackCenterDash: '#FFFFFF',
+      rail: '#0A5CFF',
+      railHighlight: '#4D8DFF',
+      boost: '#00E5FF',
+      boostBase: '#062D4D',
+      boostStripeLight: '#E0FFFF',
+      boostEmissiveIntensity: 2.8,
+      accent: '#FFD000',
+      jumpStripeDark: '#141C2B',
+      woodGrain: '#4F2810',
+      woodSeam: '#381B09',
+    },
+    room: {
+      wallColor: '#14B8A6',
+      wallStripe: '#0F9D8D',
+      sideWallColor: '#2F9BFF',
+      sideWallStripe: '#1F84E5',
+      baseboardColor: '#1E293B',
+      ceilingColor: '#DCEEFF',
+      ceilingSkylightColor: '#7EC8FF',
+      floorColor: {
+        light: '#9A5A2E',
+        mid: '#834A23',
+        dark: '#6E3B1A',
+      },
+      windowFrame: '#334155',
+      windowSky: '#5CB8FF',
+      sunbeamColor: '#FFE6B0',
+      rugBase: '#334155',
+      rugBorder: '#0E7490',
+      rugPattern: '#1E293B',
+      woodLight: '#8D5229',
+      woodDark: '#5C3114',
+      paperCream: '#E8DFCC',
+      lampMetal: '#475569',
+      lampShade: '#334155',
+      propColors: [
+        '#C81E32', // merah
+        '#C99E00', // kuning
+        '#15803D', // hijau
+        '#1D4ED8', // biru
+        '#7E22CE', // ungu
+        '#B84208', // oranye tua
+        '#BE185D', // pink
+        '#0E7490', // cyan
+      ],
+    },
+    car: {
+      bodyColor: '#FF2D3D',
+      stripeColor: '#FFF6E0',
+      accentColor: '#FFD000',
+      cabinColorHex: 0x111824,
+      bumperColorHex: 0x1b2432,
+      tireColorHex: 0x14171d,
+      rimColorHex: 0xeef4fc,
+      exhaustGlowColorHex: 0x00e5ff,
+    },
+    hud: {
+      accentYellow: '#FFD000',
+      accentBlue: '#0A5CFF',
+      accentCyan: '#00E5FF',
+      accentOrange: '#FF5A00',
+    },
+  },
+  pastel: {
+    name: 'pastel',
+    exposure: 0.9,
+    skyTop: '#4DB3FF',
+    skyHorizon: '#BFE3FF',
+    fogColor: '#A9D8F5',
+    hemisphereIntensity: 0.55,
+    hemisphereSkyColor: '#BFE3FF',
+    hemisphereGroundColor: '#8B5A2B',
+    sunIntensity: 2.8,
+    sunColor: '#FFE2B8',
+    envIntensity: 0.5,
+    trackEnvIntensity: 0.35,
+    trackClearcoatRoughness: 0.2,
+    grade: {
+      saturation: 1.12,
+      contrast: 1.08,
+      vignette: 0.18,
+    },
+    colors: {
+      track: '#FF6A00',
+      trackEdge: '#FF963D',
+      trackGroove: '#DE5400',
+      trackCenterDash: '#FFE2B8',
+      rail: '#1E6BFF',
+      railHighlight: '#5594FF',
+      boost: '#35D4FF',
+      boostBase: '#093B5C',
+      boostStripeLight: '#E0FAFF',
+      boostEmissiveIntensity: 2.25,
+      accent: '#FFD23F',
+      jumpStripeDark: '#1E293B',
+      woodGrain: '#7E471E',
+      woodSeam: '#5D3112',
+    },
+    room: {
+      wallColor: '#8FD8D0',
+      wallStripe: '#7CC6BE',
+      sideWallColor: '#7FC4F0',
+      sideWallStripe: '#6FB4E0',
+      baseboardColor: '#B59670',
+      ceilingColor: '#E8F2FC',
+      ceilingSkylightColor: '#A9DCFF',
+      floorColor: {
+        light: '#B9783A',
+        mid: '#A36530',
+        dark: '#8E5427',
+      },
+      windowFrame: '#C9C2B6',
+      windowSky: '#7CC6F8',
+      sunbeamColor: '#FFE8B8',
+      rugBase: '#C2B39C',
+      rugBorder: '#79A0BA',
+      rugPattern: '#A18264',
+      woodLight: '#C28A54',
+      woodDark: '#8E582C',
+      paperCream: '#CFC8BC',
+      lampMetal: '#7E8A96',
+      lampShade: '#C8BFA9',
+      propColors: [
+        '#6CA6CC',
+        '#76B898',
+        '#CC7F78',
+        '#CEAC6B',
+        '#9B8CC2',
+        '#6C7F91',
+      ],
+    },
+    car: {
+      bodyColor: '#F6EFE0',
+      stripeColor: '#E11D48',
+      accentColor: '#FFD23F',
+      cabinColorHex: 0x182232,
+      bumperColorHex: 0x263040,
+      tireColorHex: 0x171a21,
+      rimColorHex: 0xe6edf5,
+      exhaustGlowColorHex: 0x35d4ff,
+    },
+    hud: {
+      accentYellow: '#FFD23F',
+      accentBlue: '#1E6BFF',
+      accentCyan: '#35D4FF',
+      accentOrange: '#FF6A00',
+    },
+  },
+};
+
+const DEFAULT_VISUAL_PRESET: VisualPresetName = 'vivid';
+const ACTIVE_PRESET = VISUAL_PRESETS[DEFAULT_VISUAL_PRESET];
+
 export const CONFIG = {
   activeCourseId: 'sky-circuit',
   render: {
@@ -41,66 +300,68 @@ export const CONFIG = {
     courseFrameArrowLength: 2.6,
   },
   visual: {
-    exposure: 0.9, // eksposur ACES renderer (naik = adegan lebih terang, turun = warna lebih pekat & bayangan lebih dalam)
+    activePreset: DEFAULT_VISUAL_PRESET as VisualPresetName,
+    presets: VISUAL_PRESETS,
+    exposure: ACTIVE_PRESET.exposure, // eksposur ACES renderer (naik = adegan lebih terang, turun = warna lebih pekat & bayangan lebih dalam)
     fogEnabled: false, // nonaktifkan fog bawaan agar lintasan jernih; tekan F3 untuk toggle debug fog
-    skyTop: '#4DB3FF', // warna biru puncak kubah langit (naik kecerahan = langit lebih pucat, turun = biru langit lebih pekat)
-    skyHorizon: '#BFE3FF', // warna biru terang di garis horizon langit (naik = horizon lebih cerah, turun = transisi ke kabut lebih gelap)
-    fogColor: '#A9D8F5', // warna kabut debug (hanya aktif bila fogEnabled / F3 dinyalakan)
+    skyTop: ACTIVE_PRESET.skyTop, // warna biru puncak kubah langit (naik kecerahan = langit lebih pucat, turun = biru langit lebih pekat)
+    skyHorizon: ACTIVE_PRESET.skyHorizon, // warna biru terang di garis horizon langit (naik = horizon lebih cerah, turun = transisi ke kabut lebih gelap)
+    fogColor: ACTIVE_PRESET.fogColor, // warna kabut debug (hanya aktif bila fogEnabled / F3 dinyalakan)
     fogType: 'linear' as 'linear' | 'exp2', // mode kabut debug
     fogNear: 90, // jarak mulai kabut debug
     fogFar: 420, // jarak kabut penuh debug
-    hemisphereIntensity: 0.55, // intensitas cahaya pantulan langit-lantai (naik = sisi gelap objek lebih terang/datar, turun = kontras bayangan lebih kuat)
-    hemisphereSkyColor: '#BFE3FF', // warna cahaya langit hemisphere dari atas
-    hemisphereGroundColor: '#8B5A2B', // warna pantulan kayu hangat dari bawah (naik kecerahan = bagian bawah objek lebih terang)
-    envIntensity: 0.5, // intensitas environment map global pada material reflektif (naik = pantulan lingkungan lebih kuat, turun = warna asli material lebih dominan)
-    sunIntensity: 2.8, // intensitas matahari utama (naik = sorotan & kontras cahaya-bayangan lebih kuat, turun = pencahayaan lebih redup)
-    sunColor: '#FFE2B8', // warna cahaya matahari hangat
-    trackEnvIntensity: 0.35, // intensitas pantulan lingkungan pada aspal & pagar lintasan (naik = kilau lingkungan makin kuat/berisiko pucat, turun = warna oranye & biru makin jenuh)
-    trackClearcoatRoughness: 0.2, // kekasaran lapisan clearcoat lintasan & pagar (naik = pantulan lebih tersebar tanpa bercak susu, turun = kilau cermin makin tajam)
+    hemisphereIntensity: ACTIVE_PRESET.hemisphereIntensity, // intensitas cahaya pantulan langit-lantai (naik = sisi gelap objek lebih terang/datar, turun = kontras bayangan lebih kuat)
+    hemisphereSkyColor: ACTIVE_PRESET.hemisphereSkyColor, // warna cahaya langit hemisphere biru sejuk dari atas
+    hemisphereGroundColor: ACTIVE_PRESET.hemisphereGroundColor, // warna pantulan kayu hangat dari bawah (naik kecerahan = bagian bawah objek lebih terang)
+    envIntensity: ACTIVE_PRESET.envIntensity, // intensitas environment map global pada material reflektif (naik = pantulan lingkungan lebih kuat, turun = warna asli material lebih dominan)
+    sunIntensity: ACTIVE_PRESET.sunIntensity, // intensitas matahari utama (naik = sorotan & kontras cahaya-bayangan lebih kuat, turun = pencahayaan lebih redup)
+    sunColor: ACTIVE_PRESET.sunColor, // warna cahaya matahari hangat
+    trackEnvIntensity: ACTIVE_PRESET.trackEnvIntensity, // intensitas pantulan lingkungan pada aspal & pagar lintasan (naik = kilau lingkungan makin kuat/berisiko pucat, turun = warna oranye & biru makin jenuh)
+    trackClearcoatRoughness: ACTIVE_PRESET.trackClearcoatRoughness, // kekasaran lapisan clearcoat lintasan & pagar (naik = pantulan lebih tersebar tanpa bercak susu, turun = kilau cermin makin tajam)
     grade: {
-      saturation: 1.12, // pengali kejenuhan warna akhir (naik = warna makin menyala, turun = makin kalem)
-      contrast: 1.08, // pengali kontras akhir di sekitar mid-gray (naik = gelap-terang makin tegas, turun = lebih lembut)
-      vignette: 0.18, // penggelapan halus di tepi layar (naik = bingkai tepi makin gelap, turun = merata ke sudut)
+      saturation: ACTIVE_PRESET.grade.saturation, // pengali kejenuhan warna akhir (naik = warna makin menyala, turun = makin kalem)
+      contrast: ACTIVE_PRESET.grade.contrast, // pengali kontras akhir di sekitar mid-gray (naik = gelap-terang makin tegas, turun = lebih lembut)
+      vignette: ACTIVE_PRESET.grade.vignette, // penggelapan halus di tepi layar (naik = bingkai tepi makin gelap, turun = merata ke sudut)
     },
-    debugKeys: true, // aktifkan tombol uji visual F3 (fog), F4 (bloom), [ dan ] (exposure)
+    debugKeys: true, // aktifkan tombol uji visual F3 (fog), F4 (bloom), F5 (preset palet), [ dan ] (exposure)
   },
   colors: {
-    track: '#FF6A00',
-    trackEdge: '#FF963D',
-    trackGroove: '#DE5400',
-    trackCenterDash: '#FFE2B8',
-    rail: '#1E6BFF',
-    railHighlight: '#5594FF',
-    boost: '#35D4FF',
-    boostStripeLight: '#E0FAFF',
-    skyTop: '#4DB3FF',
-    skyHorizon: '#BFE3FF',
-    skyFogHex: 0xa9d8f5,
-    accent: '#FFD23F',
-    jumpStripeDark: '#1E293B',
-    sunLightHex: 0xffe2b8,
-    hemiSkyHex: 0xbfe3ff,
-    hemiGroundHex: 0x8b5a2b,
-    woodBase: '#B9783A',
-    woodPlankAlt: '#A36530',
-    woodGrain: '#7E471E',
-    woodSeam: '#5D3112',
-    debugCenterLineHex: 0xffd23f,
-    debugTangentHex: 0x35d4ff,
+    track: ACTIVE_PRESET.colors.track,
+    trackEdge: ACTIVE_PRESET.colors.trackEdge,
+    trackGroove: ACTIVE_PRESET.colors.trackGroove,
+    trackCenterDash: ACTIVE_PRESET.colors.trackCenterDash,
+    rail: ACTIVE_PRESET.colors.rail,
+    railHighlight: ACTIVE_PRESET.colors.railHighlight,
+    boost: ACTIVE_PRESET.colors.boost,
+    boostStripeLight: ACTIVE_PRESET.colors.boostStripeLight,
+    skyTop: ACTIVE_PRESET.skyTop,
+    skyHorizon: ACTIVE_PRESET.skyHorizon,
+    skyFogHex: 0x75c3ff,
+    accent: ACTIVE_PRESET.colors.accent,
+    jumpStripeDark: ACTIVE_PRESET.colors.jumpStripeDark,
+    sunLightHex: 0xffe0ad,
+    hemiSkyHex: 0x5cb8ff,
+    hemiGroundHex: 0x7a4622,
+    woodBase: ACTIVE_PRESET.room.floorColor.light,
+    woodPlankAlt: ACTIVE_PRESET.room.floorColor.mid,
+    woodGrain: ACTIVE_PRESET.colors.woodGrain,
+    woodSeam: ACTIVE_PRESET.colors.woodSeam,
+    debugCenterLineHex: 0xffd000,
+    debugTangentHex: 0x00e5ff,
     debugUpHex: 0x22c55e,
     debugRightHex: 0xef4444,
   },
   renderer: {
     maxPixelRatio: 2,
-    toneMappingExposure: 0.9,
+    toneMappingExposure: ACTIVE_PRESET.exposure,
     envBlur: 0.04,
-    envIntensity: 0.5,
+    envIntensity: ACTIVE_PRESET.envIntensity,
     shadowMapSize: 2048,
     softwareGlFramePauseMs: 80,
     softwareGlPollMs: 5,
   },
   lighting: {
-    sunIntensity: 2.8,
+    sunIntensity: ACTIVE_PRESET.sunIntensity,
     sunOffset: { x: 95, y: 140, z: 80 },
     sunShadowExtent: 90,
     sunShadowNear: 10,
@@ -108,7 +369,7 @@ export const CONFIG = {
     sunShadowBias: -0.0004,
     sunShadowNormalBias: 0.04,
     sunShadowRadius: 3,
-    hemiIntensity: 0.55,
+    hemiIntensity: ACTIVE_PRESET.hemisphereIntensity,
     fogDensity: 0.0011,
   },
   camera: {
@@ -157,10 +418,10 @@ export const CONFIG = {
     colors: {
       textPrimary: '#FFFDF7',
       textMuted: '#CBD5E1',
-      accentYellow: '#FFD23F',
-      accentBlue: '#1E6BFF',
-      accentCyan: '#35D4FF',
-      accentOrange: '#FF6A00',
+      accentYellow: ACTIVE_PRESET.hud.accentYellow,
+      accentBlue: ACTIVE_PRESET.hud.accentBlue,
+      accentCyan: ACTIVE_PRESET.hud.accentCyan,
+      accentOrange: ACTIVE_PRESET.hud.accentOrange,
       panelBg: 'rgba(15, 23, 42, 0.82)',
     },
   },
@@ -179,15 +440,15 @@ export const CONFIG = {
     supportLandingExclusion: 22,
     shadowDistance: 145,
     roomMargin: 150, // margin minimum di setiap sisi bounding box lintasan untuk dinding, lantai, dan langit-langit
-    wallColor: '#8FD8D0', // warna dinding depan & belakang mint jenuh sedang (naik kecerahan = makin pucat, turun = makin teduh)
-    sideWallColor: '#7FC4F0', // warna dinding samping biru pastel jenuh sedang (naik kecerahan = makin pucat, turun = makin pekat)
-    baseboardColor: '#B59670', // warna plint dinding krem hangat gelap agar memisah dari dinding & lantai
-    ceilingColor: '#E8F2FC', // warna langit-langit ruangan terang agar tetap lapang tanpa celah kosong
-    ceilingSkylightColor: '#A9DCFF', // warna panel skylight langit-langit
+    wallColor: ACTIVE_PRESET.room.wallColor, // warna dinding depan & belakang
+    sideWallColor: ACTIVE_PRESET.room.sideWallColor, // warna dinding samping
+    baseboardColor: ACTIVE_PRESET.room.baseboardColor, // warna plint dinding agar memisah dari dinding & lantai
+    ceilingColor: ACTIVE_PRESET.room.ceilingColor, // warna langit-langit ruangan terang agar tetap lapang tanpa celah kosong
+    ceilingSkylightColor: ACTIVE_PRESET.room.ceilingSkylightColor, // warna panel skylight langit-langit
     floorColor: {
-      light: '#B9783A', // warna papan kayu hangat terang (naik = lantai lebih cerah, turun = lebih gelap)
-      mid: '#A36530', // warna papan kayu hangat sedang
-      dark: '#8E5427', // warna papan & serat kayu gelap (turun = kontras serat makin tajam)
+      light: ACTIVE_PRESET.room.floorColor.light, // warna papan kayu hangat terang (naik = lantai lebih cerah, turun = lebih gelap)
+      mid: ACTIVE_PRESET.room.floorColor.mid, // warna papan kayu hangat sedang
+      dark: ACTIVE_PRESET.room.floorColor.dark, // warna papan & serat kayu gelap (turun = kontras serat makin tajam)
     },
     roomSize: {
       width: 520,
@@ -195,28 +456,22 @@ export const CONFIG = {
       height: 175,
     },
     palette: {
-      wallBase: '#8FD8D0',
-      wallStripe: '#7CC6BE',
-      sideWallBase: '#7FC4F0',
-      sideWallStripe: '#6FB4E0',
-      baseboard: '#B59670',
-      windowFrame: '#C9C2B6',
-      windowSky: '#7CC6F8',
-      sunbeamColor: '#FFE8B8',
-      rugBase: '#C2B39C',
-      rugBorder: '#79A0BA',
-      rugPattern: '#A18264',
-      woodLight: '#C28A54',
-      woodDark: '#8E582C',
-      pastelBlue: '#6CA6CC',
-      pastelMint: '#76B898',
-      pastelRose: '#CC7F78',
-      pastelSand: '#CEAC6B',
-      pastelLavender: '#9B8CC2',
-      pastelSlate: '#6C7F91',
-      paperCream: '#CFC8BC',
-      lampMetal: '#7E8A96',
-      lampShade: '#C8BFA9',
+      wallBase: ACTIVE_PRESET.room.wallColor,
+      wallStripe: ACTIVE_PRESET.room.wallStripe,
+      sideWallBase: ACTIVE_PRESET.room.sideWallColor,
+      sideWallStripe: ACTIVE_PRESET.room.sideWallStripe,
+      baseboard: ACTIVE_PRESET.room.baseboardColor,
+      windowFrame: ACTIVE_PRESET.room.windowFrame,
+      windowSky: ACTIVE_PRESET.room.windowSky,
+      sunbeamColor: ACTIVE_PRESET.room.sunbeamColor,
+      rugBase: ACTIVE_PRESET.room.rugBase,
+      rugBorder: ACTIVE_PRESET.room.rugBorder,
+      rugPattern: ACTIVE_PRESET.room.rugPattern,
+      woodLight: ACTIVE_PRESET.room.woodLight,
+      woodDark: ACTIVE_PRESET.room.woodDark,
+      paperCream: ACTIVE_PRESET.room.paperCream,
+      lampMetal: ACTIVE_PRESET.room.lampMetal,
+      lampShade: ACTIVE_PRESET.room.lampShade,
     },
   },
   fx: {
@@ -245,8 +500,8 @@ export const CONFIG = {
     },
     boostTrail: {
       poolSize: 110,
-      color: '#35D4FF',
-      colorEnd: '#1E6BFF',
+      color: ACTIVE_PRESET.colors.boost,
+      colorEnd: ACTIVE_PRESET.colors.rail,
       length: 0.38,
     },
     driftSmoke: {
@@ -302,7 +557,7 @@ export const CONFIG = {
     uvScrollSpeed: 2.4,
     lift: 0.012,
     textureSize: 256,
-    emissiveIntensity: 2.25,
+    emissiveIntensity: ACTIVE_PRESET.colors.boostEmissiveIntensity,
   },
   race: {
     countdownSeconds: 3,
@@ -591,18 +846,18 @@ export const CONFIG = {
     wheelTrackHalfWidth: 0.82,
     wheelBaseHalfLength: 1.04,
     maxWheelSteerRad: 0.42,
-    bodyColor: '#F6EFE0',
-    stripeColor: '#E11D48',
-    accentColor: '#FFD23F',
-    cabinColorHex: 0x182232,
-    bumperColorHex: 0x263040,
-    tireColorHex: 0x171a21,
-    rimColorHex: 0xe6edf5,
+    bodyColor: ACTIVE_PRESET.car.bodyColor,
+    stripeColor: ACTIVE_PRESET.car.stripeColor,
+    accentColor: ACTIVE_PRESET.car.accentColor,
+    cabinColorHex: ACTIVE_PRESET.car.cabinColorHex,
+    bumperColorHex: ACTIVE_PRESET.car.bumperColorHex,
+    tireColorHex: ACTIVE_PRESET.car.tireColorHex,
+    rimColorHex: ACTIVE_PRESET.car.rimColorHex,
     headlightColorHex: 0xfff5c0,
     headlightEmissiveIntensity: 2.2,
     taillightColorHex: 0xef4444,
     taillightEmissiveIntensity: 1.35,
-    exhaustGlowColorHex: 0x35d4ff,
+    exhaustGlowColorHex: ACTIVE_PRESET.car.exhaustGlowColorHex,
     exhaustEmissiveIntensity: 2.6,
     exhaustPipeRadius: 0.085,
     exhaustPipeLength: 0.16,

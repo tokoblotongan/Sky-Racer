@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { setAudioPaused } from './audio/audioManager';
 import { createSound, type SoundSnapshot } from './audio/sound';
-import { CONFIG } from './config';
+import { CONFIG, type VisualPresetName } from './config';
 import { buildCourseConfigFromDefinition, Course } from './core/course';
 import { getCourse } from './courses';
 import {
@@ -70,6 +70,7 @@ interface DebugOverlay {
     raceState: RaceState,
     course: Course,
     qualityLevel: QualityLevel,
+    presetName: VisualPresetName,
   ) => void;
   dispose: () => void;
 }
@@ -86,7 +87,7 @@ function createDebugOverlay(container: HTMLElement): DebugOverlay | null {
   panel.style.padding = '6px 10px';
   panel.style.borderRadius = '6px';
   panel.style.background = 'rgba(15, 23, 42, 0.78)';
-  panel.style.color = '#FFD23F';
+  panel.style.color = CONFIG.hud.colors.accentYellow;
   panel.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, monospace';
   panel.style.fontSize = '12px';
   panel.style.fontWeight = '700';
@@ -120,6 +121,7 @@ function createDebugOverlay(container: HTMLElement): DebugOverlay | null {
       raceState: RaceState,
       course: Course,
       qualityLevel: QualityLevel,
+      presetName: VisualPresetName,
     ): void {
       frameCount++;
       const elapsedSec = (nowMs - lastSampleMs) / 1000;
@@ -142,7 +144,7 @@ function createDebugOverlay(container: HTMLElement): DebugOverlay | null {
       const yawDeg = THREE.MathUtils.radToDeg(carState.yaw);
 
       panel.textContent =
-        `FPS: ${displayedFps} | QUAL: ${qualityLevel.toUpperCase()} | PHASE: ${raceState.phase} | MODE: ${carState.mode.toUpperCase()} | SPD: ${speedKmh} km/h\n` +
+        `FPS: ${displayedFps} | PRESET: ${presetName.toUpperCase()} | QUAL: ${qualityLevel.toUpperCase()} | PHASE: ${raceState.phase} | MODE: ${carState.mode.toUpperCase()} | SPD: ${speedKmh} km/h\n` +
         `POS: s=${carState.s.toFixed(1)}m sApprox=${carState.sApprox.toFixed(1)}m lat=${carState.lateral.toFixed(2)}m | yaw=${yawDeg.toFixed(1)}° vLat=${carState.vLateral.toFixed(2)}m/s steer=${carState.steer.toFixed(2)} rail=${carState.railContactTimer.toFixed(2)}s\n` +
         `CP: next=${raceState.nextCheckpointIndex}/${raceState.totalCheckpoints} | BOOST: ${carState.boostTimeLeft.toFixed(2)}s | AIR: ${carState.airtime.toFixed(2)}s\n` +
         `SEG: #${seg.index} ${seg.type} (${Math.round(seg.progress * 100)}%) | PITCH: ${pitchDeg}° BANK: ${bankDeg}°`;
@@ -193,6 +195,7 @@ function bootstrap(): void {
 
   let propsVisual: PropsVisual | null = null;
   let activePropsDensityScale = -1;
+  let activePreset: VisualPresetName = CONFIG.visual.activePreset;
 
   const sceneCtx = createSceneContext(container);
   const debugOverlay = createDebugOverlay(container);
@@ -293,7 +296,7 @@ function bootstrap(): void {
       propsVisual.dispose();
     }
     activePropsDensityScale = nextDensityScale;
-    propsVisual = buildProps(course, level, sceneCtx.maxAnisotropy);
+    propsVisual = buildProps(course, level, sceneCtx.maxAnisotropy, activePreset);
     sceneCtx.scene.add(propsVisual.group);
   }
 
@@ -317,6 +320,42 @@ function bootstrap(): void {
   );
   const initialViewport = sceneCtx.getViewportSize();
   postfx.resize(initialViewport.width, initialViewport.height);
+
+  function syncHudPalette(name: VisualPresetName): void {
+    const hudColors = CONFIG.visual.presets[name].hud;
+    hud.root.classList.toggle('sr-palette-pastel', name === 'pastel');
+    const stops = hud.root.querySelectorAll('#srSpeedoGrad stop');
+    if (stops.length >= 3) {
+      stops[0].setAttribute('stop-color', hudColors.accentCyan);
+      stops[1].setAttribute('stop-color', hudColors.accentYellow);
+      stops[2].setAttribute('stop-color', hudColors.accentOrange);
+    }
+  }
+
+  function applyPalette(name: VisualPresetName): void {
+    activePreset = name;
+    sceneCtx.applyPalette(name);
+    propsVisual?.applyPalette(name);
+    trackVisual.applyPalette(name);
+    carVisual.applyPalette(name);
+    postfx.applyPalette(name);
+    syncHudPalette(name);
+  }
+
+  syncHudPalette(activePreset);
+
+  const debugFlagActive = CONFIG.visual.debugKeys || CONFIG.debug.showFps;
+  function handleDebugPaletteKey(event: KeyboardEvent): void {
+    if (!debugFlagActive || event.code !== 'F5') {
+      return;
+    }
+    event.preventDefault();
+    const nextPreset: VisualPresetName = activePreset === 'vivid' ? 'pastel' : 'vivid';
+    applyPalette(nextPreset);
+  }
+  if (debugFlagActive) {
+    window.addEventListener('keydown', handleDebugPaletteKey);
+  }
 
   function handleWindowResize(): void {
     const { width, height } = sceneCtx.getViewportSize();
@@ -764,7 +803,14 @@ function bootstrap(): void {
       const alpha = accumulator / fixedStep;
       render(alpha, frameDt);
       qualityManager.update(frameDt);
-      debugOverlay?.update(nowMs, currState, raceState, course, qualityManager.getLevel());
+      debugOverlay?.update(
+        nowMs,
+        currState,
+        raceState,
+        course,
+        qualityManager.getLevel(),
+        activePreset,
+      );
     }
 
     if (sceneCtx.isSoftwareGl) {
@@ -789,6 +835,9 @@ function bootstrap(): void {
     disposed = true;
     window.cancelAnimationFrame(frameHandle);
     window.clearTimeout(frameHandle);
+    if (debugFlagActive) {
+      window.removeEventListener('keydown', handleDebugPaletteKey);
+    }
     window.removeEventListener('resize', handleWindowResize);
     document.removeEventListener('visibilitychange', syncPauseState);
     unbindTouchStatus();

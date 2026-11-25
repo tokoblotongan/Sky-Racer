@@ -1,7 +1,7 @@
 // src/render/track.ts
 
 import * as THREE from 'three';
-import { CONFIG } from '../config';
+import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
 import type { Course, CourseChunkRange, TrackFrame } from '../core/course';
 
 interface ProfilePoint {
@@ -26,9 +26,13 @@ interface RingSpec {
 export interface TrackVisual {
   group: THREE.Group;
   update: (dt: number) => void;
+  applyPalette: (name: VisualPresetName) => void;
 }
 
-function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
+function createTrackCanvasTexture(
+  maxAnisotropy: number,
+  preset: VisualPreset,
+): THREE.CanvasTexture {
   const size = CONFIG.course.trackTextureSize;
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -36,20 +40,21 @@ function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
   const ctx = canvas.getContext('2d');
 
   if (ctx) {
+    const c = preset.colors;
     const grad = ctx.createLinearGradient(0, 0, size, 0);
-    grad.addColorStop(0.0, CONFIG.colors.trackEdge);
-    grad.addColorStop(0.085, CONFIG.colors.trackEdge);
-    grad.addColorStop(0.135, CONFIG.colors.track);
-    grad.addColorStop(0.865, CONFIG.colors.track);
-    grad.addColorStop(0.915, CONFIG.colors.trackEdge);
-    grad.addColorStop(1.0, CONFIG.colors.trackEdge);
+    grad.addColorStop(0.0, c.trackEdge);
+    grad.addColorStop(0.085, c.trackEdge);
+    grad.addColorStop(0.135, c.track);
+    grad.addColorStop(0.865, c.track);
+    grad.addColorStop(0.915, c.trackEdge);
+    grad.addColorStop(1.0, c.trackEdge);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
 
     const groovePositions = [0.22, 0.35, 0.65, 0.78];
-    ctx.strokeStyle = CONFIG.colors.trackGroove;
+    ctx.strokeStyle = c.trackGroove;
     ctx.lineWidth = 4;
-    ctx.globalAlpha = 0.22;
+    ctx.globalAlpha = 0.24;
     for (const normX of groovePositions) {
       const x = normX * size;
       ctx.beginPath();
@@ -58,8 +63,8 @@ function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
       ctx.stroke();
     }
 
-    ctx.fillStyle = CONFIG.colors.trackCenterDash;
-    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = c.trackCenterDash;
+    ctx.globalAlpha = 0.92;
     const dashWidth = Math.max(6, size * 0.016);
     const dashX = (size - dashWidth) * 0.5;
     const dashCount = 4;
@@ -70,7 +75,7 @@ function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
       ctx.fillRect(dashX, y, dashWidth, dashLength);
     }
 
-    ctx.strokeStyle = CONFIG.colors.trackEdge;
+    ctx.strokeStyle = c.trackEdge;
     ctx.lineWidth = 2;
     ctx.globalAlpha = 0.14;
     ctx.beginPath();
@@ -88,7 +93,10 @@ function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
   return texture;
 }
 
-function createRailCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
+function createRailCanvasTexture(
+  maxAnisotropy: number,
+  preset: VisualPreset,
+): THREE.CanvasTexture {
   const size = CONFIG.course.railTextureSize;
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -96,15 +104,16 @@ function createRailCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
   const ctx = canvas.getContext('2d');
 
   if (ctx) {
+    const c = preset.colors;
     const grad = ctx.createLinearGradient(0, 0, size, 0);
-    grad.addColorStop(0.0, CONFIG.colors.rail);
-    grad.addColorStop(0.35, CONFIG.colors.railHighlight);
-    grad.addColorStop(0.65, CONFIG.colors.railHighlight);
-    grad.addColorStop(1.0, CONFIG.colors.rail);
+    grad.addColorStop(0.0, c.rail);
+    grad.addColorStop(0.35, c.railHighlight);
+    grad.addColorStop(0.65, c.railHighlight);
+    grad.addColorStop(1.0, c.rail);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
 
-    ctx.strokeStyle = CONFIG.colors.railHighlight;
+    ctx.strokeStyle = c.railHighlight;
     ctx.globalAlpha = 0.24;
     ctx.lineWidth = 3;
     const steps = 4;
@@ -126,7 +135,10 @@ function createRailCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
   return texture;
 }
 
-function createJumpStripCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
+function createJumpStripCanvasTexture(
+  maxAnisotropy: number,
+  preset: VisualPreset,
+): THREE.CanvasTexture {
   const size = CONFIG.course.jumpStripTextureSize;
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -134,11 +146,12 @@ function createJumpStripCanvasTexture(maxAnisotropy: number): THREE.CanvasTextur
   const ctx = canvas.getContext('2d');
 
   if (ctx) {
-    ctx.fillStyle = CONFIG.colors.accent;
+    const c = preset.colors;
+    ctx.fillStyle = c.accent;
     ctx.fillRect(0, 0, size, size);
 
     ctx.save();
-    ctx.fillStyle = CONFIG.colors.jumpStripeDark;
+    ctx.fillStyle = c.jumpStripeDark;
     const stripeCount = 6;
     const stripePitch = size / stripeCount;
     const stripeWidth = stripePitch * 0.44;
@@ -154,7 +167,7 @@ function createJumpStripCanvasTexture(maxAnisotropy: number): THREE.CanvasTextur
     }
     ctx.restore();
 
-    ctx.fillStyle = CONFIG.colors.accent;
+    ctx.fillStyle = c.accent;
     const borderH = Math.max(8, size * 0.11);
     ctx.fillRect(0, 0, size, borderH);
     ctx.fillRect(0, size - borderH, size, borderH);
@@ -168,7 +181,10 @@ function createJumpStripCanvasTexture(maxAnisotropy: number): THREE.CanvasTextur
   return texture;
 }
 
-function createBoostPadCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
+function createBoostPadCanvasTexture(
+  maxAnisotropy: number,
+  preset: VisualPreset,
+): THREE.CanvasTexture {
   const size = CONFIG.boost.textureSize;
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -176,11 +192,12 @@ function createBoostPadCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture
   const ctx = canvas.getContext('2d');
 
   if (ctx) {
-    ctx.fillStyle = '#093B5C';
+    const c = preset.colors;
+    ctx.fillStyle = c.boostBase;
     ctx.fillRect(0, 0, size, size);
 
     const borderW = size * 0.08;
-    ctx.fillStyle = CONFIG.colors.boost;
+    ctx.fillStyle = c.boost;
     ctx.fillRect(0, 0, borderW, size);
     ctx.fillRect(size - borderW, 0, borderW, size);
 
@@ -195,7 +212,7 @@ function createBoostPadCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture
       const wingY = baseY + cellH * 0.64;
       const thickness = cellH * 0.28;
 
-      ctx.fillStyle = CONFIG.colors.boost;
+      ctx.fillStyle = c.boost;
       ctx.beginPath();
       ctx.moveTo(midX, tipY);
       ctx.lineTo(size - padX, wingY);
@@ -206,7 +223,7 @@ function createBoostPadCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture
       ctx.closePath();
       ctx.fill();
 
-      ctx.fillStyle = CONFIG.colors.boostStripeLight;
+      ctx.fillStyle = c.boostStripeLight;
       ctx.beginPath();
       ctx.moveTo(midX, tipY + thickness * 0.22);
       ctx.lineTo(size - padX * 1.35, wingY + thickness * 0.16);
@@ -845,20 +862,25 @@ function buildDebugCourseFrames(course: Course): THREE.Group {
   return debugGroup;
 }
 
-export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
+export function buildTrackMesh(
+  course: Course,
+  maxAnisotropy = 8,
+  initialPreset: VisualPresetName = CONFIG.visual.activePreset,
+): TrackVisual {
   const cfg = CONFIG.course;
+  const activePreset = VISUAL_PRESETS[initialPreset];
   const spans = splitSolidSpans(course.getSamples());
   const chunks: CourseChunkRange[] = course.getChunks(CONFIG.render.trackChunkLength);
   const group = new THREE.Group();
   group.name = 'TrackGroup';
 
   const trackProfile = buildTrackCrossSectionProfile();
-  const trackTexture = createTrackCanvasTexture(maxAnisotropy);
+  let trackTexture = createTrackCanvasTexture(maxAnisotropy, activePreset);
   const trackMaterial = new THREE.MeshPhysicalMaterial({
     map: trackTexture,
     clearcoat: cfg.trackClearcoat,
-    clearcoatRoughness: CONFIG.visual.trackClearcoatRoughness,
-    envMapIntensity: CONFIG.visual.trackEnvIntensity,
+    clearcoatRoughness: activePreset.trackClearcoatRoughness,
+    envMapIntensity: activePreset.trackEnvIntensity,
     roughness: cfg.trackRoughness,
     metalness: cfg.trackMetalness,
     ior: cfg.trackIor,
@@ -869,23 +891,23 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
     cfg.railHeight,
     cfg.railArcSegments,
   );
-  const railTexture = createRailCanvasTexture(maxAnisotropy);
+  let railTexture = createRailCanvasTexture(maxAnisotropy, activePreset);
   const railMaterial = new THREE.MeshPhysicalMaterial({
     map: railTexture,
     clearcoat: cfg.railClearcoat,
-    clearcoatRoughness: CONFIG.visual.trackClearcoatRoughness,
-    envMapIntensity: CONFIG.visual.trackEnvIntensity,
+    clearcoatRoughness: activePreset.trackClearcoatRoughness,
+    envMapIntensity: activePreset.trackEnvIntensity,
     roughness: cfg.railRoughness,
     metalness: cfg.railMetalness,
     ior: cfg.trackIor,
   });
 
-  const jumpStripTexture = createJumpStripCanvasTexture(maxAnisotropy);
+  let jumpStripTexture = createJumpStripCanvasTexture(maxAnisotropy, activePreset);
   const jumpStripMaterial = new THREE.MeshPhysicalMaterial({
     map: jumpStripTexture,
     clearcoat: cfg.trackClearcoat,
-    clearcoatRoughness: CONFIG.visual.trackClearcoatRoughness,
-    envMapIntensity: CONFIG.visual.trackEnvIntensity,
+    clearcoatRoughness: activePreset.trackClearcoatRoughness,
+    envMapIntensity: activePreset.trackEnvIntensity,
     roughness: 0.2,
     metalness: 0.04,
     polygonOffset: true,
@@ -893,13 +915,13 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
     polygonOffsetUnits: -2,
   });
 
-  const boostTexture = createBoostPadCanvasTexture(maxAnisotropy);
-  const boostColor = new THREE.Color(CONFIG.colors.boost);
+  let boostTexture = createBoostPadCanvasTexture(maxAnisotropy, activePreset);
+  const boostColor = new THREE.Color(activePreset.colors.boost);
   const boostMaterial = new THREE.MeshPhysicalMaterial({
     map: boostTexture,
     emissive: boostColor,
     emissiveMap: boostTexture,
-    emissiveIntensity: CONFIG.boost.emissiveIntensity,
+    emissiveIntensity: activePreset.colors.boostEmissiveIntensity,
     clearcoat: 0.9,
     clearcoatRoughness: 0.1,
     roughness: 0.2,
@@ -1131,8 +1153,48 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
     boostTexture.offset.y = (boostTexture.offset.y - dt * CONFIG.boost.uvScrollSpeed) % 1;
   }
 
+  function applyPalette(name: VisualPresetName): void {
+    const preset = VISUAL_PRESETS[name];
+
+    const prevTrackTex = trackTexture;
+    trackTexture = createTrackCanvasTexture(maxAnisotropy, preset);
+    trackMaterial.map = trackTexture;
+    trackMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
+    trackMaterial.envMapIntensity = preset.trackEnvIntensity;
+    trackMaterial.needsUpdate = true;
+    prevTrackTex.dispose();
+
+    const prevRailTex = railTexture;
+    railTexture = createRailCanvasTexture(maxAnisotropy, preset);
+    railMaterial.map = railTexture;
+    railMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
+    railMaterial.envMapIntensity = preset.trackEnvIntensity;
+    railMaterial.needsUpdate = true;
+    prevRailTex.dispose();
+
+    const prevJumpTex = jumpStripTexture;
+    jumpStripTexture = createJumpStripCanvasTexture(maxAnisotropy, preset);
+    jumpStripMaterial.map = jumpStripTexture;
+    jumpStripMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
+    jumpStripMaterial.envMapIntensity = preset.trackEnvIntensity;
+    jumpStripMaterial.needsUpdate = true;
+    prevJumpTex.dispose();
+
+    const prevBoostTex = boostTexture;
+    const prevOffsetY = prevBoostTex.offset.y;
+    boostTexture = createBoostPadCanvasTexture(maxAnisotropy, preset);
+    boostTexture.offset.y = prevOffsetY;
+    boostMaterial.map = boostTexture;
+    boostMaterial.emissiveMap = boostTexture;
+    boostMaterial.emissive.set(preset.colors.boost);
+    boostMaterial.emissiveIntensity = preset.colors.boostEmissiveIntensity;
+    boostMaterial.needsUpdate = true;
+    prevBoostTex.dispose();
+  }
+
   return {
     group,
     update,
+    applyPalette,
   };
 }

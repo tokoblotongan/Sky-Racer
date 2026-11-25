@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CONFIG } from '../config';
+import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
 import type { Course } from '../core/course';
 import type { QualityLevel } from './quality';
 import { computeRoomDimensions } from './scene';
@@ -10,6 +10,7 @@ import { computeRoomDimensions } from './scene';
 export interface PropsVisual {
   group: THREE.Group;
   update: (cameraPos: THREE.Vector3) => void;
+  applyPalette: (name: VisualPresetName) => void;
   dispose: () => void;
 }
 
@@ -77,14 +78,14 @@ function freezeStatic(obj: THREE.Object3D): void {
   obj.matrixAutoUpdate = false;
 }
 
-function createRugTexture(maxAnisotropy: number): THREE.CanvasTexture {
+function createRugTexture(maxAnisotropy: number, preset: VisualPreset): THREE.CanvasTexture {
   const size = 512;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    const pal = CONFIG.props.palette;
+    const pal = preset.room;
     ctx.fillStyle = pal.rugBase;
     ctx.fillRect(0, 0, size, size);
 
@@ -155,6 +156,7 @@ function createSunbeamTexture(): THREE.CanvasTexture {
 function createStripedCanTexture(
   baseHex: string,
   bandHex: string,
+  paperCreamHex: string,
   maxAnisotropy: number,
 ): THREE.CanvasTexture {
   const size = 256;
@@ -170,7 +172,7 @@ function createStripedCanTexture(
     ctx.fillRect(0, size * 0.24, size, size * 0.16);
     ctx.fillRect(0, size * 0.62, size, size * 0.12);
 
-    ctx.fillStyle = CONFIG.props.palette.paperCream;
+    ctx.fillStyle = paperCreamHex;
     ctx.fillRect(0, size * 0.43, size, size * 0.15);
 
     ctx.fillStyle = 'rgba(0,0,0,0.06)';
@@ -186,6 +188,7 @@ function createStripedCanTexture(
 function createLetterBlockTexture(
   letter: string,
   inkHex: string,
+  preset: VisualPreset,
   maxAnisotropy: number,
 ): THREE.CanvasTexture {
   const size = 256;
@@ -194,14 +197,14 @@ function createLetterBlockTexture(
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    ctx.fillStyle = CONFIG.props.palette.woodLight;
+    ctx.fillStyle = preset.room.woodLight;
     ctx.fillRect(0, 0, size, size);
 
-    ctx.strokeStyle = CONFIG.props.palette.woodDark;
+    ctx.strokeStyle = preset.room.woodDark;
     ctx.lineWidth = 22;
     ctx.strokeRect(12, 12, size - 24, size - 24);
 
-    ctx.fillStyle = CONFIG.props.palette.paperCream;
+    ctx.fillStyle = preset.room.paperCream;
     ctx.fillRect(30, 30, size - 60, size - 60);
 
     ctx.fillStyle = inkHex;
@@ -216,15 +219,21 @@ function createLetterBlockTexture(
   return tex;
 }
 
-function createToyBallTexture(maxAnisotropy: number): THREE.CanvasTexture {
+function createToyBallTexture(preset: VisualPreset, maxAnisotropy: number): THREE.CanvasTexture {
   const size = 256;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    const pal = CONFIG.props.palette;
-    const bands = [pal.pastelBlue, pal.paperCream, pal.pastelRose, pal.pastelSand];
+    const pal = preset.room;
+    const colors = pal.propColors;
+    const bands = [
+      colors[0 % colors.length],
+      pal.paperCream,
+      colors[3 % colors.length],
+      colors[1 % colors.length],
+    ];
     const bandW = size / bands.length;
     for (let i = 0; i < bands.length; i++) {
       ctx.fillStyle = bands[i];
@@ -240,14 +249,14 @@ function createToyBallTexture(maxAnisotropy: number): THREE.CanvasTexture {
   return tex;
 }
 
-function createPaperTexture(maxAnisotropy: number): THREE.CanvasTexture {
+function createPaperTexture(preset: VisualPreset, maxAnisotropy: number): THREE.CanvasTexture {
   const size = 256;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    ctx.fillStyle = CONFIG.props.palette.paperCream;
+    ctx.fillStyle = preset.room.paperCream;
     ctx.fillRect(0, 0, size, size);
 
     ctx.strokeStyle = 'rgba(155, 181, 201, 0.45)';
@@ -270,13 +279,22 @@ function createPaperTexture(maxAnisotropy: number): THREE.CanvasTexture {
   return tex;
 }
 
-export function buildProps(
+interface PropsAssembly {
+  group: THREE.Group;
+  update: (cameraPos: THREE.Vector3) => void;
+  dispose: () => void;
+}
+
+function buildPropsAssembly(
   course: Course,
   qualityLevel: QualityLevel,
-  maxAnisotropy = 8,
-): PropsVisual {
+  maxAnisotropy: number,
+  presetName: VisualPresetName,
+): PropsAssembly {
   const cfg = CONFIG.props;
-  const pal = cfg.palette;
+  const preset = VISUAL_PRESETS[presetName];
+  const pal = preset.room;
+  const propColors = pal.propColors;
   const qualityPreset = CONFIG.quality.levels[qualityLevel];
   const densityScale = cfg.density * qualityPreset.propsDensityScale;
   const propsChunkSize = Math.max(40, CONFIG.render.propsChunkLength);
@@ -427,14 +445,6 @@ export function buildProps(
     return true;
   };
 
-  const pastelColors = [
-    pal.pastelBlue,
-    pal.pastelMint,
-    pal.pastelRose,
-    pal.pastelSand,
-    pal.pastelLavender,
-    pal.pastelSlate,
-  ];
   const beamUpRef = new THREE.Vector3(0, 1, 0);
 
   // =========================================================================
@@ -548,9 +558,9 @@ export function buildProps(
   }
 
   // =========================================================================
-  // 2. Woven Pastel Floor Rug
+  // 2. Woven Floor Rug
   // =========================================================================
-  const rugTex = trackTex(createRugTexture(maxAnisotropy));
+  const rugTex = trackTex(createRugTexture(maxAnisotropy, preset));
   const rugMat = trackMat(
     new THREE.MeshStandardMaterial({
       map: rugTex,
@@ -628,7 +638,7 @@ export function buildProps(
       z: fz,
       topY,
       style: supportSpots.length % 2,
-      colorIndex: supportSpots.length % pastelColors.length,
+      colorIndex: supportSpots.length % propColors.length,
     });
   }
 
@@ -681,7 +691,7 @@ export function buildProps(
         scl.set(1, colH, 1);
         mtx.compose(pos, quat, scl);
         colInst.setMatrixAt(i, mtx);
-        tmpColor.set(pastelColors[spot.colorIndex]);
+        tmpColor.set(propColors[spot.colorIndex]);
         colInst.setColorAt(i, tmpColor);
 
         pos.set(spot.x, spot.topY - capH * 0.5, spot.z);
@@ -846,7 +856,7 @@ export function buildProps(
 
     const shelfBooksMat = trackMat(
       new THREE.MeshStandardMaterial({
-        color: pal.pastelBlue,
+        color: propColors[3 % propColors.length],
         roughness: 0.72,
         metalness: 0.02,
       }),
@@ -892,7 +902,7 @@ export function buildProps(
         z,
         yaw: rand() * Math.PI * 2,
         scale,
-        colorIndex: Math.floor(rand() * pastelColors.length),
+        colorIndex: Math.floor(rand() * propColors.length),
       });
     }
     return list;
@@ -961,7 +971,7 @@ export function buildProps(
         instMtx.compose(instPos, instQuat, instScale);
         coverInst.setMatrixAt(idx, instMtx);
         pageInst.setMatrixAt(idx, instMtx);
-        instColor.set(pastelColors[p.colorIndex]);
+        instColor.set(propColors[p.colorIndex]);
         coverInst.setColorAt(idx, instColor);
       });
 
@@ -980,7 +990,14 @@ export function buildProps(
   const canCount = Math.max(2, Math.round(10 * densityScale));
   const canPlacements = generatePlacements(canCount, 7.5);
   if (canPlacements.length > 0) {
-    const canTex = trackTex(createStripedCanTexture(pal.pastelBlue, pal.pastelSand, maxAnisotropy));
+    const canTex = trackTex(
+      createStripedCanTexture(
+        propColors[3 % propColors.length],
+        propColors[1 % propColors.length],
+        pal.paperCream,
+        maxAnisotropy,
+      ),
+    );
     const canBodyMat = trackMat(
       new THREE.MeshStandardMaterial({
         map: canTex,
@@ -1078,7 +1095,7 @@ export function buildProps(
     );
     const tipMat = trackMat(
       new THREE.MeshStandardMaterial({
-        color: pal.pastelSlate,
+        color: propColors[propColors.length - 1],
         roughness: 0.65,
       }),
     );
@@ -1103,7 +1120,7 @@ export function buildProps(
         cupInst.setMatrixAt(idx, instMtx);
         pencilInst.setMatrixAt(idx, instMtx);
         tipInst.setMatrixAt(idx, instMtx);
-        instColor.set(pastelColors[(p.colorIndex + 1) % pastelColors.length]);
+        instColor.set(propColors[(p.colorIndex + 1) % propColors.length]);
         cupInst.setColorAt(idx, instColor);
       });
 
@@ -1129,12 +1146,14 @@ export function buildProps(
     blockGeom.translate(0, 5, 0);
 
     const blockSpecs = [
-      { letter: 'A', ink: pal.pastelRose },
-      { letter: 'B', ink: pal.pastelBlue },
-      { letter: 'C', ink: pal.pastelMint },
+      { letter: 'A', ink: propColors[0 % propColors.length] },
+      { letter: 'B', ink: propColors[3 % propColors.length] },
+      { letter: 'C', ink: propColors[2 % propColors.length] },
     ];
     const blockMats = blockSpecs.map((spec) => {
-      const tex = trackTex(createLetterBlockTexture(spec.letter, spec.ink, maxAnisotropy));
+      const tex = trackTex(
+        createLetterBlockTexture(spec.letter, spec.ink, preset, maxAnisotropy),
+      );
       return trackMat(
         new THREE.MeshStandardMaterial({
           map: tex,
@@ -1177,7 +1196,7 @@ export function buildProps(
   if (ballPlacements.length > 0) {
     const ballGeom = trackGeom(new THREE.SphereGeometry(6.2, 20, 16));
     ballGeom.translate(0, 6.2, 0);
-    const ballTex = trackTex(createToyBallTexture(maxAnisotropy));
+    const ballTex = trackTex(createToyBallTexture(preset, maxAnisotropy));
     const ballMat = trackMat(
       new THREE.MeshStandardMaterial({
         map: ballTex,
@@ -1218,7 +1237,7 @@ export function buildProps(
       sheetParts.push(sheet);
     }
     const paperGeom = trackGeom(mergeWithCleanup(sheetParts));
-    const paperTex = trackTex(createPaperTexture(maxAnisotropy));
+    const paperTex = trackTex(createPaperTexture(preset, maxAnisotropy));
     const paperMat = trackMat(
       new THREE.MeshStandardMaterial({
         map: paperTex,
@@ -1293,6 +1312,47 @@ export function buildProps(
   return {
     group,
     update,
+    dispose,
+  };
+}
+
+export function buildProps(
+  course: Course,
+  qualityLevel: QualityLevel,
+  maxAnisotropy = 8,
+  initialPreset: VisualPresetName = CONFIG.visual.activePreset,
+): PropsVisual {
+  const outerGroup = new THREE.Group();
+  outerGroup.name = 'RoomPropsRoot';
+
+  let currentPreset = initialPreset;
+  let activeAssembly = buildPropsAssembly(course, qualityLevel, maxAnisotropy, currentPreset);
+  outerGroup.add(activeAssembly.group);
+
+  function update(cameraPos: THREE.Vector3): void {
+    activeAssembly.update(cameraPos);
+  }
+
+  function applyPalette(name: VisualPresetName): void {
+    if (name === currentPreset) {
+      return;
+    }
+    currentPreset = name;
+    outerGroup.remove(activeAssembly.group);
+    activeAssembly.dispose();
+    activeAssembly = buildPropsAssembly(course, qualityLevel, maxAnisotropy, currentPreset);
+    outerGroup.add(activeAssembly.group);
+  }
+
+  function dispose(): void {
+    outerGroup.remove(activeAssembly.group);
+    activeAssembly.dispose();
+  }
+
+  return {
+    group: outerGroup,
+    update,
+    applyPalette,
     dispose,
   };
 }
