@@ -1,10 +1,17 @@
 // src/config.ts
 
+export interface BoostPadSegmentConfig {
+  readonly at: number; // pecahan 0..1 di dalam segmen
+  readonly lateral: number; // offset dari tengah lintasan (meter)
+}
+
 export type CourseSegmentConfig =
   | {
       readonly type: 'straight';
       readonly length: number;
       readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
     }
   | {
       readonly type: 'curve';
@@ -12,30 +19,40 @@ export type CourseSegmentConfig =
       readonly angleDeg: number; // + kanan, - kiri
       readonly bankDeg: number; // + miring ke kiri, - miring ke kanan
       readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
     }
   | {
       readonly type: 'slope';
       readonly length: number;
       readonly pitchDeg: number; // + menanjak, - menurun
       readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
     }
   | {
       readonly type: 'pitchTo';
       readonly length: number;
       readonly pitchDeg: number; // transisi halus ke pitchDeg lalu ditahan
       readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
     }
   | {
       readonly type: 'gap';
       readonly length: number;
       readonly exitPitchDeg: number; // garis tengah tetap ada tanpa permukaan
       readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
     }
   | {
       readonly type: 'loop';
       readonly radius: number;
       readonly lateralOffset: number;
       readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
     };
 
 export const CONFIG = {
@@ -59,6 +76,7 @@ export const CONFIG = {
     rail: '#1E6BFF',
     railHighlight: '#5594FF',
     boost: '#35D4FF',
+    boostStripeLight: '#E0FAFF',
     skyTop: '#89C7FF',
     skyHorizon: '#BFE3FF',
     skyFogHex: 0xbfe3ff,
@@ -78,9 +96,9 @@ export const CONFIG = {
   },
   renderer: {
     maxPixelRatio: 2,
-    toneMappingExposure: 1.08,
+    toneMappingExposure: 1.04,
     envBlur: 0.04,
-    envIntensity: 0.9,
+    envIntensity: 0.78,
     shadowMapSize: 2048,
     softwareGlFramePauseMs: 80,
     softwareGlPollMs: 5,
@@ -88,14 +106,14 @@ export const CONFIG = {
   lighting: {
     sunIntensity: 2.5,
     sunOffset: { x: 95, y: 140, z: 80 },
-    sunShadowExtent: 170,
+    sunShadowExtent: 90,
     sunShadowNear: 10,
-    sunShadowFar: 420,
+    sunShadowFar: 360,
     sunShadowBias: -0.0004,
     sunShadowNormalBias: 0.04,
     sunShadowRadius: 3,
     hemiIntensity: 0.85,
-    fogDensity: 0.0015,
+    fogDensity: 0.0011,
   },
   camera: {
     near: 0.3,
@@ -107,6 +125,8 @@ export const CONFIG = {
     lookAheadDistance: 7.5,
     lookHeightOffset: 1.05,
     positionSmoothTime: 0.14,
+    titleToChaseSmoothTime: 0.34,
+    titleToChaseBlendDuration: 1.15,
     lookSmoothTime: 0.1,
     fallingLookSmoothTime: 0.08,
     upBlendSpeed: 8.5,
@@ -126,10 +146,11 @@ export const CONFIG = {
   hud: {
     speedUnit: 'km/h',
     speedScale: 3.6,
-    maxGaugeSpeedKmh: 210,
+    maxGaugeSpeedKmh: 250,
     moveThresholdSpeedMs: 0.35,
     showControlsHint: true,
     airtimePopupDurationMs: 1500,
+    splitPopupDurationMs: 1900,
     gaugeArcRadius: 54,
     gaugeArcCircumference: 2 * Math.PI * 54,
     gaugeArcSweepRatio: 240 / 360,
@@ -149,6 +170,144 @@ export const CONFIG = {
     textureRepeat: 54,
     roughness: 0.72,
     metalness: 0.02,
+  },
+  props: {
+    seed: 4217,
+    density: 1.0,
+    clearance: 18,
+    supportSpacing: 22,
+    supportLandingExclusion: 22,
+    shadowDistance: 145,
+    roomSize: {
+      width: 520,
+      depth: 520,
+      height: 175,
+    },
+    palette: {
+      wallBase: '#EBE3D5',
+      wallStripe: '#E2D8C5',
+      baseboard: '#C7A67E',
+      windowFrame: '#F4EFE6',
+      windowSky: '#E6F2FF',
+      sunbeamColor: '#FFF0C8',
+      rugBase: '#D9CFC1',
+      rugBorder: '#A9BAC6',
+      rugPattern: '#C8B29B',
+      woodLight: '#D4B288',
+      woodDark: '#B99164',
+      pastelBlue: '#9BB5C9',
+      pastelMint: '#A7C2B1',
+      pastelRose: '#CFA39D',
+      pastelSand: '#DCC79E',
+      pastelLavender: '#B9AECB',
+      pastelSlate: '#8D9AA6',
+      paperCream: '#F4EFE4',
+      lampMetal: '#9BA4AD',
+      lampShade: '#E8DEC8',
+    },
+  },
+  fx: {
+    bloom: {
+      strength: 0.36,
+      radius: 0.4,
+      threshold: 1.08,
+    },
+    speedLines: {
+      maxIntensity: 0.62,
+      minSpeedFactor: 0.62,
+      smoothTime: 0.14,
+      boostBonus: 0.38,
+    },
+    sparks: {
+      poolSize: 120,
+      lifetime: 0.45,
+      gravity: 22,
+    },
+    dust: {
+      poolSize: 96,
+      lifetime: 0.72,
+    },
+    boostTrail: {
+      poolSize: 110,
+      color: '#35D4FF',
+      colorEnd: '#1E6BFF',
+      length: 0.38,
+    },
+    driftSmoke: {
+      slipThreshold: 0.2,
+      rate: 28,
+    },
+  },
+  quality: {
+    showQualityDebug: false,
+    initialOverride: null as 'low' | 'medium' | 'high' | null,
+    fpsDowngradeThreshold: 45,
+    fpsDowngradeWindowSec: 2.0,
+    warmupSec: 2.0,
+    levels: {
+      low: {
+        pixelRatioMax: 1.0,
+        bloomEnabled: false,
+        shadowMapSize: 512,
+        shadowFollowRadius: 48,
+        particleScale: 0.45,
+        propsDensityScale: 0.45,
+        speedLinesEnabled: false,
+      },
+      medium: {
+        pixelRatioMax: 1.5,
+        bloomEnabled: true,
+        shadowMapSize: 1024,
+        shadowFollowRadius: 68,
+        particleScale: 0.75,
+        propsDensityScale: 0.75,
+        speedLinesEnabled: true,
+      },
+      high: {
+        pixelRatioMax: 2.0,
+        bloomEnabled: true,
+        shadowMapSize: 2048,
+        shadowFollowRadius: 90,
+        particleScale: 1.0,
+        propsDensityScale: 1.0,
+        speedLinesEnabled: true,
+      },
+    },
+  },
+  boost: {
+    duration: 1.85,
+    extraAccel: 22,
+    maxSpeedMultiplier: 1.24,
+    kickSpeed: 7.5,
+    fovBonus: 11,
+    padLength: 5.6,
+    padWidth: 2.6,
+    retriggerCooldown: 0.45,
+    uvScrollSpeed: 2.4,
+    lift: 0.012,
+    textureSize: 256,
+    emissiveIntensity: 2.25,
+  },
+  race: {
+    countdownSeconds: 3,
+    goHoldSeconds: 0.85,
+    finishMargin: 6,
+    resetPenaltySeconds: 0,
+    resetSpeedFactor: 0.75,
+    titleOrbitSpeed: 0.35,
+    titleOrbitRadius: 11.5,
+    titleOrbitHeight: 4.2,
+  },
+  storage: {
+    key: 'sky-racer-best-v1',
+  },
+  checkpointGate: {
+    widthMargin: 0.85,
+    height: 4.3,
+    thickness: 0.32,
+    arcSegments: 10,
+    bannerHeight: 0.78,
+    textureSize: 256,
   },
   course: {
     startPosition: { x: 0, y: 6, z: 120 },
@@ -194,22 +353,36 @@ export const CONFIG = {
     railTileMeters: 6,
     segments: [
       { type: 'straight', length: 50 },
-      { type: 'curve', radius: 42, angleDeg: 90, bankDeg: -10 },
-      { type: 'straight', length: 30 },
+      { type: 'curve', radius: 42, angleDeg: 90, bankDeg: -10, checkpoint: true },
+      {
+        type: 'straight',
+        length: 30,
+        checkpoint: true,
+        boostPads: [{ at: 0.45, lateral: 0 }],
+      },
       { type: 'loop', radius: 12, lateralOffset: 9 },
-      { type: 'straight', length: 20 },
+      {
+        type: 'straight',
+        length: 20,
+        checkpoint: true,
+        boostPads: [{ at: 0.4, lateral: 0 }],
+      },
       { type: 'pitchTo', length: 8, pitchDeg: 14 },
       { type: 'gap', length: 16, exitPitchDeg: -12 },
-      { type: 'pitchTo', length: 10, pitchDeg: 0 },
+      { type: 'pitchTo', length: 10, pitchDeg: 0, checkpoint: true },
       { type: 'straight', length: 20 },
-      { type: 'curve', radius: 34, angleDeg: -90, bankDeg: 14 },
+      { type: 'curve', radius: 34, angleDeg: -90, bankDeg: 14, checkpoint: true },
       { type: 'slope', length: 36, pitchDeg: 14 },
       { type: 'slope', length: 36, pitchDeg: -14 },
-      { type: 'straight', length: 50 },
+      {
+        type: 'straight',
+        length: 50,
+        boostPads: [{ at: 0.35, lateral: 0 }],
+      },
     ] as readonly CourseSegmentConfig[],
   },
   physics: {
-    gravity: 20,
+    gravity: 28,
     bankGravityFactor: 0.85,
     contactMinNormal: 0.5,
     invertedStallSpeed: 2.0,
@@ -224,8 +397,8 @@ export const CONFIG = {
     impactRefSpeed: 18,
     fallKillDepth: 4.5,
     respawnDelay: 1.5,
-    respawnBackoff: 16, // 8 m sebelum awal ramp 8 m
-    respawnSpeedFactor: 0.85,
+    respawnBackoff: 16,
+    respawnSpeedFactor: 0.75,
     minAirtimeForBonus: 0.4,
     maxSpeed: 54,
     accel: 36,
@@ -250,6 +423,7 @@ export const CONFIG = {
     railRestitution: 0.42,
     railSpeedPenalty: 0.78,
     railYawDamp: 0.65,
+    railHitCooldown: 0.16,
     endStopDamping: 8.0,
     rideHeight: 0.01,
   },
@@ -282,7 +456,15 @@ export const CONFIG = {
     tireColorHex: 0x171a21,
     rimColorHex: 0xe6edf5,
     headlightColorHex: 0xfff5c0,
+    headlightEmissiveIntensity: 2.2,
     taillightColorHex: 0xef4444,
+    taillightEmissiveIntensity: 1.35,
+    exhaustGlowColorHex: 0x35d4ff,
+    exhaustEmissiveIntensity: 2.6,
+    exhaustPipeRadius: 0.085,
+    exhaustPipeLength: 0.16,
+    exhaustHaloBaseScale: 0.32,
+    exhaustHaloBoostScale: 1.25,
     bodyClearcoat: 1.0,
     bodyClearcoatRoughness: 0.07,
     bodyRoughness: 0.18,

@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { CONFIG } from '../config';
+import type { QualityLevel } from './quality';
 
 export interface SceneContext {
   renderer: THREE.WebGLRenderer;
@@ -12,7 +13,9 @@ export interface SceneContext {
   maxAnisotropy: number;
   setOrbitTarget: (target: THREE.Vector3, radius: number, height: number) => void;
   setCameraOrbitAngle: (angleRad: number) => void;
-  render: () => void;
+  updateSunShadowTarget: (focusPos: THREE.Vector3) => void;
+  setQuality: (level: QualityLevel) => void;
+  getViewportSize: () => { width: number; height: number };
   dispose: () => void;
 }
 
@@ -205,22 +208,32 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     CONFIG.camera.far,
   );
 
-  const sunLight = new THREE.DirectionalLight(
-    CONFIG.colors.sunLightHex,
-    CONFIG.lighting.sunIntensity,
-  );
-  sunLight.position.set(
+  const sunOffsetVec = new THREE.Vector3(
     CONFIG.lighting.sunOffset.x,
     CONFIG.lighting.sunOffset.y,
     CONFIG.lighting.sunOffset.z,
   );
+  const sunDir = sunOffsetVec.clone().normalize();
+  const worldUp = new THREE.Vector3(0, 1, 0);
+  const sunRight = new THREE.Vector3().crossVectors(worldUp, sunDir).normalize();
+  const sunUp = new THREE.Vector3().crossVectors(sunDir, sunRight).normalize();
+  const snappedTarget = new THREE.Vector3();
+
+  let currentPixelRatioMax: number = CONFIG.renderer.maxPixelRatio;
+  let currentShadowMapSize: number = CONFIG.renderer.shadowMapSize;
+  let currentShadowFollowRadius: number = CONFIG.lighting.sunShadowExtent;
+
+  const sunLight = new THREE.DirectionalLight(
+    CONFIG.colors.sunLightHex,
+    CONFIG.lighting.sunIntensity,
+  );
+  sunLight.position.copy(sunOffsetVec);
   sunLight.castShadow = true;
-  sunLight.shadow.mapSize.set(CONFIG.renderer.shadowMapSize, CONFIG.renderer.shadowMapSize);
-  const extent = CONFIG.lighting.sunShadowExtent;
-  sunLight.shadow.camera.left = -extent;
-  sunLight.shadow.camera.right = extent;
-  sunLight.shadow.camera.top = extent;
-  sunLight.shadow.camera.bottom = -extent;
+  sunLight.shadow.mapSize.set(currentShadowMapSize, currentShadowMapSize);
+  sunLight.shadow.camera.left = -currentShadowFollowRadius;
+  sunLight.shadow.camera.right = currentShadowFollowRadius;
+  sunLight.shadow.camera.top = currentShadowFollowRadius;
+  sunLight.shadow.camera.bottom = -currentShadowFollowRadius;
   sunLight.shadow.camera.near = CONFIG.lighting.sunShadowNear;
   sunLight.shadow.camera.far = CONFIG.lighting.sunShadowFar;
   sunLight.shadow.bias = CONFIG.lighting.sunShadowBias;
@@ -257,19 +270,33 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   let orbitRadius: number = CONFIG.camera.orbitMinRadius;
   let orbitHeight: number = CONFIG.camera.orbitHeight;
 
+  function updateSunShadowTarget(focusPos: THREE.Vector3): void {
+    const texelSize = (currentShadowFollowRadius * 2) / Math.max(1, currentShadowMapSize);
+    const projX = focusPos.dot(sunRight);
+    const projY = focusPos.dot(sunUp);
+    const projZ = focusPos.dot(sunDir);
+
+    const snappedX = Math.round(projX / texelSize) * texelSize;
+    const snappedY = Math.round(projY / texelSize) * texelSize;
+
+    snappedTarget
+      .set(0, 0, 0)
+      .addScaledVector(sunRight, snappedX)
+      .addScaledVector(sunUp, snappedY)
+      .addScaledVector(sunDir, projZ);
+
+    sunLight.target.position.copy(snappedTarget);
+    sunLight.position.copy(snappedTarget).add(sunOffsetVec);
+    sunLight.target.updateMatrixWorld();
+  }
+
   function setOrbitTarget(target: THREE.Vector3, radius: number, height: number): void {
     orbitTarget.copy(target);
     orbitRadius = radius;
     orbitHeight = height;
 
     floorMesh.position.set(target.x, 0, target.z);
-    sunLight.target.position.set(target.x, 0, target.z);
-    sunLight.position.set(
-      target.x + CONFIG.lighting.sunOffset.x,
-      CONFIG.lighting.sunOffset.y,
-      target.z + CONFIG.lighting.sunOffset.z,
-    );
-    sunLight.target.updateMatrixWorld();
+    updateSunShadowTarget(target);
   }
 
   function setCameraOrbitAngle(angleRad: number): void {
@@ -284,22 +311,56 @@ export function createSceneContext(container: HTMLElement): SceneContext {
 
   setCameraOrbitAngle(0);
 
+  function setQuality(level: QualityLevel): void {
+    const preset = CONFIG.quality.levels[level];
+    currentPixelRatioMax = preset.pixelRatioMax;
+    renderer.setPixelRatio(
+      isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, currentPixelRatioMax),
+    );
+
+    let frustumChanged = false;
+    if (currentShadowFollowRadius !== preset.shadowFollowRadius) {
+      currentShadowFollowRadius = preset.shadowFollowRadius;
+      sunLight.shadow.camera.left = -currentShadowFollowRadius;
+      sunLight.shadow.camera.right = currentShadowFollowRadius;
+      sunLight.shadow.camera.top = currentShadowFollowRadius;
+      sunLight.shadow.camera.bottom = -currentShadowFollowRadius;
+      frustumChanged = true;
+    }
+
+    if (currentShadowMapSize !== preset.shadowMapSize) {
+      currentShadowMapSize = preset.shadowMapSize;
+      sunLight.shadow.mapSize.set(currentShadowMapSize, currentShadowMapSize);
+      if (sunLight.shadow.map) {
+        sunLight.shadow.map.dispose();
+        sunLight.shadow.map = null;
+      }
+      frustumChanged = true;
+    }
+
+    if (frustumChanged) {
+      sunLight.shadow.camera.updateProjectionMatrix();
+    }
+  }
+
+  function getViewportSize(): { width: number; height: number } {
+    return {
+      width: container.clientWidth || window.innerWidth,
+      height: container.clientHeight || window.innerHeight,
+    };
+  }
+
   function handleResize(): void {
-    const width = container.clientWidth || window.innerWidth;
-    const height = container.clientHeight || window.innerHeight;
+    const { width, height } = getViewportSize();
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
     renderer.setPixelRatio(
-      isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, CONFIG.renderer.maxPixelRatio),
+      isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, currentPixelRatioMax),
     );
   }
 
   window.addEventListener('resize', handleResize);
-
-  function render(): void {
-    renderer.render(scene, camera);
-  }
 
   function dispose(): void {
     window.removeEventListener('resize', handleResize);
@@ -321,7 +382,9 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     maxAnisotropy,
     setOrbitTarget,
     setCameraOrbitAngle,
-    render,
+    updateSunShadowTarget,
+    setQuality,
+    getViewportSize,
     dispose,
   };
 }

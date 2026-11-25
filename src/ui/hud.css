@@ -16,13 +16,13 @@
 }
 
 .sr-hud-panel {
-  background: rgba(15, 23, 42, 0.82);
-  border: 2px solid rgba(255, 210, 63, 0.34);
+  background: rgba(15, 23, 42, 0.84);
+  border: 2px solid rgba(255, 210, 63, 0.36);
   border-radius: clamp(14px, 2vw, 22px);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.32);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.36);
 }
 
-/* Top bar: race timer + reserved checkpoint slot */
+/* Top bar: race timer + checkpoint counter */
 .sr-hud-top {
   position: absolute;
   top: clamp(12px, 2.2vh, 24px);
@@ -57,14 +57,80 @@
 
 .sr-checkpoint-slot {
   padding: clamp(7px, 1.1vh, 11px) clamp(12px, 1.8vw, 18px);
-  font-size: clamp(14px, 1.8vw, 18px);
-  color: #35d4ff;
+  font-size: clamp(15px, 2vw, 20px);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #ffd23f;
+  border-color: rgba(53, 212, 255, 0.45);
+}
+
+/* Checkpoint split popup */
+.sr-split-slot {
+  position: absolute;
+  top: clamp(70px, 12.5vh, 108px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 18px;
+  font-size: clamp(16px, 2.2vw, 23px);
+  font-variant-numeric: tabular-nums;
+  border-color: rgba(255, 210, 63, 0.72);
+  white-space: nowrap;
+}
+
+.sr-split-cp {
+  color: #ffd23f;
+}
+
+.sr-split-time {
+  color: #fffdf7;
+}
+
+.sr-split-delta {
+  font-weight: 900;
+}
+
+.sr-split-delta-fast {
+  color: #4ade80;
+}
+
+.sr-split-delta-slow {
+  color: #f87171;
+}
+
+.sr-split-active {
+  animation: srSplitPopup 1.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes srSplitPopup {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 10px) scale(0.84);
+  }
+  14% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1.05);
+  }
+  25% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  78% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -12px) scale(0.96);
+  }
 }
 
 /* Airtime popup for Stage 5B landings */
 .sr-airtime-slot {
   position: absolute;
-  top: clamp(72px, 13vh, 110px);
+  top: clamp(120px, 20vh, 168px);
   left: 50%;
   transform: translateX(-50%);
   padding: 8px 20px;
@@ -100,6 +166,229 @@
     opacity: 0;
     transform: translate(-50%, -14px) scale(0.96);
   }
+}
+
+/* Center overlay wrapper */
+.sr-overlay-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(14px, 3vw, 28px);
+}
+
+/* TITLE Screen */
+.sr-title-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: clamp(10px, 1.8vh, 16px);
+  padding: clamp(24px, 4vw, 38px) clamp(28px, 5vw, 52px);
+  border-color: rgba(255, 210, 63, 0.58);
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(6px);
+}
+
+.sr-title-kicker {
+  font-size: clamp(11px, 1.3vw, 13px);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #35d4ff;
+}
+
+.sr-title-logo {
+  margin: 0;
+  font-size: clamp(44px, 8vw, 84px);
+  line-height: 0.95;
+  letter-spacing: 0.05em;
+  color: #ffd23f;
+  text-shadow:
+    0 4px 0 #ff6a00,
+    0 10px 24px rgba(15, 23, 42, 0.65);
+}
+
+.sr-title-best {
+  padding: 6px 14px;
+  border-radius: 10px;
+  background: rgba(30, 107, 255, 0.25);
+  border: 1.5px solid rgba(53, 212, 255, 0.55);
+  font-size: clamp(14px, 1.9vw, 18px);
+  font-variant-numeric: tabular-nums;
+  color: #fffdf7;
+}
+
+.sr-title-prompt {
+  margin-top: 4px;
+  font-size: clamp(16px, 2.2vw, 22px);
+  color: #fffdf7;
+  animation: srPromptPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes srPromptPulse {
+  0%,
+  100% {
+    opacity: 0.84;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+}
+
+.sr-title-controls {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 16px;
+  max-width: 480px;
+}
+
+/* COUNTDOWN Overlay */
+.sr-countdown-text {
+  font-size: clamp(72px, 15vw, 148px);
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: #ffd23f;
+  text-shadow:
+    0 6px 0 #ff6a00,
+    0 14px 36px rgba(15, 23, 42, 0.72);
+}
+
+.sr-countdown-go {
+  color: #35d4ff;
+  text-shadow:
+    0 6px 0 #1e6bff,
+    0 14px 36px rgba(15, 23, 42, 0.72);
+}
+
+.sr-countdown-pop {
+  animation: srCountdownPop 0.72s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes srCountdownPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.45);
+  }
+  28% {
+    opacity: 1;
+    transform: scale(1.14);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0.92;
+    transform: scale(0.96);
+  }
+}
+
+/* FINISH Results Screen */
+.sr-finish-card {
+  width: min(92vw, 440px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(12px, 2vh, 18px);
+  padding: clamp(20px, 3.2vw, 30px);
+  border-color: rgba(255, 210, 63, 0.62);
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(8px);
+}
+
+.sr-finish-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sr-finish-title {
+  font-size: clamp(20px, 3vw, 28px);
+  letter-spacing: 0.04em;
+  color: #ffd23f;
+}
+
+.sr-finish-newbest {
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #ff6a00, #ffd23f);
+  color: #0f172a;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.sr-finish-times {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.sr-finish-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1.5px solid rgba(53, 212, 255, 0.28);
+}
+
+.sr-finish-stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+}
+
+.sr-finish-stat-value {
+  font-size: clamp(20px, 2.8vw, 26px);
+  font-variant-numeric: tabular-nums;
+  color: #fffdf7;
+}
+
+.sr-finish-splits {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.sr-finish-split-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 14px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-finish-split-label {
+  color: #ffd23f;
+}
+
+.sr-finish-split-val {
+  color: #fffdf7;
+}
+
+.sr-finish-split-delta {
+  min-width: 58px;
+  text-align: right;
+}
+
+.sr-finish-prompt {
+  text-align: center;
+  font-size: clamp(14px, 1.8vw, 17px);
+  color: #cbd5e1;
 }
 
 /* Bottom-right: speedometer arc gauge + boost bar */
@@ -187,8 +476,12 @@
 }
 
 .sr-boost-state {
-  color: rgba(203, 213, 225, 0.65);
+  color: rgba(203, 213, 225, 0.78);
   font-size: clamp(9px, 1vw, 10px);
+}
+
+.sr-boost-active .sr-boost-state {
+  color: #ffd23f;
 }
 
 .sr-boost-bar {
@@ -198,6 +491,12 @@
   background: rgba(30, 41, 59, 0.95);
   border: 1.5px solid rgba(53, 212, 255, 0.35);
   overflow: hidden;
+  transition: box-shadow 0.15s ease;
+}
+
+.sr-boost-active .sr-boost-bar {
+  border-color: rgba(53, 212, 255, 0.95);
+  box-shadow: 0 0 12px rgba(53, 212, 255, 0.65);
 }
 
 .sr-boost-fill {
@@ -219,7 +518,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: clamp(6px, 1vw, 12px);
-  max-width: min(46vw, 420px);
+  max-width: min(48vw, 440px);
   border-color: rgba(30, 107, 255, 0.45);
 }
 

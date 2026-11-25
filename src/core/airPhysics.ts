@@ -9,6 +9,7 @@ import type { CarState } from './physics';
 export type PhysicsEvent =
   | { type: 'takeoff' }
   | { type: 'landed'; airtime: number; impactSpeed: number }
+  | { type: 'boost'; padId: number }
   | { type: 'fell' }
   | { type: 'respawn' };
 
@@ -98,6 +99,8 @@ export function stepAir(
   const wheelRadius = CONFIG.car.wheelRadius;
 
   state.steer = input.steer;
+  state.boostTimeLeft = Math.max(0, state.boostTimeLeft - dt);
+  state.boostCooldown = Math.max(0, state.boostCooldown - dt);
 
   if (state.mode === 'airborne') {
     state.airtime += dt;
@@ -249,24 +252,6 @@ export function stepAir(
   state.normalForce = 0;
 
   if (state.fallTimer >= cfg.respawnDelay) {
-    const respawnSpeed = Math.max(0, state.vForward) * cfg.respawnSpeedFactor;
-    state.mode = 'grounded';
-    state.s = state.lastSafeS;
-    state.sApprox = state.lastSafeS;
-    state.lateral = 0;
-    state.vForward = respawnSpeed;
-    state.vLateral = 0;
-    state.yaw = 0;
-    state.steer = 0;
-    state.airtime = 0;
-    state.fallTimer = 0;
-    state.landingAlignTimer = 0;
-    state.latAccel = 0;
-    state.longAccel = 0;
-
-    course.getFrameAt(state.s, _frame);
-    state.normalForce = cfg.gravity * _frame.up.y;
-
     events.push({ type: 'respawn' });
   }
 }

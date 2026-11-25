@@ -146,6 +146,8 @@ function computeCourseCameraTargets(
   }
 }
 
+export type CameraMode = 'title' | 'chase';
+
 export class ChaseCamera {
   private readonly camera: THREE.PerspectiveCamera;
   private readonly currentPos = new THREE.Vector3();
@@ -158,19 +160,50 @@ export class ChaseCamera {
   private readonly fovSpring: ScalarSpringState;
   private readonly rollSpring: ScalarSpringState = { value: 0, velocity: 0 };
   private boostFovBonusDeg = 0;
+  private mode: CameraMode = 'chase';
+  private titleOrbitAngle = 0.55;
+  private titleTransitionTimer = 0;
 
   constructor(camera: THREE.PerspectiveCamera) {
     this.camera = camera;
     this.fovSpring = { value: CONFIG.camera.fovBase, velocity: 0 };
   }
 
+  setMode(mode: CameraMode): void {
+    if (this.mode === 'title' && mode === 'chase') {
+      this.titleTransitionTimer = CONFIG.camera.titleToChaseBlendDuration;
+      this.posVelocity.set(0, 0, 0);
+      this.lookVelocity.set(0, 0, 0);
+    }
+    this.mode = mode;
+  }
+
   setBoostFovBonus(bonusDeg: number): void {
     this.boostFovBonusDeg = bonusDeg;
   }
 
+  private computeTitleOrbitTargets(pose: CarPose): void {
+    const orbitR = CONFIG.race.titleOrbitRadius;
+    const orbitH = CONFIG.race.titleOrbitHeight;
+    _targetPos.set(
+      pose.position.x + Math.sin(this.titleOrbitAngle) * orbitR,
+      pose.position.y + orbitH,
+      pose.position.z + Math.cos(this.titleOrbitAngle) * orbitR,
+    );
+    _targetLook.copy(pose.position).addScaledVector(_worldUp, 0.72);
+  }
+
   snapTo(pose: CarPose, carState: CarState, course: Course): void {
     const cfg = CONFIG.camera;
-    computeCourseCameraTargets(pose, carState, course);
+    this.titleTransitionTimer = 0;
+
+    if (this.mode === 'title') {
+      this.computeTitleOrbitTargets(pose);
+      this.smoothedUp.copy(_worldUp);
+    } else {
+      computeCourseCameraTargets(pose, carState, course);
+      this.smoothedUp.copy(pose.up).normalize();
+    }
 
     this.currentPos.copy(_targetPos);
     this.lastSafePos.copy(_targetPos);
@@ -179,7 +212,6 @@ export class ChaseCamera {
     this.currentLook.copy(_targetLook);
     this.lookVelocity.set(0, 0, 0);
 
-    this.smoothedUp.copy(pose.up).normalize();
     this.rollSpring.value = 0;
     this.rollSpring.velocity = 0;
 
@@ -200,7 +232,15 @@ export class ChaseCamera {
     const cfg = CONFIG.camera;
     const dt = THREE.MathUtils.clamp(realDt, 1e-4, CONFIG.sim.maxFrameDt);
 
-    if (carState.mode === 'falling') {
+    if (this.mode === 'title') {
+      this.titleOrbitAngle += CONFIG.race.titleOrbitSpeed * dt;
+      this.computeTitleOrbitTargets(pose);
+      this.currentPos.copy(_targetPos);
+      this.lastSafePos.copy(_targetPos);
+      this.currentLook.copy(_targetLook);
+      this.smoothedUp.copy(_worldUp);
+      _rolledUp.copy(_worldUp);
+    } else if (carState.mode === 'falling') {
       // Freeze camera at last safe height above track and keep looking at the falling car
       this.currentPos.copy(this.lastSafePos);
       this.posVelocity.set(0, 0, 0);
@@ -218,9 +258,27 @@ export class ChaseCamera {
       this.smoothedUp.applyQuaternion(_identityQuat).normalize();
       _rolledUp.copy(this.smoothedUp);
     } else {
+      let activePosSmooth: number = cfg.positionSmoothTime;
+      let activeLookSmooth: number = cfg.lookSmoothTime;
+      if (this.titleTransitionTimer > 0) {
+        this.titleTransitionTimer = Math.max(0, this.titleTransitionTimer - dt);
+        const blendFrac =
+          this.titleTransitionTimer / Math.max(0.01, cfg.titleToChaseBlendDuration);
+        activePosSmooth = THREE.MathUtils.lerp(
+          cfg.positionSmoothTime,
+          cfg.titleToChaseSmoothTime,
+          blendFrac,
+        );
+        activeLookSmooth = THREE.MathUtils.lerp(
+          cfg.lookSmoothTime,
+          cfg.titleToChaseSmoothTime * 0.75,
+          blendFrac,
+        );
+      }
+
       computeCourseCameraTargets(pose, carState, course);
-      smoothDampVector3(this.currentPos, _targetPos, this.posVelocity, cfg.positionSmoothTime, dt);
-      smoothDampVector3(this.currentLook, _targetLook, this.lookVelocity, cfg.lookSmoothTime, dt);
+      smoothDampVector3(this.currentPos, _targetPos, this.posVelocity, activePosSmooth, dt);
+      smoothDampVector3(this.currentLook, _targetLook, this.lookVelocity, activeLookSmooth, dt);
 
       const minSafeY = course.getBounds().min.y + 1.2;
       if (this.currentPos.y >= minSafeY) {

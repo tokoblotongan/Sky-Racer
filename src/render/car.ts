@@ -128,14 +128,29 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
   const headlightMaterial = new THREE.MeshStandardMaterial({
     color: cfg.headlightColorHex,
     emissive: cfg.headlightColorHex,
-    emissiveIntensity: 1.8,
+    emissiveIntensity: cfg.headlightEmissiveIntensity,
     roughness: 0.15,
   });
 
   const taillightMaterial = new THREE.MeshStandardMaterial({
     color: cfg.taillightColorHex,
     emissive: cfg.taillightColorHex,
-    emissiveIntensity: 1.1,
+    emissiveIntensity: cfg.taillightEmissiveIntensity,
+    roughness: 0.2,
+  });
+
+  const exhaustGlowMaterial = new THREE.MeshBasicMaterial({
+    color: cfg.exhaustGlowColorHex,
+    transparent: true,
+    opacity: 0.25,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+
+  const exhaustCoreMaterial = new THREE.MeshStandardMaterial({
+    color: cfg.exhaustGlowColorHex,
+    emissive: cfg.exhaustGlowColorHex,
+    emissiveIntensity: cfg.exhaustEmissiveIntensity,
     roughness: 0.2,
   });
 
@@ -222,6 +237,42 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
       cfg.bodyLength * 0.5 + 0.01,
     );
     sprungBody.add(taillight);
+  }
+
+  // 4b. Twin rear exhaust pipes + emissive boost halo
+  const exhaustPipeGeom = new THREE.CylinderGeometry(
+    cfg.exhaustPipeRadius,
+    cfg.exhaustPipeRadius * 1.12,
+    cfg.exhaustPipeLength,
+    12,
+  );
+  exhaustPipeGeom.rotateX(Math.PI / 2);
+  const exhaustCoreGeom = new THREE.SphereGeometry(cfg.exhaustPipeRadius * 0.85, 10, 8);
+  const exhaustHaloGeom = new THREE.SphereGeometry(cfg.exhaustPipeRadius * 2.1, 12, 10);
+  const exhaustHalos: THREE.Mesh[] = [];
+  const exhaustCores: THREE.Mesh[] = [];
+
+  for (const side of [-1, 1]) {
+    const exX = side * (cfg.bodyWidth * 0.22);
+    const exY = cfg.bodyClearance + 0.09;
+    const exZ = cfg.bodyLength * 0.5 + 0.12;
+
+    const pipe = new THREE.Mesh(exhaustPipeGeom, rimMaterial);
+    pipe.position.set(exX, exY, exZ - 0.04);
+    pipe.castShadow = true;
+    sprungBody.add(pipe);
+
+    const core = new THREE.Mesh(exhaustCoreGeom, exhaustCoreMaterial);
+    core.position.set(exX, exY, exZ + 0.03);
+    core.scale.set(0.7, 0.7, 1.1);
+    sprungBody.add(core);
+    exhaustCores.push(core);
+
+    const halo = new THREE.Mesh(exhaustHaloGeom, exhaustGlowMaterial);
+    halo.position.set(exX, exY, exZ + 0.09);
+    halo.scale.set(cfg.exhaustHaloBaseScale, cfg.exhaustHaloBaseScale, cfg.exhaustHaloBaseScale * 1.5);
+    sprungBody.add(halo);
+    exhaustHalos.push(halo);
   }
 
   // 5. Rear stunt spoiler (pylons + wing + endplates)
@@ -338,6 +389,29 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
 
     sprungBody.rotation.z = currentRoll;
     sprungBody.rotation.x = currentPitch;
+
+    const isBoosting = state.boostTimeLeft > 0;
+    const boostFade = isBoosting
+      ? Math.min(1, state.boostTimeLeft / Math.max(0.2, CONFIG.boost.duration * 0.25))
+      : 0;
+    const targetHaloScale = isBoosting
+      ? THREE.MathUtils.lerp(cfg.exhaustHaloBaseScale, cfg.exhaustHaloBoostScale, boostFade)
+      : cfg.exhaustHaloBaseScale;
+    const coreScale = isBoosting ? 1.15 : 0.65;
+
+    exhaustGlowMaterial.opacity = isBoosting ? 0.45 + 0.4 * boostFade : 0.14;
+    exhaustCoreMaterial.emissiveIntensity = isBoosting
+      ? cfg.exhaustEmissiveIntensity * (1.2 + 0.45 * boostFade)
+      : 0.45;
+    taillightMaterial.emissiveIntensity =
+      state.mode === 'grounded' && state.longAccel < -8
+        ? cfg.taillightEmissiveIntensity * 1.55
+        : cfg.taillightEmissiveIntensity;
+
+    for (let i = 0; i < exhaustHalos.length; i++) {
+      exhaustHalos[i].scale.set(targetHaloScale, targetHaloScale, targetHaloScale * (isBoosting ? 2.6 : 1.3));
+      exhaustCores[i].scale.set(coreScale, coreScale, isBoosting ? 2.1 : 1.0);
+    }
   }
 
   return {

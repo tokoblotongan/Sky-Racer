@@ -3,10 +3,13 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config';
 import type { CarInput } from '../input/controls';
-import { startAir, stepAir, type PhysicsEvent } from './airPhysics';
+import { startAir, stepAir, type PhysicsEvent as AirPhysicsEvent } from './airPhysics';
 import type { Course, TrackFrame } from './course';
+import type { RacePhase } from './state';
 
-export type { PhysicsEvent } from './airPhysics';
+export type PhysicsEvent =
+  | AirPhysicsEvent
+  | { type: 'railHit'; side: -1 | 1; intensity: number; worldPos: THREE.Vector3 };
 
 export type CarMode = 'grounded' | 'airborne' | 'falling';
 
@@ -18,10 +21,14 @@ export interface CarState {
   vLateral: number;
   yaw: number;
   steer: number;
+  slip: number;
   wheelSpin: number;
   latAccel: number;
   longAccel: number;
   normalForce: number;
+  boostTimeLeft: number;
+  boostCooldown: number;
+  railHitCooldown: number;
   worldPos: THREE.Vector3;
   worldVel: THREE.Vector3;
   worldQuat: THREE.Quaternion;
@@ -40,6 +47,11 @@ export interface CarPose {
   up: THREE.Vector3;
   right: THREE.Vector3;
   quaternion: THREE.Quaternion;
+}
+
+export interface StepCarOptions {
+  phase: RacePhase;
+  respawnTarget: { readonly s: number; readonly lateral: number };
 }
 
 const _frame: TrackFrame = {
@@ -74,6 +86,24 @@ function smoothstep01(t: number): number {
   return c * c * (3 - 2 * c);
 }
 
+const LOCKED_PARK_INPUT: CarInput = {
+  throttle: 0,
+  brake: 0,
+  steer: 0,
+  handbrake: true,
+  resetPressed: false,
+  confirmPressed: false,
+};
+
+const LOCKED_FINISH_INPUT: CarInput = {
+  throttle: 0,
+  brake: 0.75,
+  steer: 0,
+  handbrake: false,
+  resetPressed: false,
+  confirmPressed: false,
+};
+
 export function createCarState(): CarState {
   return {
     mode: 'grounded',
@@ -83,10 +113,14 @@ export function createCarState(): CarState {
     vLateral: 0,
     yaw: 0,
     steer: 0,
+    slip: 0,
     wheelSpin: 0,
     latAccel: 0,
     longAccel: 0,
     normalForce: CONFIG.physics.gravity,
+    boostTimeLeft: 0,
+    boostCooldown: 0,
+    railHitCooldown: 0,
     worldPos: new THREE.Vector3(),
     worldVel: new THREE.Vector3(),
     worldQuat: new THREE.Quaternion(),
@@ -108,10 +142,14 @@ export function copyCarState(src: CarState, dst: CarState): void {
   dst.vLateral = src.vLateral;
   dst.yaw = src.yaw;
   dst.steer = src.steer;
+  dst.slip = src.slip;
   dst.wheelSpin = src.wheelSpin;
   dst.latAccel = src.latAccel;
   dst.longAccel = src.longAccel;
   dst.normalForce = src.normalForce;
+  dst.boostTimeLeft = src.boostTimeLeft;
+  dst.boostCooldown = src.boostCooldown;
+  dst.railHitCooldown = src.railHitCooldown;
   dst.worldPos.copy(src.worldPos);
   dst.worldVel.copy(src.worldVel);
   dst.worldQuat.copy(src.worldQuat);
@@ -143,10 +181,14 @@ export function interpolateCarState(
   out.vLateral = THREE.MathUtils.lerp(prev.vLateral, curr.vLateral, alpha);
   out.yaw = THREE.MathUtils.lerp(prev.yaw, curr.yaw, alpha);
   out.steer = THREE.MathUtils.lerp(prev.steer, curr.steer, alpha);
+  out.slip = THREE.MathUtils.lerp(prev.slip, curr.slip, alpha);
   out.wheelSpin = THREE.MathUtils.lerp(prev.wheelSpin, curr.wheelSpin, alpha);
   out.latAccel = THREE.MathUtils.lerp(prev.latAccel, curr.latAccel, alpha);
   out.longAccel = THREE.MathUtils.lerp(prev.longAccel, curr.longAccel, alpha);
   out.normalForce = THREE.MathUtils.lerp(prev.normalForce, curr.normalForce, alpha);
+  out.boostTimeLeft = THREE.MathUtils.lerp(prev.boostTimeLeft, curr.boostTimeLeft, alpha);
+  out.boostCooldown = THREE.MathUtils.lerp(prev.boostCooldown, curr.boostCooldown, alpha);
+  out.railHitCooldown = curr.railHitCooldown;
   out.worldPos.lerpVectors(prev.worldPos, curr.worldPos, alpha);
   out.worldVel.lerpVectors(prev.worldVel, curr.worldVel, alpha);
   out.worldQuat.slerpQuaternions(prev.worldQuat, curr.worldQuat, alpha);
@@ -163,14 +205,72 @@ export function interpolateCarState(
   out.landingStartQuat.copy(curr.landingStartQuat);
 }
 
+export function triggerBoost(state: CarState): void {
+  const boostCfg = CONFIG.boost;
+  const boostedMax = CONFIG.physics.maxSpeed * boostCfg.maxSpeedMultiplier;
+  state.boostTimeLeft = boostCfg.duration;
+  state.boostCooldown = boostCfg.retriggerCooldown;
+
+  if (state.mode === 'grounded' && state.vForward >= -1) {
+    state.vForward = Math.min(boostedMax, Math.max(0, state.vForward) + boostCfg.kickSpeed);
+  }
+}
+
+export function respawnAt(
+  state: CarState,
+  course: Course,
+  s: number,
+  lateral: number,
+  speedFactor: number,
+): void {
+  const clampedS = course.clampDistance(s);
+  course.getFrameAt(clampedS, _frame);
+  const maxLateral = Math.max(0.2, _frame.width * 0.5 - CONFIG.physics.railMargin);
+  const clampedLat = THREE.MathUtils.clamp(lateral, -maxLateral, maxLateral);
+
+  const forwardSpeed = Math.max(0, state.vForward) * speedFactor;
+
+  state.mode = 'grounded';
+  state.s = clampedS;
+  state.sApprox = clampedS;
+  state.lastSafeS = clampedS;
+  state.lastGapEndS = 0;
+  state.lateral = clampedLat;
+  state.vForward = forwardSpeed;
+  state.vLateral = 0;
+  state.yaw = 0;
+  state.steer = 0;
+  state.slip = 0;
+  state.airtime = 0;
+  state.fallTimer = 0;
+  state.landingAlignTimer = 0;
+  state.latAccel = 0;
+  state.longAccel = 0;
+  state.boostTimeLeft = 0;
+  state.boostCooldown = 0;
+  state.railHitCooldown = 0;
+  state.normalForce = CONFIG.physics.gravity * _frame.up.y;
+
+  state.worldPos
+    .copy(_frame.position)
+    .addScaledVector(_frame.right, clampedLat)
+    .addScaledVector(_frame.up, CONFIG.physics.rideHeight);
+  state.worldVel.copy(_frame.tangent).multiplyScalar(forwardSpeed);
+  _negForward.copy(_frame.tangent).negate();
+  _basisMat.makeBasis(_frame.right, _frame.up, _negForward);
+  state.worldQuat.setFromRotationMatrix(_basisMat);
+}
+
 function stepGroundedCar(
   state: CarState,
   input: CarInput,
   course: Course,
   dt: number,
+  phase: RacePhase,
   events: PhysicsEvent[],
 ): void {
   const cfg = CONFIG.physics;
+  const boostCfg = CONFIG.boost;
   const wheelRadius = CONFIG.car.wheelRadius;
   course.getFrameAt(state.s, _frame);
   _prevTangent.copy(_frame.tangent);
@@ -183,6 +283,13 @@ function stepGroundedCar(
     state.landingAlignTimer = Math.max(0, state.landingAlignTimer - dt);
   }
 
+  state.boostTimeLeft = Math.max(0, state.boostTimeLeft - dt);
+  state.boostCooldown = Math.max(0, state.boostCooldown - dt);
+  state.railHitCooldown = Math.max(0, state.railHitCooldown - dt);
+  const isBoosting = state.boostTimeLeft > 0;
+  const boostedMaxSpeed = cfg.maxSpeed * boostCfg.maxSpeedMultiplier;
+  const activeMaxSpeed = isBoosting ? boostedMaxSpeed : cfg.maxSpeed;
+
   // 1. Track-space gravity components (world g = (0, -gravity, 0))
   const gFrameTangent = -cfg.gravity * _frame.tangent.y;
   const gFrameRight = -cfg.gravity * _frame.right.y;
@@ -193,19 +300,27 @@ function stepGroundedCar(
   const gHeading = gFrameTangent * cosYPre + gFrameRight * sinYPre;
   const gCarRight = -gFrameTangent * sinYPre + gFrameRight * cosYPre;
 
-  // 2. Longitudinal drive, braking, reverse, gravity along track, rolling resistance & drag
+  // 2. Longitudinal drive, boost, braking, reverse, gravity along track, rolling resistance & drag
   if (input.throttle > 0) {
     if (state.vForward < -0.4) {
       state.vForward = Math.min(0, state.vForward + cfg.brakeDecel * input.throttle * dt);
-    } else {
-      const speedRatio = THREE.MathUtils.clamp(state.vForward / cfg.maxSpeed, 0, 1);
+    } else if (state.vForward < activeMaxSpeed) {
+      const speedRatio = THREE.MathUtils.clamp(state.vForward / activeMaxSpeed, 0, 1);
       const accelScale = Math.max(0, 1 - Math.pow(speedRatio, cfg.accelFalloffExponent));
       state.vForward += cfg.accel * input.throttle * accelScale * dt;
     }
   }
 
+  if (isBoosting && phase === 'RACING') {
+    const boostRatio = THREE.MathUtils.clamp(state.vForward / boostedMaxSpeed, 0, 1);
+    const boostScale = Math.max(0, 1 - Math.pow(boostRatio, cfg.accelFalloffExponent));
+    state.vForward += boostCfg.extraAccel * boostScale * dt;
+  }
+
   if (input.brake > 0) {
-    if (state.vForward > 0.4) {
+    if (phase === 'FINISH') {
+      state.vForward = Math.max(0, state.vForward - cfg.brakeDecel * input.brake * dt);
+    } else if (state.vForward > 0.4) {
       state.vForward = Math.max(0, state.vForward - cfg.brakeDecel * input.brake * dt);
     } else if (state.vForward > -cfg.reverseMaxSpeed) {
       state.vForward = Math.max(
@@ -215,8 +330,10 @@ function stepGroundedCar(
     }
   }
 
-  // Gravity acceleration along track tangent
-  state.vForward += gHeading * dt;
+  // Gravity acceleration along track tangent (parked cleanly during TITLE/COUNTDOWN)
+  if (phase === 'RACING' || phase === 'FINISH') {
+    state.vForward += gHeading * dt;
+  }
 
   // Prevent stalling upside down at loop apex
   if (_frame.up.y < -0.05 && Math.abs(state.vForward) < cfg.invertedStallSpeed) {
@@ -237,7 +354,12 @@ function stepGroundedCar(
     } else {
       state.vForward -= Math.sign(state.vForward) * hbDrop;
     }
-  } else if (input.throttle === 0 && input.brake === 0 && Math.abs(_frame.tangent.y) < 0.08) {
+  } else if (
+    !isBoosting &&
+    input.throttle === 0 &&
+    input.brake === 0 &&
+    Math.abs(_frame.tangent.y) < 0.08
+  ) {
     const rollDrop = cfg.rollingResistance * dt;
     if (Math.abs(state.vForward) <= rollDrop) {
       state.vForward = 0;
@@ -246,12 +368,18 @@ function stepGroundedCar(
     }
   }
 
+  // Smoothly return excess post-boost speed toward normal maxSpeed once boost expires
+  if (!isBoosting && state.vForward > cfg.maxSpeed) {
+    const excess = state.vForward - cfg.maxSpeed;
+    state.vForward -= excess * (1 - Math.exp(-1.8 * dt));
+  }
+
   // Quadratic aero drag + speed bounds
   state.vForward -= cfg.drag * state.vForward * Math.abs(state.vForward) * dt;
   state.vForward = THREE.MathUtils.clamp(
     state.vForward,
     -cfg.maxReverseSlideSpeed,
-    cfg.maxSpeed,
+    boostedMaxSpeed,
   );
 
   // 3. Steering -> yaw relative to track tangent
@@ -312,11 +440,25 @@ function stepGroundedCar(
   state.s += vTrackTangent * dt;
   state.lateral += vTrackRight * dt;
 
-  // 6. Guardrail bounds, bounce restitution & speed penalty
+  // 6. Guardrail bounds, bounce restitution, speed penalty & railHit event
   const maxLateral = Math.max(0.2, _frame.width * 0.5 - cfg.railMargin);
   if (state.lateral > maxLateral) {
     state.lateral = maxLateral;
     if (vTrackRight > 0) {
+      const impactSpeed = Math.abs(vTrackRight);
+      if (state.railHitCooldown <= 0 && impactSpeed > 0.35 && phase === 'RACING') {
+        const contactPos = _frame.position
+          .clone()
+          .addScaledVector(_frame.right, state.lateral + CONFIG.car.bodyWidth * 0.5)
+          .addScaledVector(_frame.up, 0.36);
+        events.push({
+          type: 'railHit',
+          side: 1,
+          intensity: THREE.MathUtils.clamp(impactSpeed / 14, 0.2, 1),
+          worldPos: contactPos,
+        });
+        state.railHitCooldown = cfg.railHitCooldown;
+      }
       vTrackRight = -vTrackRight * cfg.railRestitution;
       state.vForward *= cfg.railSpeedPenalty;
       state.yaw *= cfg.railYawDamp;
@@ -327,6 +469,20 @@ function stepGroundedCar(
   } else if (state.lateral < -maxLateral) {
     state.lateral = -maxLateral;
     if (vTrackRight < 0) {
+      const impactSpeed = Math.abs(vTrackRight);
+      if (state.railHitCooldown <= 0 && impactSpeed > 0.35 && phase === 'RACING') {
+        const contactPos = _frame.position
+          .clone()
+          .addScaledVector(_frame.right, state.lateral - CONFIG.car.bodyWidth * 0.5)
+          .addScaledVector(_frame.up, 0.36);
+        events.push({
+          type: 'railHit',
+          side: -1,
+          intensity: THREE.MathUtils.clamp(impactSpeed / 14, 0.2, 1),
+          worldPos: contactPos,
+        });
+        state.railHitCooldown = cfg.railHitCooldown;
+      }
       vTrackRight = -vTrackRight * cfg.railRestitution;
       state.vForward *= cfg.railSpeedPenalty;
       state.yaw *= cfg.railYawDamp;
@@ -335,6 +491,11 @@ function stepGroundedCar(
       state.vLateral = (vTrackRight - state.vForward * sinR) / Math.max(0.2, cosR);
     }
   }
+
+  state.slip =
+    phase === 'RACING'
+      ? Math.atan2(Math.abs(state.vLateral), Math.max(0.5, Math.abs(state.vForward)))
+      : 0;
 
   // 7. Clamp s to [0, totalLength] with smooth stop at ends
   const totalLength = course.getLength();
@@ -369,9 +530,26 @@ function stepGroundedCar(
       (state.vLateral - prevVLateral) / dt + state.vForward * (yawRate + trackTurnRate);
   }
 
-  // 10. Takeoff at gap start (only detach at gaps so loop behavior remains unchanged)
+  // 10. Boost pad detection (only while grounded and during RACING)
+  if (phase === 'RACING' && state.boostCooldown <= 0 && !course.isGapAt(state.s)) {
+    const boostPads = course.getBoostPads();
+    for (const pad of boostPads) {
+      if (
+        Math.abs(state.s - pad.s) <= pad.length * 0.5 &&
+        Math.abs(state.lateral - pad.lateral) < pad.width * 0.5
+      ) {
+        triggerBoost(state);
+        events.push({ type: 'boost', padId: pad.id });
+        break;
+      }
+    }
+  }
+
+  // 11. Takeoff at gap start (only detach at gaps so loop behavior remains unchanged)
   if (course.isGapAt(state.s)) {
-    startAir(state, course, events);
+    const airEvents: AirPhysicsEvent[] = [];
+    startAir(state, course, airEvents);
+    for (const ev of airEvents) events.push(ev);
   } else {
     state.sApprox = state.s;
   }
@@ -382,13 +560,35 @@ export function stepCar(
   input: CarInput,
   course: Course,
   dt: number,
+  options: StepCarOptions,
 ): PhysicsEvent[] {
   const events: PhysicsEvent[] = [];
 
+  if (options.phase === 'TITLE' || options.phase === 'COUNTDOWN') {
+    state.boostTimeLeft = 0;
+    state.boostCooldown = 0;
+    stepGroundedCar(state, LOCKED_PARK_INPUT, course, dt, options.phase, events);
+    return events;
+  }
+
+  const effectiveInput = options.phase === 'FINISH' ? LOCKED_FINISH_INPUT : input;
+
   if (state.mode === 'grounded') {
-    stepGroundedCar(state, input, course, dt, events);
+    stepGroundedCar(state, effectiveInput, course, dt, options.phase, events);
   } else {
-    stepAir(state, input, course, dt, events);
+    state.slip = 0;
+    const airEvents: AirPhysicsEvent[] = [];
+    stepAir(state, effectiveInput, course, dt, airEvents);
+    for (const ev of airEvents) events.push(ev);
+    if (events.some((ev) => ev.type === 'respawn')) {
+      respawnAt(
+        state,
+        course,
+        options.respawnTarget.s,
+        options.respawnTarget.lateral,
+        CONFIG.physics.respawnSpeedFactor,
+      );
+    }
   }
 
   return events;

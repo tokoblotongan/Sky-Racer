@@ -8,6 +8,7 @@ export interface CarInput {
   steer: number;
   handbrake: boolean;
   resetPressed: boolean;
+  confirmPressed: boolean;
 }
 
 export interface KeyboardControls {
@@ -31,6 +32,7 @@ function approachExponential(current: number, target: number, rate: number, dt: 
 export function createKeyboardControls(): KeyboardControls {
   const pressed = new Set<string>();
   let resetQueued = false;
+  let confirmQueued = false;
 
   let throttle = 0;
   let brake = 0;
@@ -43,6 +45,11 @@ export function createKeyboardControls(): KeyboardControls {
 
     if (event.code === 'KeyR' && !event.repeat) {
       resetQueued = true;
+    }
+
+    if ((event.code === 'Enter' || event.code === 'NumpadEnter') && !event.repeat) {
+      event.preventDefault();
+      confirmQueued = true;
     }
 
     pressed.add(event.code);
@@ -86,12 +93,16 @@ export function createKeyboardControls(): KeyboardControls {
     const resetPressed = resetQueued;
     resetQueued = false;
 
+    const confirmPressed = confirmQueued;
+    confirmQueued = false;
+
     return {
       throttle,
       brake,
       steer,
       handbrake,
       resetPressed,
+      confirmPressed,
     };
   }
 

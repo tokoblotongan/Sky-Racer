@@ -23,6 +23,11 @@ interface RingSpec {
   vCoord: number;
 }
 
+export interface TrackVisual {
+  group: THREE.Group;
+  update: (dt: number) => void;
+}
+
 function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
   const size = CONFIG.course.trackTextureSize;
   const canvas = document.createElement('canvas');
@@ -166,6 +171,69 @@ function createJumpStripCanvasTexture(maxAnisotropy: number): THREE.CanvasTextur
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.anisotropy = maxAnisotropy;
+  return texture;
+}
+
+function createBoostPadCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const size = CONFIG.boost.textureSize;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  if (ctx) {
+    // Deep translucent cyan base so bright chevrons pop clearly
+    ctx.fillStyle = '#093B5C';
+    ctx.fillRect(0, 0, size, size);
+
+    // Glowing side rails along boost strip edges
+    const borderW = size * 0.08;
+    ctx.fillStyle = CONFIG.colors.boost;
+    ctx.fillRect(0, 0, borderW, size);
+    ctx.fillRect(size - borderW, 0, borderW, size);
+
+    // Forward-pointing glowing chevrons (UV v scrolls forward)
+    const chevronCount = 3;
+    const cellH = size / chevronCount;
+    const midX = size * 0.5;
+    const padX = size * 0.14;
+
+    for (let i = -1; i <= chevronCount; i++) {
+      const baseY = i * cellH;
+      const tipY = baseY + cellH * 0.16;
+      const wingY = baseY + cellH * 0.64;
+      const thickness = cellH * 0.28;
+
+      ctx.fillStyle = CONFIG.colors.boost;
+      ctx.beginPath();
+      ctx.moveTo(midX, tipY);
+      ctx.lineTo(size - padX, wingY);
+      ctx.lineTo(size - padX, wingY + thickness);
+      ctx.lineTo(midX, tipY + thickness);
+      ctx.lineTo(padX, wingY + thickness);
+      ctx.lineTo(padX, wingY);
+      ctx.closePath();
+      ctx.fill();
+
+      // Bright core highlight inside each chevron
+      ctx.fillStyle = CONFIG.colors.boostStripeLight;
+      ctx.beginPath();
+      ctx.moveTo(midX, tipY + thickness * 0.22);
+      ctx.lineTo(size - padX * 1.35, wingY + thickness * 0.16);
+      ctx.lineTo(size - padX * 1.35, wingY + thickness * 0.62);
+      ctx.lineTo(midX, tipY + thickness * 0.68);
+      ctx.lineTo(padX * 1.35, wingY + thickness * 0.62);
+      ctx.lineTo(padX * 1.35, wingY + thickness * 0.16);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
   texture.anisotropy = maxAnisotropy;
   return texture;
 }
@@ -578,6 +646,97 @@ function buildJumpEdgeStrips(
   return stripsGroup;
 }
 
+function buildBoostPadStrips(
+  course: Course,
+  boostMaterial: THREE.Material,
+): THREE.Group {
+  const cfg = CONFIG.course;
+  const boostCfg = CONFIG.boost;
+  const boostGroup = new THREE.Group();
+  boostGroup.name = 'BoostPadsGroup';
+
+  const pads = course.getBoostPads();
+  if (pads.length === 0) {
+    return boostGroup;
+  }
+
+  const totalLen = course.getLength();
+  const latSubdivs = 6;
+  const frame: TrackFrame = {
+    s: 0,
+    position: new THREE.Vector3(),
+    tangent: new THREE.Vector3(),
+    up: new THREE.Vector3(),
+    right: new THREE.Vector3(),
+    width: cfg.trackWidth,
+    bank: 0,
+  };
+  const vPos = new THREE.Vector3();
+
+  for (const pad of pads) {
+    const startS = Math.max(0, pad.s - pad.length * 0.5);
+    const endS = Math.min(totalLen, pad.s + pad.length * 0.5);
+    const spanLen = endS - startS;
+    if (spanLen < 0.5) {
+      continue;
+    }
+
+    const lengthSteps = Math.max(6, Math.ceil(spanLen / cfg.stepLength));
+    const cols = latSubdivs + 1;
+    const rows = lengthSteps + 1;
+    const positions = new Float32Array(rows * cols * 3);
+    const uvs = new Float32Array(rows * cols * 2);
+    const indices: number[] = [];
+    const halfPadW = pad.width * 0.5;
+
+    for (let r = 0; r < rows; r++) {
+      const vFrac = r / lengthSteps;
+      const s = THREE.MathUtils.lerp(startS, endS, vFrac);
+      course.getFrameAt(s, frame);
+
+      for (let c = 0; c < cols; c++) {
+        const uFrac = c / latSubdivs;
+        const lat = pad.lateral + THREE.MathUtils.lerp(-halfPadW, halfPadW, uFrac);
+        vPos
+          .copy(frame.position)
+          .addScaledVector(frame.right, lat)
+          .addScaledVector(frame.up, boostCfg.lift);
+
+        const idx = r * cols + c;
+        positions[idx * 3] = vPos.x;
+        positions[idx * 3 + 1] = vPos.y;
+        positions[idx * 3 + 2] = vPos.z;
+        uvs[idx * 2] = uFrac;
+        uvs[idx * 2 + 1] = (1 - vFrac) * 2;
+      }
+    }
+
+    for (let r = 0; r < lengthSteps; r++) {
+      for (let c = 0; c < latSubdivs; c++) {
+        const a = r * cols + c;
+        const b = a + 1;
+        const cIdx = (r + 1) * cols + c;
+        const d = cIdx + 1;
+        indices.push(a, b, cIdx);
+        indices.push(b, d, cIdx);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+
+    const mesh = new THREE.Mesh(geometry, boostMaterial);
+    mesh.receiveShadow = true;
+    boostGroup.add(mesh);
+  }
+
+  return boostGroup;
+}
+
 function buildRailPosts(
   course: Course,
   railMaterial: THREE.Material,
@@ -775,7 +934,7 @@ function buildDebugCourseFrames(course: Course): THREE.Group {
   return debugGroup;
 }
 
-export function buildTrackMesh(course: Course, maxAnisotropy = 8): THREE.Group {
+export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
   const cfg = CONFIG.course;
   const spans = splitSolidSpans(course.getSamples());
   const group = new THREE.Group();
@@ -864,13 +1023,38 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): THREE.Group {
   });
   group.add(buildJumpEdgeStrips(course, jumpStripMaterial));
 
-  // 4. Support posts + short rounded end posts at gaps & ends
+  // 4. Boost pads (#35D4FF emissive with scrolling UV chevron pattern)
+  const boostTexture = createBoostPadCanvasTexture(maxAnisotropy);
+  const boostColor = new THREE.Color(CONFIG.colors.boost);
+  const boostMaterial = new THREE.MeshPhysicalMaterial({
+    map: boostTexture,
+    emissive: boostColor,
+    emissiveMap: boostTexture,
+    emissiveIntensity: CONFIG.boost.emissiveIntensity,
+    clearcoat: 0.9,
+    clearcoatRoughness: 0.1,
+    roughness: 0.2,
+    metalness: 0.06,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3,
+  });
+  group.add(buildBoostPadStrips(course, boostMaterial));
+
+  // 5. Support posts + short rounded end posts at gaps & ends
   group.add(buildRailPosts(course, railMaterial, spans));
 
-  // 5. Optional debug centerline & frame arrows (still shows imaginary gap centerline)
+  // 6. Optional debug centerline & frame arrows (still shows imaginary gap centerline)
   if (CONFIG.debug.showCourseFrames) {
     group.add(buildDebugCourseFrames(course));
   }
 
-  return group;
+  function update(dt: number): void {
+    boostTexture.offset.y = (boostTexture.offset.y - dt * CONFIG.boost.uvScrollSpeed) % 1;
+  }
+
+  return {
+    group,
+    update,
+  };
 }

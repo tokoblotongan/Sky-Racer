@@ -21,6 +21,20 @@ export interface TrackFrame {
   isGap?: boolean;
 }
 
+export interface CheckpointData {
+  index: number;
+  s: number;
+  frame: TrackFrame;
+}
+
+export interface BoostPadData {
+  id: number;
+  s: number;
+  lateral: number;
+  length: number;
+  width: number;
+}
+
 export interface SegmentInfo {
   index: number;
   type: CourseSegmentType;
@@ -43,6 +57,9 @@ export interface CourseConfig {
   bankBlendLength: number;
   slopeBlendLength: number;
   curvatureSmoothWindow: number;
+  finishMargin: number;
+  boostPadLength: number;
+  boostPadWidth: number;
   validate?: boolean;
 }
 
@@ -236,6 +253,9 @@ export class Course {
   private readonly totalLength: number;
   private readonly bounds: CourseBounds;
   private readonly gapRanges: GapRange[];
+  private readonly checkpoints: CheckpointData[];
+  private readonly boostPads: BoostPadData[];
+  private readonly finishS: number;
 
   constructor(config: CourseConfig) {
     if (config.segments.length === 0) {
@@ -263,6 +283,11 @@ export class Course {
     const samples: InternalSample[] = [];
     const gapRanges: GapRange[] = [];
     const loopGaps: LoopGapInfo[] = [];
+    const segmentSpanMeta: Array<{
+      startS: number;
+      endS: number;
+      seg: CourseSegmentConfig;
+    }> = [];
 
     const pushSample = (
       width: number,
@@ -303,6 +328,7 @@ export class Course {
     for (let segIdx = 0; segIdx < config.segments.length; segIdx++) {
       const seg = config.segments[segIdx];
       const segWidth = seg.width ?? config.defaultWidth;
+      const segStartS = turtle.s;
 
       if (seg.type === 'straight') {
         const steps = Math.max(1, Math.round(seg.length / config.stepLength));
@@ -487,6 +513,12 @@ export class Course {
           entryExitDistance: turtle.position.distanceTo(loopStartPos),
         });
       }
+
+      segmentSpanMeta.push({
+        startS: segStartS,
+        endS: turtle.s,
+        seg,
+      });
     }
 
     // Compute numerical curvature kappa_up = (dT/ds) · up and smooth it
@@ -518,6 +550,60 @@ export class Course {
     this.samples = samples;
     this.gapRanges = gapRanges;
     this.totalLength = samples[samples.length - 1].s;
+
+    const checkpoints: CheckpointData[] = [];
+    const boostPads: BoostPadData[] = [];
+
+    const clampOutsideGap = (s: number): number => {
+      let clamped = this.clampDistance(s);
+      const gap = this.getGapRangeAt(clamped);
+      if (gap) {
+        clamped =
+          clamped - gap.startS < gap.endS - clamped ? gap.startS : gap.endS;
+      }
+      return this.clampDistance(clamped);
+    };
+
+    for (const meta of segmentSpanMeta) {
+      if (meta.seg.checkpoint) {
+        const cpS = clampOutsideGap(meta.startS);
+        checkpoints.push({
+          index: checkpoints.length,
+          s: cpS,
+          frame: this.getFrameAt(cpS),
+        });
+      }
+
+      if (meta.seg.boostPads && meta.seg.type !== 'gap') {
+        for (const padCfg of meta.seg.boostPads) {
+          const padS = THREE.MathUtils.lerp(
+            meta.startS,
+            meta.endS,
+            THREE.MathUtils.clamp(padCfg.at, 0, 1),
+          );
+          const halfLen = config.boostPadLength * 0.5;
+          const overlapsGap = this.gapRanges.some(
+            (g) => padS + halfLen > g.startS && padS - halfLen < g.endS,
+          );
+          if (overlapsGap) {
+            continue;
+          }
+          const padFrame = this.getFrameAt(padS);
+          const maxLat = Math.max(0, padFrame.width * 0.5 - config.boostPadWidth * 0.5 - 0.15);
+          boostPads.push({
+            id: boostPads.length,
+            s: padS,
+            lateral: THREE.MathUtils.clamp(padCfg.lateral, -maxLat, maxLat),
+            length: config.boostPadLength,
+            width: config.boostPadWidth,
+          });
+        }
+      }
+    }
+
+    this.checkpoints = checkpoints;
+    this.boostPads = boostPads;
+    this.finishS = clampOutsideGap(Math.max(0, this.totalLength - config.finishMargin));
 
     const minBound = new THREE.Vector3(Infinity, Infinity, Infinity);
     const maxBound = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
@@ -635,6 +721,26 @@ export class Course {
 
   getGapRanges(): readonly GapRange[] {
     return this.gapRanges;
+  }
+
+  getCheckpoints(): readonly CheckpointData[] {
+    return this.checkpoints;
+  }
+
+  getBoostPads(): readonly BoostPadData[] {
+    return this.boostPads;
+  }
+
+  getFinishS(): number {
+    return this.finishS;
+  }
+
+  getCheckpointFrame(index: number): TrackFrame {
+    if (this.checkpoints.length === 0) {
+      return this.getFrameAt(0);
+    }
+    const clampedIdx = THREE.MathUtils.clamp(index, 0, this.checkpoints.length - 1);
+    return this.checkpoints[clampedIdx].frame;
   }
 
   getGapRangeAt(s: number): GapRange | null {
