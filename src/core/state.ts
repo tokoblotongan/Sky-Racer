@@ -29,6 +29,8 @@ export interface FinishResultData {
   splits: number[];
   splitDeltas: Array<number | null>;
   isNewSplitBest: boolean[];
+  lapTimes: number[];
+  bestLap: number | null;
   stats: RaceStats;
 }
 
@@ -40,6 +42,11 @@ export interface RaceState {
   countdownDisplayNumber: number;
   goHoldTimer: number;
   timer: number;
+  laps: number;
+  currentLap: number;
+  lapStartTime: number;
+  lapTimes: number[];
+  bestLap: number | null;
   nextCheckpointIndex: number;
   passedCheckpoints: number[];
   splits: Array<number | null>;
@@ -56,7 +63,22 @@ export interface RaceState {
 export type RaceEvent =
   | { type: 'countdownTick'; n: number }
   | { type: 'go' }
-  | { type: 'checkpoint'; index: number; total: number; time: number; delta: number | null }
+  | {
+      type: 'checkpoint';
+      index: number;
+      total: number;
+      lap: number;
+      totalLaps: number;
+      time: number;
+      delta: number | null;
+    }
+  | {
+      type: 'lap';
+      lap: number;
+      totalLaps: number;
+      lapTime: number;
+      isBestLap: boolean;
+    }
   | ({ type: 'finish' } & FinishResultData)
   | { type: 'resultReady' }
   | { type: 'restart' }
@@ -83,9 +105,12 @@ function resetProgressFields(state: RaceState): void {
   state.resultReady = false;
   state.finishDelayTimer = 0;
   state.timer = 0;
+  state.currentLap = 1;
+  state.lapStartTime = 0;
+  state.lapTimes = [];
   state.nextCheckpointIndex = 0;
   state.passedCheckpoints = [];
-  state.splits = Array<number | null>(state.totalCheckpoints).fill(null);
+  state.splits = Array<number | null>(state.totalCheckpoints * state.laps).fill(null);
   state.lastCheckpointIndex = null;
   state.newBest = false;
   state.lastFinish = null;
@@ -97,10 +122,12 @@ function resetProgressFields(state: RaceState): void {
 
 export function createRaceState(course: Course, options?: CreateRaceStateOptions): RaceState {
   const totalCheckpoints = course.getCheckpoints().length;
+  const laps = course.getLaps();
+  const totalSplitCount = totalCheckpoints * laps;
   const persistRecords = options?.persistRecords ?? true;
   const records = persistRecords ? getRecords(course.getId(), course.getMedals()) : null;
   const bestSplits =
-    records && records.bestSplits.length === totalCheckpoints ? [...records.bestSplits] : null;
+    records && records.bestSplits.length === totalSplitCount ? [...records.bestSplits] : null;
 
   return {
     phase: 'TITLE',
@@ -110,9 +137,14 @@ export function createRaceState(course: Course, options?: CreateRaceStateOptions
     countdownDisplayNumber: 0,
     goHoldTimer: 0,
     timer: 0,
+    laps,
+    currentLap: 1,
+    lapStartTime: 0,
+    lapTimes: [],
+    bestLap: records?.bestLap ?? null,
     nextCheckpointIndex: 0,
     passedCheckpoints: [],
-    splits: Array<number | null>(totalCheckpoints).fill(null),
+    splits: Array<number | null>(totalSplitCount).fill(null),
     lastCheckpointIndex: null,
     bestTime: records?.best ? records.best.time : null,
     bestSplits,
@@ -128,12 +160,15 @@ export function refreshRaceRecords(state: RaceState, course: Course): void {
   if (!state.persistRecords) {
     state.bestTime = null;
     state.bestSplits = null;
+    state.bestLap = null;
     return;
   }
   const records = getRecords(course.getId(), course.getMedals());
+  const totalSplitCount = state.totalCheckpoints * state.laps;
   state.bestTime = records.best ? records.best.time : null;
+  state.bestLap = records.bestLap ?? null;
   state.bestSplits =
-    records.bestSplits.length === state.totalCheckpoints ? [...records.bestSplits] : null;
+    records.bestSplits.length === totalSplitCount ? [...records.bestSplits] : null;
 }
 
 export function startCountdown(state: RaceState): RaceEvent[] {
@@ -166,9 +201,14 @@ export function getRespawnTarget(
 ): { s: number; lateral: number } {
   if (state.lastCheckpointIndex !== null) {
     const cpFrame = course.getCheckpointFrame(state.lastCheckpointIndex);
-    return { s: cpFrame.s, lateral: 0 };
+    const lapOffset = course.isClosed() ? (state.currentLap - 1) * course.getLength() : 0;
+    return { s: lapOffset + cpFrame.s, lateral: 0 };
   }
-  return { s: CONFIG.car.startS, lateral: CONFIG.car.startLateral };
+  if (course.isClosed() && state.currentLap > 1) {
+    return { s: (state.currentLap - 1) * course.getLength(), lateral: 0 };
+  }
+  const slot0 = course.getGridSlots(1)[0];
+  return { s: slot0.s, lateral: slot0.lateral };
 }
 
 export function applyManualResetPenalty(state: RaceState): void {
@@ -262,44 +302,100 @@ export function updateRace(
 
   const activeS = car.mode === 'grounded' ? car.s : car.sApprox;
   const checkpoints = course.getCheckpoints();
+  const lapLength = course.getLength();
+  const isClosed = course.isClosed();
 
-  while (state.nextCheckpointIndex < checkpoints.length) {
-    const cp = checkpoints[state.nextCheckpointIndex];
-    if (activeS >= cp.s) {
-      const idx = state.nextCheckpointIndex;
-      const splitTime = state.timer;
-      const prevBestSplit =
-        state.bestSplits && idx < state.bestSplits.length ? state.bestSplits[idx] : null;
-      const delta =
-        prevBestSplit !== null && Number.isFinite(prevBestSplit)
-          ? splitTime - prevBestSplit
-          : null;
+  const advanceLapCheckpoints = (): void => {
+    const lapOffset = isClosed ? (state.currentLap - 1) * lapLength : 0;
+    while (state.nextCheckpointIndex < checkpoints.length) {
+      const cp = checkpoints[state.nextCheckpointIndex];
+      if (activeS >= lapOffset + cp.s) {
+        const idx = state.nextCheckpointIndex;
+        const splitIdx = (state.currentLap - 1) * checkpoints.length + idx;
+        const splitTime = state.timer;
+        const prevBestSplit =
+          state.bestSplits && splitIdx < state.bestSplits.length
+            ? state.bestSplits[splitIdx]
+            : null;
+        const delta =
+          prevBestSplit !== null && Number.isFinite(prevBestSplit)
+            ? splitTime - prevBestSplit
+            : null;
 
-      state.splits[idx] = splitTime;
-      state.passedCheckpoints.push(idx);
-      state.stats.checkpointsHit = state.passedCheckpoints.length;
-      state.lastCheckpointIndex = idx;
-      state.nextCheckpointIndex++;
+        state.splits[splitIdx] = splitTime;
+        state.passedCheckpoints.push(splitIdx);
+        state.stats.checkpointsHit = state.passedCheckpoints.length;
+        state.lastCheckpointIndex = idx;
+        state.nextCheckpointIndex++;
 
-      events.push({
-        type: 'checkpoint',
-        index: idx,
-        total: checkpoints.length,
-        time: splitTime,
-        delta,
-      });
-    } else {
-      break;
+        events.push({
+          type: 'checkpoint',
+          index: idx,
+          total: checkpoints.length,
+          lap: state.currentLap,
+          totalLaps: state.laps,
+          time: splitTime,
+          delta,
+        });
+      } else {
+        break;
+      }
     }
+  };
+
+  advanceLapCheckpoints();
+
+  // Intermediate lap crossing on closed multi-lap courses (anti-cheat: all lap checkpoints required)
+  while (
+    isClosed &&
+    state.currentLap < state.laps &&
+    state.nextCheckpointIndex >= checkpoints.length &&
+    activeS >= state.currentLap * lapLength
+  ) {
+    const completedLap = state.currentLap;
+    const lapTime = Math.max(0, state.timer - state.lapStartTime);
+    state.lapTimes.push(lapTime);
+    const isBestLap = state.bestLap === null || lapTime < state.bestLap;
+    if (isBestLap) {
+      state.bestLap = lapTime;
+    }
+    state.lapStartTime = state.timer;
+    state.currentLap++;
+    state.nextCheckpointIndex = 0;
+    state.lastCheckpointIndex = null;
+
+    events.push({
+      type: 'lap',
+      lap: completedLap,
+      totalLaps: state.laps,
+      lapTime,
+      isBestLap,
+    });
+
+    advanceLapCheckpoints();
   }
 
-  if (activeS >= course.getFinishS()) {
+  const readyToFinish = isClosed
+    ? state.currentLap >= state.laps &&
+      state.nextCheckpointIndex >= checkpoints.length &&
+      activeS >= course.getFinishS()
+    : activeS >= course.getFinishS();
+
+  if (readyToFinish) {
     state.phase = 'FINISH';
     state.goHoldTimer = 0;
     state.resultReady = CONFIG.race.resultDelay <= 0;
     state.finishDelayTimer = Math.max(0, CONFIG.race.resultDelay);
 
     const finalTime = state.timer;
+    if (isClosed && state.laps > 1) {
+      const finalLapTime = Math.max(0, finalTime - state.lapStartTime);
+      state.lapTimes.push(finalLapTime);
+      if (state.bestLap === null || finalLapTime < state.bestLap) {
+        state.bestLap = finalLapTime;
+      }
+    }
+
     const completedSplits = state.splits.map((sVal) => sVal ?? finalTime);
     const medal = determineMedal(finalTime, course.getMedals());
     const prevBestSplits = state.bestSplits ? [...state.bestSplits] : null;
@@ -310,6 +406,7 @@ export function updateRace(
     });
 
     const statsSnapshot: RaceStats = { ...state.stats };
+    const lapTimesSnapshot = [...state.lapTimes];
     let isNewBest = state.bestTime === null || finalTime < state.bestTime;
     let rank: number | null = 1;
     let deltaToBest: number | null =
@@ -324,6 +421,8 @@ export function updateRace(
       const submitted = submitRun(course.getId(), {
         time: finalTime,
         splits: completedSplits,
+        lapTimes: lapTimesSnapshot,
+        bestLap: state.bestLap,
         medal,
         stats: statsSnapshot,
       });
@@ -333,6 +432,7 @@ export function updateRace(
       isNewSplitBest = submitted.isNewSplitBest;
       state.bestTime = submitted.records.best ? submitted.records.best.time : finalTime;
       state.bestSplits = [...submitted.records.bestSplits];
+      state.bestLap = submitted.records.bestLap ?? state.bestLap;
     } else if (isNewBest) {
       state.bestTime = finalTime;
       state.bestSplits = [...completedSplits];
@@ -349,6 +449,8 @@ export function updateRace(
       splits: completedSplits,
       splitDeltas,
       isNewSplitBest,
+      lapTimes: lapTimesSnapshot,
+      bestLap: state.bestLap,
       stats: statsSnapshot,
     };
     state.lastFinish = finishData;

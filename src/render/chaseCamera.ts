@@ -97,13 +97,19 @@ function computeCourseCameraTargets(
 ): void {
   const cfg = CONFIG.camera;
   const totalLen = course.getLength();
+  const isClosed = course.isClosed();
   const trackS = carState.mode === 'grounded' ? carState.s : carState.sApprox;
+
+  course.getFrameAt(trackS, _camFrame);
+  const widthRatio = _camFrame.width / CONFIG.course.defaultWidth;
+  const widthScale = 1 + Math.max(0, widthRatio - 1) * cfg.widthScale;
+  const camDistance = cfg.distance * widthScale;
+  const camHeight = cfg.height * widthScale;
 
   let lateral = carState.lateral;
   let extraAirHeight = 0;
 
   if (carState.mode !== 'grounded') {
-    course.getFrameAt(trackS, _camFrame);
     _relAir.subVectors(pose.position, _camFrame.position);
     lateral = THREE.MathUtils.clamp(
       _relAir.dot(_camFrame.right),
@@ -113,21 +119,21 @@ function computeCourseCameraTargets(
     extraAirHeight = Math.max(0, _relAir.dot(_camFrame.up)) * cfg.airHeightFollowFactor;
   }
 
-  const camS = trackS - cfg.distance;
+  const camS = trackS - camDistance;
   course.getFrameAt(camS, _camFrame);
   _targetPos.copy(_camFrame.position);
-  if (camS < 0) {
+  if (!isClosed && camS < 0) {
     _targetPos.addScaledVector(_camFrame.tangent, camS);
   }
   _targetPos
-    .addScaledVector(_camFrame.up, cfg.height + extraAirHeight)
+    .addScaledVector(_camFrame.up, camHeight + extraAirHeight)
     .addScaledVector(_camFrame.right, lateral * cfg.lateralFollowFactor);
 
   if (carState.mode === 'grounded') {
     const lookS = trackS + cfg.lookAheadDistance;
     course.getFrameAt(lookS, _lookFrame);
     _targetLook.copy(_lookFrame.position);
-    if (lookS > totalLen) {
+    if (!isClosed && lookS > totalLen) {
       _targetLook.addScaledVector(_lookFrame.tangent, lookS - totalLen);
     }
     _targetLook
@@ -137,7 +143,7 @@ function computeCourseCameraTargets(
     const lookS = trackS + cfg.lookAheadDistance * 0.65;
     course.getFrameAt(lookS, _lookFrame);
     _targetLook.copy(_lookFrame.position);
-    if (lookS > totalLen) {
+    if (!isClosed && lookS > totalLen) {
       _targetLook.addScaledVector(_lookFrame.tangent, lookS - totalLen);
     }
     _targetLook

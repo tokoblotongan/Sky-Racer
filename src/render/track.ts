@@ -32,6 +32,7 @@ export interface TrackVisual {
 function createTrackCanvasTexture(
   maxAnisotropy: number,
   preset: VisualPreset,
+  isWideTrack = false,
 ): THREE.CanvasTexture {
   const size = CONFIG.course.trackTextureSize;
   const canvas = document.createElement('canvas');
@@ -51,7 +52,9 @@ function createTrackCanvasTexture(
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
 
-    const groovePositions = [0.22, 0.35, 0.65, 0.78];
+    const groovePositions = isWideTrack
+      ? [0.16, 0.39, 0.61, 0.84]
+      : [0.22, 0.35, 0.65, 0.78];
     ctx.strokeStyle = c.trackGroove;
     ctx.lineWidth = 4;
     ctx.globalAlpha = 0.24;
@@ -65,14 +68,17 @@ function createTrackCanvasTexture(
 
     ctx.fillStyle = c.trackCenterDash;
     ctx.globalAlpha = 0.92;
-    const dashWidth = Math.max(6, size * 0.016);
-    const dashX = (size - dashWidth) * 0.5;
     const dashCount = 4;
     const cellHeight = size / dashCount;
     const dashLength = cellHeight * 0.52;
-    for (let i = 0; i < dashCount; i++) {
-      const y = i * cellHeight + (cellHeight - dashLength) * 0.5;
-      ctx.fillRect(dashX, y, dashWidth, dashLength);
+    const laneDividers = isWideTrack ? [0.28, 0.5, 0.72] : [0.5];
+    const dashWidth = Math.max(5, size * (isWideTrack ? 0.011 : 0.016));
+    for (const divider of laneDividers) {
+      const dashX = divider * size - dashWidth * 0.5;
+      for (let i = 0; i < dashCount; i++) {
+        const y = i * cellHeight + (cellHeight - dashLength) * 0.5;
+        ctx.fillRect(dashX, y, dashWidth, dashLength);
+      }
     }
 
     ctx.strokeStyle = c.trackEdge;
@@ -625,8 +631,9 @@ function createSurfaceRibbonMesh(
 ): THREE.Mesh | null {
   const cfg = CONFIG.course;
   const totalLen = course.getLength();
-  const clampedStart = Math.max(0, startS);
-  const clampedEnd = Math.min(totalLen, endS);
+  const isClosed = course.isClosed();
+  const clampedStart = isClosed ? startS : Math.max(0, startS);
+  const clampedEnd = isClosed ? endS : Math.min(totalLen, endS);
   const spanLen = clampedEnd - clampedStart;
   if (spanLen < 0.2) {
     return null;
@@ -869,13 +876,23 @@ export function buildTrackMesh(
 ): TrackVisual {
   const cfg = CONFIG.course;
   const activePreset = VISUAL_PRESETS[initialPreset];
+  const isClosed = course.isClosed();
+  const totalLen = course.getLength();
+  const isWideTrack = course.getTrackWidth() >= 12;
+  const trackTileMeters = isClosed
+    ? totalLen / Math.max(1, Math.round(totalLen / cfg.trackTileMeters))
+    : cfg.trackTileMeters;
+  const railTileMeters = isClosed
+    ? totalLen / Math.max(1, Math.round(totalLen / cfg.railTileMeters))
+    : cfg.railTileMeters;
+
   const spans = splitSolidSpans(course.getSamples());
   const chunks: CourseChunkRange[] = course.getChunks(CONFIG.render.trackChunkLength);
   const group = new THREE.Group();
   group.name = 'TrackGroup';
 
   const trackProfile = buildTrackCrossSectionProfile();
-  let trackTexture = createTrackCanvasTexture(maxAnisotropy, activePreset);
+  let trackTexture = createTrackCanvasTexture(maxAnisotropy, activePreset, isWideTrack);
   const trackMaterial = new THREE.MeshPhysicalMaterial({
     map: trackTexture,
     clearcoat: cfg.trackClearcoat,
@@ -963,13 +980,21 @@ export function buildTrackMesh(
   for (const span of spans) {
     const spanStart = span[0].s;
     const spanEnd = span[span.length - 1].s;
-    allEndPostS.push(spanStart, spanEnd);
+    if (!isClosed || spanStart > 1e-4) {
+      allEndPostS.push(spanStart);
+    }
+    if (!isClosed || spanEnd < totalLen - 1e-4) {
+      allEndPostS.push(spanEnd);
+    }
 
-    const margin = 1.25;
+    const margin = isClosed && spanStart <= 1e-4 && spanEnd >= totalLen - 1e-4 ? 0 : 1.25;
     const usableLen = spanEnd - spanStart - margin * 2;
     if (usableLen > 0.5) {
       const count = Math.max(1, Math.floor(usableLen / cfg.railPostSpacingMeters) + 1);
       for (let i = 0; i < count; i++) {
+        if (isClosed && margin === 0 && i === count - 1) {
+          continue;
+        }
         const frac = count === 1 ? 0.5 : i / (count - 1);
         allPostS.push(spanStart + margin + frac * usableLen);
       }
@@ -979,6 +1004,7 @@ export function buildTrackMesh(
   const gaps = course.getGapRanges();
   const boostPads = course.getBoostPads();
   const lastChunkIdx = chunks.length - 1;
+  const startStripS = isClosed ? 0 : CONFIG.car.startS;
 
   for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
     const chunk = chunks[cIdx];
@@ -1000,13 +1026,16 @@ export function buildTrackMesh(
       }
 
       const chunkFrames = sliceSpanFramesForRange(course, spanFrames, subStart, subEnd);
-      const startBevel = subStart > spanStart + 1e-4 ? 0 : cfg.endCapBevelLength;
-      const endBevel = subEnd < spanEnd - 1e-4 ? 0 : cfg.endCapBevelLength;
+      const closedSeamStart = isClosed && subStart <= 1e-4;
+      const closedSeamEnd = isClosed && subEnd >= totalLen - 1e-4;
+      const startBevel =
+        closedSeamStart || subStart > spanStart + 1e-4 ? 0 : cfg.endCapBevelLength;
+      const endBevel = closedSeamEnd || subEnd < spanEnd - 1e-4 ? 0 : cfg.endCapBevelLength;
 
       const { geometry: trackGeometry } = buildSweptGeometry(
         chunkFrames,
         trackProfile,
-        cfg.trackTileMeters,
+        trackTileMeters,
         (frame, pt, scale) => {
           const halfLat = frame.width * 0.5;
           const innerTuck = (1 - scale) * 0.06;
@@ -1032,7 +1061,7 @@ export function buildTrackMesh(
         const { geometry: railGeometry } = buildSweptGeometry(
           chunkFrames,
           railProfile,
-          cfg.railTileMeters,
+          railTileMeters,
           (frame, pt, scale) =>
             side * (frame.width * 0.5 + CONFIG.physics.railInnerOffset + cfg.railWidth * 0.5) +
             pt.xOffset * scale,
@@ -1107,18 +1136,19 @@ export function buildTrackMesh(
       if (m) chunkGroup.add(m);
     }
 
-    // 5. Thin checkered start strip across deck at startS
-    if (inChunk(CONFIG.car.startS)) {
-      const startFrame = course.getFrameAt(CONFIG.car.startS);
+    // 5. Thin checkered start/finish strip across deck
+    if (inChunk(startStripS)) {
+      const startFrame = course.getFrameAt(startStripS);
       const startStripW = Math.max(1.2, startFrame.width - 0.55);
+      const halfStripLen = isClosed ? 0.9 : 0.65;
       const startStrip = createSurfaceRibbonMesh(
         course,
-        CONFIG.car.startS - 0.65,
-        CONFIG.car.startS + 0.65,
+        startStripS - halfStripLen,
+        startStripS + halfStripLen,
         0,
         startStripW,
         0.012,
-        1,
+        isWideTrack ? 2 : 1,
         false,
         startGridMaterial,
       );
@@ -1157,7 +1187,7 @@ export function buildTrackMesh(
     const preset = VISUAL_PRESETS[name];
 
     const prevTrackTex = trackTexture;
-    trackTexture = createTrackCanvasTexture(maxAnisotropy, preset);
+    trackTexture = createTrackCanvasTexture(maxAnisotropy, preset, isWideTrack);
     trackMaterial.map = trackTexture;
     trackMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
     trackMaterial.envMapIntensity = preset.trackEnvIntensity;

@@ -7,8 +7,23 @@ import { buildCourseConfigFromDefinition, Course } from '../src/core/course';
 import { validateCourse } from '../src/core/courseValidation';
 import { getCourse } from '../src/courses';
 
+function parseCourseIdArg(argv: readonly string[]): string {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith('--course=')) {
+      const value = arg.slice('--course='.length).trim();
+      if (value) return value;
+    } else if (arg === '--course' && i + 1 < argv.length) {
+      const value = argv[i + 1].trim();
+      if (value) return value;
+    }
+  }
+  return CONFIG.activeCourseId;
+}
+
 function main(): void {
-  const courseDef = getCourse(CONFIG.activeCourseId);
+  const requestedId = parseCourseIdArg(process.argv.slice(2));
+  const courseDef = getCourse(requestedId);
   const t0 = performance.now();
   const course = new Course(buildCourseConfigFromDefinition(courseDef, false));
   const buildMs = performance.now() - t0;
@@ -23,14 +38,38 @@ function main(): void {
   const jumpsOk = report.jumps.every((j) => j.landed);
   const cpCount = course.getCheckpoints().length;
   const boostCount = course.getBoostPads().length;
-  const geomOk = !report.errors.some((e) => e.includes('Persilangan') || e.includes('bertabrakan'));
+  const geomOk = !report.errors.some(
+    (e) => e.includes('Persilangan') || e.includes('bertabrakan') || e.includes('menutup'),
+  );
+  const cpTargetOk = report.closed
+    ? cpCount >= 4 && cpCount <= 12
+    : cpCount >= 8 && cpCount <= 11;
 
   const rows: Array<[string, string, string]> = [
     [
       'Geometri & Jarak',
       geomOk ? (report.warnings.some((w) => w.includes('Jarak non-bersebelahan')) ? 'WARN' : 'OK') : 'FAIL',
-      `panjang=${report.lengthM.toFixed(2)} m, build=${buildMs.toFixed(1)} ms`,
+      `panjang=${report.lengthM.toFixed(2)} m, lebar=${report.trackWidth} m, minNonAdj=${report.minNonAdjacentClearanceM !== null ? `${report.minNonAdjacentClearanceM.toFixed(2)} m` : 'n/a'}, build=${buildMs.toFixed(1)} ms`,
     ],
+  ];
+
+  if (report.closure) {
+    const adjSummary =
+      report.closure.adjustments
+        .map((a) => `#${a.segmentIndex + 1}:${a.field}=${a.solvedValue.toFixed(2)}`)
+        .join(', ') || 'none';
+    rows.push([
+      'Penutupan Sirkuit',
+      report.closure.converged &&
+      report.closure.posErrorM <= CONFIG.course.closure.posToleranceM &&
+      Math.abs(report.closure.dYawDeg) <= CONFIG.course.closure.yawToleranceDeg
+        ? 'OK'
+        : 'FAIL',
+      `posErr=${report.closure.posErrorM.toFixed(4)} m, dYaw=${report.closure.dYawDeg.toFixed(4)}°, iter=${report.closure.iterations}, adj=[${adjSummary}]`,
+    ]);
+  }
+
+  rows.push(
     [
       'Loop',
       loopsOk ? 'OK' : 'FAIL',
@@ -53,26 +92,33 @@ function main(): void {
     ],
     [
       'Checkpoint & Boost',
-      cpCount >= 8 && cpCount <= 11 ? 'OK' : 'WARN',
-      `${cpCount} checkpoint, ${boostCount} boost pad`,
+      cpTargetOk ? 'OK' : 'WARN',
+      `${cpCount} checkpoint/lap (${report.laps} lap), ${boostCount} boost pad`,
     ],
     [
       'Simulasi Autopilot',
       report.ok ? (report.railHits > 0 ? 'WARN' : 'OK') : 'FAIL',
-      `waktu=${report.referenceTime.toFixed(2)} s, railHit=${report.railHits}, jatuh=${report.falls}, stuck=${report.stuckEvents}`,
+      `waktu=${report.referenceTime.toFixed(2)} s (lapAvg=${report.referenceLapTime.toFixed(2)} s), railHit=${report.railHits}, jatuh=${report.falls}, stuck=${report.stuckEvents}`,
     ],
-  ];
+  );
 
   console.log('');
-  console.log(`=== VALIDASI LINTASAN: ${courseDef.name} (${courseDef.id}) ===`);
+  console.log(
+    `=== VALIDASI LINTASAN: ${courseDef.name} (${courseDef.id}) [${report.closed ? `TERTUTUP ${report.laps} LAP` : 'SATU ARAH'}] ===`,
+  );
   console.log('--------------------------------------------------------------------------');
   for (const [check, status, detail] of rows) {
     console.log(`${check.padEnd(20)} | ${status.padEnd(4)} | ${detail}`);
   }
   console.log('--------------------------------------------------------------------------');
   console.log(
-    `Reference Time : ${report.referenceTime.toFixed(2)} s | Saran Medali -> Emas: ${gold.toFixed(2)} s (1.10x), Perak: ${silver.toFixed(2)} s (1.30x), Perunggu: ${bronze.toFixed(2)} s (1.60x)`,
+    `Reference Time : ${report.referenceTime.toFixed(2)} s | Reference Lap: ${report.referenceLapTime.toFixed(2)} s | Saran Medali -> Emas: ${gold.toFixed(2)} s (1.10x), Perak: ${silver.toFixed(2)} s (1.30x), Perunggu: ${bronze.toFixed(2)} s (1.60x)`,
   );
+  if (report.lapTimes.length > 0) {
+    console.log(
+      `Waktu Per Lap  : ${report.lapTimes.map((t, idx) => `Lap ${idx + 1}: ${t.toFixed(2)}s`).join(' | ')}${report.bestLap !== null ? ` (Best: ${report.bestLap.toFixed(2)}s)` : ''}`,
+    );
+  }
 
   if (report.warnings.length > 0) {
     console.log('');

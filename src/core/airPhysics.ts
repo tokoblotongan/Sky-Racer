@@ -79,10 +79,8 @@ export function startAir(
   state.fallTimer = 0;
   state.sApprox = state.s;
   state.lastGapEndS = gap ? gap.endS : state.s;
-  state.lastSafeS = Math.max(
-    CONFIG.car.startS,
-    (gap ? gap.startS : takeoffS) - cfg.respawnBackoff,
-  );
+  const rawSafeS = (gap ? gap.startS : takeoffS) - cfg.respawnBackoff;
+  state.lastSafeS = course.isClosed() ? rawSafeS : Math.max(CONFIG.car.startS, rawSafeS);
   state.normalForce = 0;
 
   events.push({ type: 'takeoff' });

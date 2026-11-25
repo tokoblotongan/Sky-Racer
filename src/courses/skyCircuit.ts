@@ -5,6 +5,9 @@ import type { CourseDefinition } from './types';
 export const skyCircuitCourse: CourseDefinition = {
   id: 'sky-circuit',
   name: 'Sky Circuit',
+  closed: false,
+  laps: 1,
+  trackWidth: 7,
   startPosition: { x: 0, y: 10, z: 145 },
   startHeadingDeg: 0,
   segments: [

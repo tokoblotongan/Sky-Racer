@@ -3,6 +3,7 @@
 import { CONFIG } from '../config';
 import { autopilotInput } from './autopilot';
 import type { Course, CourseSegmentMeta, TrackFrame } from './course';
+import type { ClosureReport } from './courseClosure';
 import { createCarState, stepCar } from './physics';
 import { createRaceState, getRespawnTarget, updateRace } from './state';
 
@@ -29,8 +30,16 @@ export interface JumpValidationResult {
 
 export interface CourseValidationReport {
   ok: boolean;
+  closed: boolean;
+  laps: number;
+  trackWidth: number;
   lengthM: number;
   referenceTime: number;
+  referenceLapTime: number;
+  lapTimes: number[];
+  bestLap: number | null;
+  minNonAdjacentClearanceM: number | null;
+  closure: ClosureReport | null;
   checkpointTimes: number[];
   loops: LoopValidationResult[];
   jumps: JumpValidationResult[];
@@ -57,14 +66,34 @@ export function validateCourse(
   const warnings: string[] = [];
   const errors: string[] = [];
 
+  const isClosed = course.isClosed();
+  const laps = course.getLaps();
   const lengthM = course.getLength();
   const segments = course.getSegmentList();
   const checkpoints = course.getCheckpoints();
   const boostPads = course.getBoostPads();
   const gaps = course.getGapRanges();
-  const trackWidth = CONFIG.course.trackWidth;
+  const trackWidth = course.getTrackWidth();
+  const closureReport = course.getClosureReport();
 
-  if (lengthM < 900 || lengthM > 1200) {
+  if (isClosed) {
+    if (!closureReport) {
+      errors.push('Sirkuit tertutup tidak memiliki laporan penutupan (closureReport).');
+    } else if (
+      !closureReport.converged ||
+      closureReport.posErrorM > CONFIG.course.closure.posToleranceM ||
+      Math.abs(closureReport.dYawDeg) > CONFIG.course.closure.yawToleranceDeg
+    ) {
+      errors.push(
+        `Sirkuit gagal menutup di titik start: posErr=${closureReport.posErrorM.toFixed(4)} m, dYaw=${closureReport.dYawDeg.toFixed(3)}°.`,
+      );
+    }
+    if (lengthM < 700 || lengthM > 2400) {
+      warnings.push(
+        `Panjang satu lap ${lengthM.toFixed(1)} m di luar kisaran wajar 700-2400 m.`,
+      );
+    }
+  } else if (lengthM < 900 || lengthM > 1200) {
     warnings.push(
       `Panjang lintasan ${lengthM.toFixed(1)} m di luar kisaran target 900-1200 m.`,
     );
@@ -72,8 +101,9 @@ export function validateCourse(
 
   // (a) Self-intersection, horizontal/3D clearance, crossing height difference, and ground clearance
   const sampleStep = 1.0;
+  const maxSampleS = isClosed ? Math.max(0, lengthM - 1e-4) : lengthM + 1e-4;
   const sampledFrames: Array<{ frame: TrackFrame; segIndex: number }> = [];
-  for (let s = 0; s <= lengthM; s += sampleStep) {
+  for (let s = 0; s <= maxSampleS; s += sampleStep) {
     const f = course.getFrameAt(s);
     if (!f.isGap) {
       sampledFrames.push({ frame: f, segIndex: getSegmentIndexForS(segments, s) });
@@ -93,7 +123,7 @@ export function validateCourse(
     );
   }
 
-  const min3DClearance = 2.5 * trackWidth; // 17.5 m
+  const min3DClearance = 2.5 * trackWidth;
   const minArcSeparation = Math.max(24, trackWidth * 3.2);
   const cellSize = min3DClearance;
   const grid = new Map<string, number[]>();
@@ -116,6 +146,7 @@ export function validateCourse(
   const reportedPairs = new Set<string>();
   const loopSegs = segments.filter((seg) => seg.type === 'loop');
 
+  const hasOverpassHazard = segments.some((s) => s.type === 'gap' || s.type === 'loop');
   for (let i = 0; i < sampledFrames.length; i++) {
     const a = sampledFrames[i];
     const pa = a.frame.position;
@@ -130,7 +161,8 @@ export function validateCourse(
         for (const j of bucket) {
           if (j <= i) continue;
           const b = sampledFrames[j];
-          const ds = b.frame.s - a.frame.s;
+          const rawDs = b.frame.s - a.frame.s;
+          const ds = isClosed ? Math.min(rawDs, lengthM - rawDs) : rawDs;
           if (ds < minArcSeparation) continue;
 
           // Ignore intentional helical separation across a single loop and its immediate entry/exit
@@ -157,10 +189,13 @@ export function validateCourse(
             if (vertDist < worstCrossingVertDiff) {
               worstCrossingVertDiff = vertDist;
             }
-            if (vertDist < 12 && !reportedPairs.has(`cross:${segPairKey}`)) {
+            if (
+              (vertDist < 12 || (isClosed && !hasOverpassHazard)) &&
+              !reportedPairs.has(`cross:${segPairKey}`)
+            ) {
               reportedPairs.add(`cross:${segPairKey}`);
               errors.push(
-                `Persilangan segmen #${a.segIndex} (s=${a.frame.s.toFixed(0)}m) dan #${b.segIndex} (s=${b.frame.s.toFixed(0)}m) selisih tinggi hanya ${vertDist.toFixed(1)} m (< 12 m).`,
+                `Persilangan segmen #${a.segIndex} (s=${a.frame.s.toFixed(0)}m) dan #${b.segIndex} (s=${b.frame.s.toFixed(0)}m) selisih tinggi hanya ${vertDist.toFixed(1)} m.`,
               );
             }
           } else {
@@ -289,23 +324,46 @@ export function validateCourse(
   }
 
   // (e) Checkpoint count & spacing
-  if (checkpoints.length < 8 || checkpoints.length > 11) {
-    warnings.push(
-      `Jumlah checkpoint ${checkpoints.length} (target 8-11 checkpoint).`,
-    );
-  }
-  const finishS = course.getFinishS();
-  const cpBounds = [CONFIG.car.startS, ...checkpoints.map((c) => c.s), finishS];
-  for (let i = 1; i < cpBounds.length; i++) {
-    const spacing = cpBounds[i] - cpBounds[i - 1];
-    if (spacing > 220) {
+  if (isClosed) {
+    if (checkpoints.length < 4 || checkpoints.length > 12) {
       warnings.push(
-        `Jarak antar titik aman terlalu panjang (${spacing.toFixed(1)} m > 220 m).`,
+        `Jumlah checkpoint per lap ${checkpoints.length} (target 4-12 checkpoint).`,
       );
-    } else if (i > 1 && i < cpBounds.length - 1 && spacing < 35) {
+    }
+    if (checkpoints.length > 0) {
+      const cpLoop = [...checkpoints.map((c) => c.s), checkpoints[0].s + lengthM];
+      for (let i = 1; i < cpLoop.length; i++) {
+        const spacing = cpLoop[i] - cpLoop[i - 1];
+        if (spacing > 450) {
+          warnings.push(
+            `Jarak antar checkpoint melingkar terlalu panjang (${spacing.toFixed(1)} m > 450 m).`,
+          );
+        } else if (spacing < 35) {
+          warnings.push(
+            `Jarak antar checkpoint terlalu rapat (${spacing.toFixed(1)} m < 35 m).`,
+          );
+        }
+      }
+    }
+  } else {
+    if (checkpoints.length < 8 || checkpoints.length > 11) {
       warnings.push(
-        `Jarak antar checkpoint #${i - 1} dan #${i} terlalu rapat (${spacing.toFixed(1)} m < 35 m).`,
+        `Jumlah checkpoint ${checkpoints.length} (target 8-11 checkpoint).`,
       );
+    }
+    const finishS = course.getFinishS();
+    const cpBounds = [CONFIG.car.startS, ...checkpoints.map((c) => c.s), finishS];
+    for (let i = 1; i < cpBounds.length; i++) {
+      const spacing = cpBounds[i] - cpBounds[i - 1];
+      if (spacing > 220) {
+        warnings.push(
+          `Jarak antar titik aman terlalu panjang (${spacing.toFixed(1)} m > 220 m).`,
+        );
+      } else if (i > 1 && i < cpBounds.length - 1 && spacing < 35) {
+        warnings.push(
+          `Jarak antar checkpoint #${i - 1} dan #${i} terlalu rapat (${spacing.toFixed(1)} m < 35 m).`,
+        );
+      }
     }
   }
 
@@ -313,7 +371,8 @@ export function validateCourse(
   const dt = 1 / 60;
   const maxSteps = Math.round(300 / dt);
 
-  const carState = createCarState();
+  const startSlot = course.getGridSlots(1)[0];
+  const carState = createCarState({ s: startSlot.s, lateral: startSlot.lateral });
   const raceState = createRaceState(course, { persistRecords: false });
   raceState.phase = 'RACING';
 
@@ -424,6 +483,17 @@ export function validateCourse(
   }
 
   const referenceTime = finished ? raceState.timer : simElapsed;
+  const lapTimes = raceState.lapTimes.map((t) => Number(t.toFixed(3)));
+  const bestLap =
+    raceState.bestLap !== null
+      ? Number(raceState.bestLap.toFixed(3))
+      : lapTimes.length > 0
+        ? Math.min(...lapTimes)
+        : null;
+  const referenceLapTime =
+    lapTimes.length > 0
+      ? Number((lapTimes.reduce((sum, v) => sum + v, 0) / lapTimes.length).toFixed(3))
+      : Number((referenceTime / Math.max(1, laps)).toFixed(3));
   const checkpointTimes = raceState.splits.map((s) => (s !== null ? Number(s.toFixed(3)) : -1));
 
   // (g) Fail/warn rules
@@ -459,14 +529,28 @@ export function validateCourse(
     warnings.push(`Autopilot menyentuh pagar sebanyak ${railHits} kali.`);
   }
 
-  if (referenceTime > 120) {
+  if (isClosed) {
+    if (referenceLapTime > 90) {
+      warnings.push(`Waktu referensi per lap autopilot ${referenceLapTime.toFixed(2)} s melampaui 90 s.`);
+    }
+  } else if (referenceTime > 120) {
     warnings.push(`Waktu referensi autopilot ${referenceTime.toFixed(2)} s melampaui 120 s.`);
   }
 
   return {
     ok: errors.length === 0,
+    closed: isClosed,
+    laps,
+    trackWidth,
     lengthM: Number(lengthM.toFixed(2)),
     referenceTime: Number(referenceTime.toFixed(3)),
+    referenceLapTime,
+    lapTimes,
+    bestLap,
+    minNonAdjacentClearanceM: Number.isFinite(worstNonAdjacentClearance)
+      ? Number(worstNonAdjacentClearance.toFixed(2))
+      : null,
+    closure: closureReport,
     checkpointTimes,
     loops: loopResults.map((l) => ({
       ...l,

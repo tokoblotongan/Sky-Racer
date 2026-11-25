@@ -3,6 +3,7 @@
 export interface BoostPadSegmentConfig {
   readonly at: number; // pecahan 0..1 di dalam segmen
   readonly lateral: number; // offset dari tengah lintasan (meter)
+  readonly width?: number; // lebar pad opsional (default dari CONFIG.boost.padWidth)
 }
 
 export type CourseSegmentConfig =
@@ -12,6 +13,7 @@ export type CourseSegmentConfig =
       readonly width?: number;
       readonly checkpoint?: boolean;
       readonly boostPads?: readonly BoostPadSegmentConfig[];
+      readonly adjust?: boolean;
     }
   | {
       readonly type: 'curve';
@@ -21,6 +23,7 @@ export type CourseSegmentConfig =
       readonly width?: number;
       readonly checkpoint?: boolean;
       readonly boostPads?: readonly BoostPadSegmentConfig[];
+      readonly adjust?: boolean;
     }
   | {
       readonly type: 'slope';
@@ -29,6 +32,7 @@ export type CourseSegmentConfig =
       readonly width?: number;
       readonly checkpoint?: boolean;
       readonly boostPads?: readonly BoostPadSegmentConfig[];
+      readonly adjust?: boolean;
     }
   | {
       readonly type: 'pitchTo';
@@ -64,9 +68,14 @@ export interface CourseMedals {
 export interface CourseDefinition {
   readonly id: string;
   readonly name: string;
+  readonly closed?: boolean;
+  readonly laps?: number;
+  readonly trackWidth?: number;
   readonly startPosition?: { readonly x: number; readonly y: number; readonly z: number };
   readonly startHeadingDeg?: number;
   readonly segments: readonly CourseSegmentConfig[];
   readonly referenceTime: number;
+  readonly referenceLapTime?: number;
   readonly medals: CourseMedals;
 }
+

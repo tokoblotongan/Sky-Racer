@@ -267,7 +267,7 @@ const DEFAULT_VISUAL_PRESET: VisualPresetName = 'vivid';
 const ACTIVE_PRESET = VISUAL_PRESETS[DEFAULT_VISUAL_PRESET];
 
 export const CONFIG = {
-  activeCourseId: 'sky-circuit',
+  activeCourseId: 'fantasy-land' as string,
   render: {
     trackChunkLength: 60,
     propsChunkLength: 100,
@@ -377,6 +377,7 @@ export const CONFIG = {
     far: 840,
     distance: 8.6,
     height: 3.35,
+    widthScale: 0.16,
     lateralFollowFactor: 0.65,
     airHeightFollowFactor: 0.35,
     lookAheadDistance: 7.5,
@@ -732,6 +733,21 @@ export const CONFIG = {
     startPosition: { x: 0, y: 6, z: 120 },
     startHeadingDeg: 0, // 0 deg = menuju -Z
     trackWidth: 7,
+    defaultWidth: 7,
+    closure: {
+      blendLength: 100,
+      posToleranceM: 0.02,
+      yawToleranceDeg: 0.05,
+      maxIterations: 200,
+      maxSlopeDeg: 22,
+    },
+    grid: {
+      maxSlots: 8,
+      firstRowOffset: 6,
+      rowSpacing: 8,
+      columnStagger: 2.5,
+      lateralFactor: 0.22,
+    },
     trackThickness: 0.52,
     edgeRadius: 0.22,
     edgeArcSegments: 5,
@@ -826,6 +842,7 @@ export const CONFIG = {
   car: {
     startS: 8,
     startLateral: 0,
+    // Footprint fisika (carHalfWidth = 0.85 m, carHalfLength = 1.675 m) tidak diubah; seluruh desain model 3D prosedural harus muat di dalam kotak ini.
     bodyLength: CAR_BODY_LENGTH, // panjang bodi mobil (naik = bodi lebih panjang)
     bodyWidth: CAR_BODY_WIDTH, // lebar bodi mobil (naik = bodi lebih lebar)
     carHalfWidth: CAR_BODY_WIDTH * 0.5, // setengah lebar bodi dari bodyWidth untuk footprint pagar (naik = batas lateral lebih sempit, turun = lebih dekat ke pagar)
@@ -855,8 +872,8 @@ export const CONFIG = {
     rimColorHex: ACTIVE_PRESET.car.rimColorHex,
     headlightColorHex: 0xfff5c0,
     headlightEmissiveIntensity: 2.2,
-    taillightColorHex: 0xef4444,
-    taillightEmissiveIntensity: 1.35,
+    taillightColorHex: 0xff1e2d,
+    taillightEmissiveIntensity: 1.45,
     exhaustGlowColorHex: ACTIVE_PRESET.car.exhaustGlowColorHex,
     exhaustEmissiveIntensity: 2.6,
     exhaustPipeRadius: 0.085,
@@ -864,9 +881,9 @@ export const CONFIG = {
     exhaustHaloBaseScale: 0.32,
     exhaustHaloBoostScale: 1.25,
     bodyClearcoat: 1.0,
-    bodyClearcoatRoughness: 0.07,
-    bodyRoughness: 0.18,
-    bodyMetalness: 0.1,
+    bodyClearcoatRoughness: 0.05,
+    bodyRoughness: 0.24,
+    bodyMetalness: 0.14,
     rimMetalness: 0.95,
     rimRoughness: 0.12,
     rollFactor: 0.006,
@@ -874,6 +891,37 @@ export const CONFIG = {
     pitchFactor: 0.0022,
     maxPitchRad: 0.075,
     suspensionDamping: 10,
+    visual: {
+      designId: 'gt' as 'gt' | 'wedge',
+      designs: {
+        gt: {
+          body: '#FF2D3D',
+          accent: '#FFD000',
+          stripe: '#FFF6E0',
+        },
+        wedge: {
+          body: '#0A5CFF',
+          accent: '#00E5FF',
+          stripe: '#FFF6E0',
+        },
+      },
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.05,
+      roughness: 0.24,
+      metalness: 0.14,
+      envMapIntensity: 1.15,
+      wheelDetail: {
+        spokeCount: 6,
+        tireThicknessRatio: 0.34,
+        camberRad: 0.038,
+      },
+      multiplayerPalettes: [
+        { body: '#FF2D3D', accent: '#FFD000', stripe: '#FFF6E0' }, // P1 Merah
+        { body: '#0A5CFF', accent: '#00E5FF', stripe: '#FFF6E0' }, // P2 Biru
+        { body: '#FFD000', accent: '#FF5A00', stripe: '#141C2B' }, // P3 Kuning
+        { body: '#16A34A', accent: '#FFD000', stripe: '#FFF6E0' }, // P4 Hijau
+      ],
+    },
   },
   input: {
     steerAttackTime: 0.12, // waktu naik steer dari 0 ke penuh dalam detik (naik = tap singkat lebih lembut, turun = respons belok lebih instan)

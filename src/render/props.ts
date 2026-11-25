@@ -388,7 +388,8 @@ function buildPropsAssembly(
   for (let i = 0; i < allSamples.length; i += sampleStride) {
     clearancePoints.push({ x: allSamples[i].position.x, z: allSamples[i].position.z });
   }
-  const startFrame = course.getFrameAt(CONFIG.car.startS);
+  const startSlot = course.getGridSlots(1)[0];
+  const startFrame = course.getFrameAt(startSlot.s);
   clearancePoints.push({
     x: startFrame.position.x - startFrame.tangent.x * 10,
     z: startFrame.position.z - startFrame.tangent.z * 10,

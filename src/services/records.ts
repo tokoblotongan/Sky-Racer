@@ -19,6 +19,8 @@ export interface RaceStats {
 export interface RunSubmission {
   time: number;
   splits: number[];
+  lapTimes?: number[];
+  bestLap?: number | null;
   date?: string;
   medal: MedalType;
   stats: RaceStats;
@@ -27,6 +29,7 @@ export interface RunSubmission {
 export interface BestRunEntry {
   time: number;
   splits: number[];
+  lapTimes?: number[];
   date: string;
   medal: MedalType;
   stats: RaceStats | null;
@@ -45,6 +48,7 @@ export interface CourseRecords {
   best: BestRunEntry | null;
   top: TopRunEntry[];
   bestSplits: number[];
+  bestLap?: number | null;
 }
 
 export interface SubmitRunResult {
@@ -68,6 +72,8 @@ export interface SummaryRunInfo {
   deltaToBest: number | null;
   rank: number | null;
   splits: number[];
+  lapTimes?: number[];
+  bestLap?: number | null;
   stats: RaceStats;
 }
 
@@ -144,6 +150,7 @@ function createEmptyRecords(courseId: string): CourseRecords {
     best: null,
     top: [],
     bestSplits: [],
+    bestLap: null,
   };
 }
 
@@ -165,9 +172,11 @@ function sanitizeRecords(raw: unknown, courseId: string): CourseRecords | null {
     if (!isPositiveFinite(b.time)) {
       return null;
     }
+    const bestLapTimes = sanitizeSplits(b.lapTimes);
     best = {
       time: b.time,
       splits: sanitizeSplits(b.splits),
+      ...(bestLapTimes.length > 0 ? { lapTimes: bestLapTimes } : {}),
       date: typeof b.date === 'string' ? b.date : new Date().toISOString(),
       medal: sanitizeMedal(b.medal),
       stats: sanitizeStats(b.stats),
@@ -199,6 +208,7 @@ function sanitizeRecords(raw: unknown, courseId: string): CourseRecords | null {
   }
 
   const bestSplits = sanitizeSplits(obj.bestSplits);
+  const bestLap = isPositiveFinite(obj.bestLap) ? obj.bestLap : null;
 
   if (best === null && top.length > 0) {
     best = {
@@ -216,11 +226,14 @@ function sanitizeRecords(raw: unknown, courseId: string): CourseRecords | null {
     best,
     top,
     bestSplits,
+    bestLap,
   };
 }
 
+const LEGACY_DEFAULT_COURSE_ID = 'sky-circuit';
+
 function getStorageKey(courseId: string): string {
-  return courseId === CONFIG.activeCourseId
+  return courseId === LEGACY_DEFAULT_COURSE_ID
     ? CONFIG.storage.recordsKey
     : `${CONFIG.storage.recordsKey}:${courseId}`;
 }
@@ -295,7 +308,7 @@ function migrateLegacyStage6IfNeeded(
   courseId: string,
   medals?: CourseMedals,
 ): CourseRecords | null {
-  if (courseId !== CONFIG.activeCourseId) {
+  if (courseId !== LEGACY_DEFAULT_COURSE_ID) {
     return null;
   }
 
@@ -366,7 +379,7 @@ export function getRecords(courseId: string, medals?: CourseMedals): CourseRecor
           }
         }
         // Mark migration done if v1 records already exist
-        if (courseId === CONFIG.activeCourseId && readStorageItem(CONFIG.storage.migratedKey) !== '1') {
+        if (courseId === LEGACY_DEFAULT_COURSE_ID && readStorageItem(CONFIG.storage.migratedKey) !== '1') {
           migrateLegacyStage6IfNeeded(courseId, medals);
           // Re-read only if v1 record didn't exist; existing v1 takes priority
         }
@@ -409,13 +422,25 @@ export function submitRun(courseId: string, run: RunSubmission): SubmitRunResult
   const isNewBest = prevBestTime === null || run.time < prevBestTime;
 
   if (isNewBest) {
+    const cleanLapTimes = (run.lapTimes ?? []).filter((lt) => isPositiveFinite(lt));
     records.best = {
       time: run.time,
       splits: [...cleanSplits],
+      ...(cleanLapTimes.length > 0 ? { lapTimes: cleanLapTimes } : {}),
       date: runDate,
       medal: run.medal,
       stats: cleanStats,
     };
+  }
+
+  const candidateLaps = [...(run.lapTimes ?? []), ...(run.bestLap ? [run.bestLap] : [])].filter(
+    (lt) => isPositiveFinite(lt),
+  );
+  if (candidateLaps.length > 0) {
+    const runBestLap = Math.min(...candidateLaps);
+    if (!isPositiveFinite(records.bestLap) || runBestLap < records.bestLap) {
+      records.bestLap = runBestLap;
+    }
   }
 
   const newTopEntry: TopRunEntry = {
@@ -461,7 +486,7 @@ export function submitRun(courseId: string, run: RunSubmission): SubmitRunResult
 
 export function clearRecords(courseId: string): CourseRecords {
   const fresh = createEmptyRecords(courseId);
-  if (courseId === CONFIG.activeCourseId) {
+  if (courseId === LEGACY_DEFAULT_COURSE_ID) {
     writeStorageItem(CONFIG.storage.migratedKey, '1');
     removeStorageItem(CONFIG.storage.key);
   }
@@ -482,6 +507,13 @@ export function exportSummaryText(run: SummaryRunInfo, course: SummaryCourseInfo
   lines.push(`SKY RACER — ${course.name}`);
   lines.push(`Waktu Akhir: ${formatSummaryTime(run.time)}${run.isNewBest ? ' (REKOR BARU!)' : ''}`);
   lines.push(`Medali: ${formatMedalLabel(run.medal)}`);
+  if (run.lapTimes && run.lapTimes.length > 1) {
+    const lapStr = run.lapTimes.map((t, i) => `Lap ${i + 1}: ${formatSummaryTime(t)}`).join(' | ');
+    lines.push(`Lap: ${lapStr}`);
+    if (run.bestLap && isPositiveFinite(run.bestLap)) {
+      lines.push(`Best Lap: ${formatSummaryTime(run.bestLap)}`);
+    }
+  }
   if (run.deltaToBest !== null) {
     const sign = run.deltaToBest > 0 ? '+' : '-';
     lines.push(`Selisih dari Rekor Sebelumnya: ${sign}${Math.abs(run.deltaToBest).toFixed(2)} dtk`);

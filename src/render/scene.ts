@@ -762,6 +762,14 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     const dim = computeRoomDimensions(bounds);
     rebuildRoomShell(dim);
     skyDome.mesh.position.set(dim.centerX, 0, dim.centerZ);
+    const requiredFar = Math.max(
+      CONFIG.render.viewDistance * 1.2,
+      Math.hypot(dim.width, dim.depth) + 160,
+    );
+    if (camera.far < requiredFar) {
+      camera.far = requiredFar;
+      camera.updateProjectionMatrix();
+    }
   }
 
   function setOrbitTarget(target: THREE.Vector3, radius: number, height: number): void {

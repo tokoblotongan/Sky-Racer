@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { CONFIG } from '../config';
 import { getCourse, type CourseDefinition } from '../courses';
 import type { CourseMedals, CourseSegmentConfig } from '../courses/types';
+import { solveClosure, type ClosureReport } from './courseClosure';
 
 export type CourseSegmentType = CourseSegmentConfig['type'];
 
@@ -65,9 +66,22 @@ export interface CourseBounds {
   max: THREE.Vector3;
 }
 
+export interface GridSlot {
+  index: number;
+  s: number;
+  lateral: number;
+}
+
+export interface LapProgress {
+  lap: number;
+  sInLap: number;
+}
+
 export interface CourseConfig {
   id?: string;
   name?: string;
+  closed?: boolean;
+  laps?: number;
   medals?: CourseMedals;
   segments: readonly CourseSegmentConfig[];
   startPosition: { readonly x: number; readonly y: number; readonly z: number };
@@ -277,11 +291,13 @@ export function buildCourseConfigFromDefinition(
   return {
     id: definition.id,
     name: definition.name,
+    closed: Boolean(definition.closed),
+    laps: Math.max(1, Math.round(definition.laps ?? 1)),
     medals: definition.medals,
     segments: definition.segments,
     startPosition: definition.startPosition ?? CONFIG.course.startPosition,
     startHeadingDeg: definition.startHeadingDeg ?? CONFIG.course.startHeadingDeg,
-    defaultWidth: CONFIG.course.trackWidth,
+    defaultWidth: definition.trackWidth ?? CONFIG.course.trackWidth,
     stepLength: CONFIG.course.stepLength,
     bankBlendLength: CONFIG.course.bankBlendLength,
     slopeBlendLength: CONFIG.course.slopeBlendLength,
@@ -327,7 +343,11 @@ export class Course {
 
   private readonly id: string;
   private readonly name: string;
+  private readonly closed: boolean;
+  private readonly laps: number;
+  private readonly trackWidth: number;
   private readonly medals: CourseMedals;
+  private readonly closureReport: ClosureReport | null;
   private cachedSamples: TrackFrame[] | null = null;
   private readonly segmentMeta: CourseSegmentMeta[];
   private readonly totalLength: number;
@@ -342,9 +362,31 @@ export class Course {
     const fallbackDef = getCourse(CONFIG.activeCourseId);
     this.id = config.id ?? fallbackDef.id;
     this.name = config.name ?? fallbackDef.name;
+    this.closed = Boolean(config.closed);
+    this.laps = Math.max(1, Math.round(config.laps ?? 1));
+    this.trackWidth = config.defaultWidth;
     this.medals = config.medals ?? fallbackDef.medals;
     if (config.segments.length === 0) {
       throw new Error('Course requires at least 1 segment.');
+    }
+
+    let activeSegments: readonly CourseSegmentConfig[] = config.segments;
+    let closureReport: ClosureReport | null = null;
+    if (this.closed) {
+      const closureCfg = CONFIG.course.closure;
+      const solved = solveClosure(config.segments, {
+        startPosition: config.startPosition,
+        startHeadingDeg: config.startHeadingDeg,
+        stepLength: config.stepLength,
+        bankBlendLength: config.bankBlendLength,
+        slopeBlendLength: config.slopeBlendLength,
+        maxIterations: closureCfg.maxIterations,
+        posToleranceM: closureCfg.posToleranceM,
+        yawToleranceDeg: closureCfg.yawToleranceDeg,
+        maxSlopeDeg: closureCfg.maxSlopeDeg,
+      });
+      activeSegments = solved.segments;
+      closureReport = solved.report;
     }
 
     const headingRad = THREE.MathUtils.degToRad(config.startHeadingDeg);
@@ -365,7 +407,7 @@ export class Course {
       baseRight: startR,
     };
 
-    const capacity = estimateTotalSamples(config.segments, config.stepLength);
+    const capacity = estimateTotalSamples(activeSegments, config.stepLength);
     let sArr = new Float64Array(capacity);
     let posArr = new Float32Array(capacity * 3);
     let tanArr = new Float32Array(capacity * 3);
@@ -477,7 +519,7 @@ export class Course {
     const loopGaps: LoopGapInfo[] = [];
     const segmentMeta: CourseSegmentMeta[] = [];
 
-    const firstSeg = config.segments[0];
+    const firstSeg = activeSegments[0];
     pushSample(
       firstSeg.width ?? config.defaultWidth,
       0,
@@ -487,8 +529,8 @@ export class Course {
       firstSeg.type === 'gap',
     );
 
-    for (let segIdx = 0; segIdx < config.segments.length; segIdx++) {
-      const seg = config.segments[segIdx];
+    for (let segIdx = 0; segIdx < activeSegments.length; segIdx++) {
+      const seg = activeSegments[segIdx];
       const segWidth = seg.width ?? config.defaultWidth;
       const segStartS = turtle.s;
 
@@ -698,13 +740,76 @@ export class Course {
     this.isGapTable = isGapArr.subarray(0, count);
     this.kappaTable = new Float32Array(count);
     this.segmentMeta = segmentMeta;
+    this.gapRanges = gapRanges;
+    this.totalLength = this.sTable[count - 1];
+
+    // Closed-circuit seam closure blend over the last blendLength meters + exact endpoint snap
+    if (this.closed && count >= 3) {
+      const lastIdx = count - 1;
+      const last3 = lastIdx * 3;
+      const errX = this.posTable[last3] - this.posTable[0];
+      const errY = this.posTable[last3 + 1] - this.posTable[1];
+      const errZ = this.posTable[last3 + 2] - this.posTable[2];
+      const blendLen = Math.min(CONFIG.course.closure.blendLength, this.totalLength * 0.25);
+      const blendStartS = Math.max(0, this.totalLength - blendLen);
+      const errNorm = Math.hypot(errX, errY, errZ);
+
+      if (errNorm > 1e-6 && blendLen > 1e-4) {
+        for (let i = 0; i < count; i++) {
+          const sVal = this.sTable[i];
+          if (sVal <= blendStartS) continue;
+          const w = smoothstep01((sVal - blendStartS) / blendLen);
+          const i3 = i * 3;
+          this.posTable[i3] -= errX * w;
+          this.posTable[i3 + 1] -= errY * w;
+          this.posTable[i3 + 2] -= errZ * w;
+        }
+        if (closureReport) {
+          closureReport = {
+            ...closureReport,
+            blendApplied: true,
+            blendLengthM: blendLen,
+          };
+        }
+      }
+
+      // Guarantee exact C1 continuity at s = totalLength == 0
+      this.posTable[last3] = this.posTable[0];
+      this.posTable[last3 + 1] = this.posTable[1];
+      this.posTable[last3 + 2] = this.posTable[2];
+      this.tanTable[last3] = this.tanTable[0];
+      this.tanTable[last3 + 1] = this.tanTable[1];
+      this.tanTable[last3 + 2] = this.tanTable[2];
+      this.upTable[last3] = this.upTable[0];
+      this.upTable[last3 + 1] = this.upTable[1];
+      this.upTable[last3 + 2] = this.upTable[2];
+      this.rightTable[last3] = this.rightTable[0];
+      this.rightTable[last3 + 1] = this.rightTable[1];
+      this.rightTable[last3 + 2] = this.rightTable[2];
+      this.widthTable[lastIdx] = this.widthTable[0];
+      this.bankTable[lastIdx] = this.bankTable[0];
+    }
+    this.closureReport = closureReport;
 
     // Compute numerical curvature kappa_up = (dT/ds) · up and smooth it
     const rawKappa = new Float32Array(count);
+    const uniqueCount = Math.max(2, count - 1);
     for (let i = 0; i < count; i++) {
-      const iPrev = Math.max(0, i - 1);
-      const iNext = Math.min(count - 1, i + 1);
-      const spanS = this.sTable[iNext] - this.sTable[iPrev];
+      let iPrev: number;
+      let iNext: number;
+      let spanS: number;
+      if (this.closed) {
+        const uIdx = i === count - 1 ? 0 : i;
+        iPrev = (uIdx - 1 + uniqueCount) % uniqueCount;
+        iNext = (uIdx + 1) % uniqueCount;
+        const sPrev = iPrev === uniqueCount - 1 && uIdx === 0 ? this.sTable[iPrev] - this.totalLength : this.sTable[iPrev];
+        const sNext = iNext === 0 && uIdx === uniqueCount - 1 ? this.totalLength : this.sTable[iNext];
+        spanS = sNext - sPrev;
+      } else {
+        iPrev = Math.max(0, i - 1);
+        iNext = Math.min(count - 1, i + 1);
+        spanS = this.sTable[iNext] - this.sTable[iPrev];
+      }
       if (spanS > 1e-6) {
         const p3 = iPrev * 3;
         const n3 = iNext * 3;
@@ -725,29 +830,35 @@ export class Course {
     for (let i = 0; i < count; i++) {
       let sum = 0;
       let winCount = 0;
-      const start = Math.max(0, i - halfWin);
-      const end = Math.min(count - 1, i + halfWin);
-      for (let k = start; k <= end; k++) {
-        sum += rawKappa[k];
-        winCount++;
+      if (this.closed) {
+        const uIdx = i === count - 1 ? 0 : i;
+        for (let k = -halfWin; k <= halfWin; k++) {
+          const wrapped = ((uIdx + k) % uniqueCount + uniqueCount) % uniqueCount;
+          sum += rawKappa[wrapped];
+          winCount++;
+        }
+      } else {
+        const start = Math.max(0, i - halfWin);
+        const end = Math.min(count - 1, i + halfWin);
+        for (let k = start; k <= end; k++) {
+          sum += rawKappa[k];
+          winCount++;
+        }
       }
       this.kappaTable[i] = winCount > 0 ? sum / winCount : 0;
     }
-
-    this.gapRanges = gapRanges;
-    this.totalLength = this.sTable[count - 1];
 
     const checkpoints: CheckpointData[] = [];
     const boostPads: BoostPadData[] = [];
 
     const clampOutsideGap = (s: number): number => {
-      let clamped = this.clampDistance(s);
+      let clamped = THREE.MathUtils.clamp(s, 0, this.totalLength);
       const gap = this.getGapRangeAt(clamped);
       if (gap) {
         clamped =
           clamped - gap.startS < gap.endS - clamped ? gap.startS : gap.endS;
       }
-      return this.clampDistance(clamped);
+      return THREE.MathUtils.clamp(clamped, 0, this.totalLength);
     };
 
     for (const meta of segmentMeta) {
@@ -775,13 +886,14 @@ export class Course {
             continue;
           }
           const padFrame = this.getFrameAt(padS);
-          const maxLat = Math.max(0, padFrame.width * 0.5 - config.boostPadWidth * 0.5 - 0.15);
+          const padWidth = padCfg.width ?? config.boostPadWidth;
+          const maxLat = Math.max(0, padFrame.width * 0.5 - padWidth * 0.5 - 0.15);
           boostPads.push({
             id: boostPads.length,
             s: padS,
             lateral: THREE.MathUtils.clamp(padCfg.lateral, -maxLat, maxLat),
             length: config.boostPadLength,
-            width: config.boostPadWidth,
+            width: padWidth,
           });
         }
       }
@@ -789,7 +901,9 @@ export class Course {
 
     this.checkpoints = checkpoints;
     this.boostPads = boostPads;
-    this.finishS = clampOutsideGap(Math.max(0, this.totalLength - config.finishMargin));
+    this.finishS = this.closed
+      ? this.totalLength * this.laps
+      : clampOutsideGap(Math.max(0, this.totalLength - config.finishMargin));
 
     const minBound = new THREE.Vector3(Infinity, Infinity, Infinity);
     const maxBound = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
@@ -877,7 +991,10 @@ export class Course {
       const aw = this.widthTable[i];
 
       for (let j = i + stride; j < this.sampleCount; j += stride) {
-        if (this.isGapTable[j] === 1 || this.sTable[j] - as < minArcSeparation) continue;
+        if (this.isGapTable[j] === 1) continue;
+        const rawDs = this.sTable[j] - as;
+        const arcSep = this.closed ? Math.min(rawDs, this.totalLength - rawDs) : rawDs;
+        if (arcSep < minArcSeparation) continue;
         const j3 = j * 3;
         const dist = Math.hypot(
           this.posTable[j3] - ax,
@@ -903,8 +1020,12 @@ export class Course {
             .join(', ')
         : 'none';
 
+    const closureNote = this.closureReport
+      ? ` | closureErr=${this.closureReport.posErrorM.toFixed(4)}m yaw=${this.closureReport.dYawDeg.toFixed(3)}°`
+      : '';
+
     console.info(
-      `[SkyRacer Course] length=${this.totalLength.toFixed(2)}m | samples=${this.sampleCount} | gaps=[${gapSummary}] | maxOrthoErr=${maxOrthoError.toExponential(2)} | loopGap=[${loopSummary}] | minNonAdjacentDist=${Number.isFinite(minClearance) ? minClearance.toFixed(2) : 'n/a'}m`,
+      `[SkyRacer Course] length=${this.totalLength.toFixed(2)}m | samples=${this.sampleCount} | gaps=[${gapSummary}] | maxOrthoErr=${maxOrthoError.toExponential(2)} | loopGap=[${loopSummary}] | minNonAdjacentDist=${Number.isFinite(minClearance) ? minClearance.toFixed(2) : 'n/a'}m${closureNote}`,
     );
 
     if (collisionWarningCount > 0) {
@@ -922,6 +1043,22 @@ export class Course {
     return this.name;
   }
 
+  isClosed(): boolean {
+    return this.closed;
+  }
+
+  getLaps(): number {
+    return this.laps;
+  }
+
+  getTrackWidth(): number {
+    return this.trackWidth;
+  }
+
+  getClosureReport(): ClosureReport | null {
+    return this.closureReport;
+  }
+
   getMedals(): CourseMedals {
     return this.medals;
   }
@@ -930,8 +1067,63 @@ export class Course {
     return this.totalLength;
   }
 
+  wrapDistance(s: number): number {
+    if (!this.closed || this.totalLength <= 1e-6) {
+      return THREE.MathUtils.clamp(s, 0, this.totalLength);
+    }
+    const mod = s % this.totalLength;
+    return mod < 0 ? mod + this.totalLength : mod;
+  }
+
   clampDistance(s: number): number {
+    if (this.closed) {
+      return s;
+    }
     return THREE.MathUtils.clamp(s, 0, this.totalLength);
+  }
+
+  getLapProgress(s: number): LapProgress {
+    if (!this.closed || this.totalLength <= 1e-6) {
+      return { lap: 0, sInLap: THREE.MathUtils.clamp(s, 0, this.totalLength) };
+    }
+    return {
+      lap: Math.floor(s / this.totalLength),
+      sInLap: this.wrapDistance(s),
+    };
+  }
+
+  getGridSlots(count = 1): GridSlot[] {
+    const gridCfg = CONFIG.course.grid;
+    const clampedCount = THREE.MathUtils.clamp(Math.round(count), 1, gridCfg.maxSlots);
+    const slots: GridSlot[] = [];
+
+    if (!this.closed) {
+      for (let i = 0; i < clampedCount; i++) {
+        const row = Math.floor(i / 2);
+        const col = i % 2;
+        const lat =
+          i === 0
+            ? CONFIG.car.startLateral
+            : (col === 0 ? -1 : 1) * this.trackWidth * gridCfg.lateralFactor;
+        const s = Math.max(0.5, CONFIG.car.startS - row * gridCfg.rowSpacing - col * gridCfg.columnStagger);
+        slots.push({ index: i, s, lateral: lat });
+      }
+      return slots;
+    }
+
+    const latOffset = this.trackWidth * gridCfg.lateralFactor;
+    for (let i = 0; i < clampedCount; i++) {
+      const row = Math.floor(i / 2);
+      const col = i % 2;
+      const side = col === 0 ? -1 : 1;
+      const s = -(gridCfg.firstRowOffset + row * gridCfg.rowSpacing + col * gridCfg.columnStagger);
+      slots.push({
+        index: i,
+        s,
+        lateral: side * latOffset,
+      });
+    }
+    return slots;
   }
 
   getBounds(): CourseBounds {
@@ -1030,8 +1222,12 @@ export class Course {
   }
 
   getGapRangeAt(s: number): GapRange | null {
+    if (this.gapRanges.length === 0) {
+      return null;
+    }
+    const queryS = this.closed ? this.wrapDistance(s) : s;
     for (const gap of this.gapRanges) {
-      if (s >= gap.startS && s < gap.endS) {
+      if (queryS >= gap.startS && queryS < gap.endS) {
         return gap;
       }
     }
@@ -1043,14 +1239,14 @@ export class Course {
   }
 
   private findBracket(s: number): { idx0: number; idx1: number; alpha: number } {
-    const clampedS = this.clampDistance(s);
+    const queryS = this.closed ? this.wrapDistance(s) : this.clampDistance(s);
     const maxIndex = this.sampleCount - 1;
 
     let low = 0;
     let high = maxIndex;
     while (low < high - 1) {
       const mid = (low + high) >> 1;
-      if (this.sTable[mid] <= clampedS) {
+      if (this.sTable[mid] <= queryS) {
         low = mid;
       } else {
         high = mid;
@@ -1060,11 +1256,83 @@ export class Course {
     const idx0 = low;
     const idx1 = Math.min(low + 1, maxIndex);
     const span = this.sTable[idx1] - this.sTable[idx0];
-    const alpha = idx0 === idx1 || span <= 1e-6 ? 0 : (clampedS - this.sTable[idx0]) / span;
+    const alpha = idx0 === idx1 || span <= 1e-6 ? 0 : (queryS - this.sTable[idx0]) / span;
     return { idx0, idx1, alpha };
   }
 
   findNearestS(worldPos: THREE.Vector3, hintS: number, window = 32): number {
+    if (this.closed) {
+      const uniqueCount = Math.max(2, this.sampleCount - 1);
+      const centerIdx = Math.min(uniqueCount - 1, this.findBracket(hintS).idx0);
+      const avgStep = Math.max(0.05, this.totalLength / uniqueCount);
+      const halfSteps = Math.max(4, Math.ceil(window / avgStep));
+
+      let bestIdx = centerIdx;
+      let bestDistSq = Infinity;
+      for (let k = -halfSteps; k <= halfSteps; k++) {
+        const idx = ((centerIdx + k) % uniqueCount + uniqueCount) % uniqueCount;
+        const i3 = idx * 3;
+        const dx = worldPos.x - this.posTable[i3];
+        const dy = worldPos.y - this.posTable[i3 + 1];
+        const dz = worldPos.z - this.posTable[i3 + 2];
+        const dSq = dx * dx + dy * dy + dz * dz;
+        if (dSq < bestDistSq) {
+          bestDistSq = dSq;
+          bestIdx = idx;
+        }
+      }
+
+      let refinedWrappedS = this.sTable[bestIdx];
+      let refinedDistSq = bestDistSq;
+
+      const prevIdx = (bestIdx - 1 + uniqueCount) % uniqueCount;
+      const nextIdx = (bestIdx + 1) % uniqueCount;
+
+      {
+        const a3 = prevIdx * 3;
+        const b3 = bestIdx * 3;
+        _tmpA.set(this.posTable[a3], this.posTable[a3 + 1], this.posTable[a3 + 2]);
+        _tmpB.set(this.posTable[b3], this.posTable[b3 + 1], this.posTable[b3 + 2]);
+        _segVec.subVectors(_tmpB, _tmpA);
+        const lenSq = _segVec.lengthSq();
+        if (lenSq > 1e-8) {
+          _relVec.subVectors(worldPos, _tmpA);
+          const t = THREE.MathUtils.clamp(_relVec.dot(_segVec) / lenSq, 0, 1);
+          _relVec.copy(_tmpA).addScaledVector(_segVec, t);
+          const dSq = worldPos.distanceToSquared(_relVec);
+          if (dSq < refinedDistSq) {
+            refinedDistSq = dSq;
+            const sA = bestIdx === 0 ? this.sTable[prevIdx] - this.totalLength : this.sTable[prevIdx];
+            const sB = this.sTable[bestIdx];
+            refinedWrappedS = this.wrapDistance(THREE.MathUtils.lerp(sA, sB, t));
+          }
+        }
+      }
+
+      {
+        const a3 = bestIdx * 3;
+        const b3 = nextIdx * 3;
+        _tmpA.set(this.posTable[a3], this.posTable[a3 + 1], this.posTable[a3 + 2]);
+        _tmpB.set(this.posTable[b3], this.posTable[b3 + 1], this.posTable[b3 + 2]);
+        _segVec.subVectors(_tmpB, _tmpA);
+        const lenSq = _segVec.lengthSq();
+        if (lenSq > 1e-8) {
+          _relVec.subVectors(worldPos, _tmpA);
+          const t = THREE.MathUtils.clamp(_relVec.dot(_segVec) / lenSq, 0, 1);
+          _relVec.copy(_tmpA).addScaledVector(_segVec, t);
+          const dSq = worldPos.distanceToSquared(_relVec);
+          if (dSq < refinedDistSq) {
+            const sA = this.sTable[bestIdx];
+            const sB = nextIdx === 0 ? this.totalLength : this.sTable[nextIdx];
+            refinedWrappedS = this.wrapDistance(THREE.MathUtils.lerp(sA, sB, t));
+          }
+        }
+      }
+
+      const lapShift = Math.round((hintS - refinedWrappedS) / this.totalLength) * this.totalLength;
+      return refinedWrappedS + lapShift;
+    }
+
     const startIdx = this.findBracket(hintS - window).idx0;
     const endIdx = Math.min(this.sampleCount - 1, this.findBracket(hintS + window).idx1);
 
@@ -1126,14 +1394,14 @@ export class Course {
   }
 
   getFrameAt(s: number, out?: TrackFrame): TrackFrame {
-    const clampedS = this.clampDistance(s);
-    const { idx0, idx1, alpha } = this.findBracket(clampedS);
+    const queryS = this.closed ? this.wrapDistance(s) : this.clampDistance(s);
+    const { idx0, idx1, alpha } = this.findBracket(queryS);
 
     const a3 = idx0 * 3;
     const b3 = idx1 * 3;
 
     const target: TrackFrame = out ?? {
-      s: clampedS,
+      s: queryS,
       position: new THREE.Vector3(),
       tangent: new THREE.Vector3(),
       up: new THREE.Vector3(),
@@ -1143,7 +1411,7 @@ export class Course {
       isGap: this.isGapTable[idx0] === 1,
     };
 
-    target.s = clampedS;
+    target.s = queryS;
     target.position.set(
       THREE.MathUtils.lerp(this.posTable[a3], this.posTable[b3], alpha),
       THREE.MathUtils.lerp(this.posTable[a3 + 1], this.posTable[b3 + 1], alpha),
@@ -1166,7 +1434,7 @@ export class Course {
     target.up.crossVectors(target.right, target.tangent).normalize();
     target.width = THREE.MathUtils.lerp(this.widthTable[idx0], this.widthTable[idx1], alpha);
     target.bank = THREE.MathUtils.lerp(this.bankTable[idx0], this.bankTable[idx1], alpha);
-    target.isGap = this.isGapAt(clampedS);
+    target.isGap = this.isGapAt(queryS);
 
     return target;
   }

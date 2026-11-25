@@ -110,10 +110,12 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
     gateGroup.name = `CheckpointGate_${cp.index}`;
     orientGateToFrame(gateGroup, cp.frame);
 
+    const widthRatio = cp.frame.width / CONFIG.course.defaultWidth;
+    const gateHeight = gateCfg.height * THREE.MathUtils.lerp(1, widthRatio, 0.35);
     const spanWidth =
       cp.frame.width + (cfg.railOffsetFromEdge + cfg.railWidth + gateCfg.widthMargin) * 2;
-    const tubeRadius = gateCfg.thickness * 0.5;
-    const archCurve = createGateArcCurve(spanWidth, gateCfg.height);
+    const tubeRadius = gateCfg.thickness * 0.5 * THREE.MathUtils.lerp(1, widthRatio, 0.25);
+    const archCurve = createGateArcCurve(spanWidth, gateHeight);
     const archGeometry = new THREE.TubeGeometry(
       archCurve,
       gateCfg.arcSegments * 3,
@@ -158,9 +160,15 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
       emissiveIntensity: 0.3,
       roughness: 0.25,
     });
-    const beaconGeom = new RoundedBoxGeometry(1.5, 0.38, gateCfg.thickness * 1.15, 3, 0.12);
+    const beaconGeom = new RoundedBoxGeometry(
+      1.5 * THREE.MathUtils.lerp(1, widthRatio, 0.3),
+      0.38,
+      tubeRadius * 2.3,
+      3,
+      0.12,
+    );
     const beacon = new THREE.Mesh(beaconGeom, beaconMaterial);
-    beacon.position.set(0, gateCfg.height, 0);
+    beacon.position.set(0, gateHeight, 0);
     gateGroup.add(beacon);
 
     const entry: CheckpointGateEntry = {
@@ -172,16 +180,22 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
     group.add(gateGroup);
   }
 
-  // Finish Gate with procedural checkered banner
+  // Finish Gate (or grand Start/Finish gantry on closed courses) with procedural checkered banner
+  const isClosed = course.isClosed();
   const finishFrame = course.getFrameAt(course.getFinishS());
   const finishGroup = new THREE.Group();
   finishGroup.name = 'FinishGate';
   orientGateToFrame(finishGroup, finishFrame);
 
+  const finishWidthRatio = finishFrame.width / CONFIG.course.defaultWidth;
+  const finishHeight =
+    (gateCfg.height + (isClosed ? 0.75 : 0.35)) *
+    THREE.MathUtils.lerp(1, finishWidthRatio, 0.35);
   const finishSpanW =
     finishFrame.width + (cfg.railOffsetFromEdge + cfg.railWidth + gateCfg.widthMargin) * 2;
-  const finishTubeR = gateCfg.thickness * 0.54;
-  const finishArchCurve = createGateArcCurve(finishSpanW, gateCfg.height + 0.35);
+  const finishTubeR =
+    gateCfg.thickness * (isClosed ? 0.62 : 0.54) * THREE.MathUtils.lerp(1, finishWidthRatio, 0.25);
+  const finishArchCurve = createGateArcCurve(finishSpanW, finishHeight);
   const finishArchGeom = new THREE.TubeGeometry(
     finishArchCurve,
     gateCfg.arcSegments * 3,
@@ -202,7 +216,34 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
   finishArch.castShadow = true;
   finishGroup.add(finishArch);
 
+  if (isClosed) {
+    const towerGeom = new RoundedBoxGeometry(
+      finishTubeR * 2.5,
+      finishHeight * 0.74,
+      finishTubeR * 2.8,
+      3,
+      0.1,
+    );
+    const towerCapMat = new THREE.MeshStandardMaterial({
+      color: CONFIG.colors.rail,
+      emissive: CONFIG.colors.rail,
+      emissiveIntensity: 0.22,
+      roughness: 0.25,
+      metalness: 0.1,
+    });
+    for (const side of [-1, 1]) {
+      const tower = new THREE.Mesh(towerGeom, towerCapMat);
+      tower.position.set(side * finishSpanW * 0.5, finishHeight * 0.37, 0);
+      tower.castShadow = true;
+      finishGroup.add(tower);
+    }
+  }
+
   const checkerTexture = createFinishCheckerTexture(maxAnisotropy);
+  if (isClosed) {
+    checkerTexture.wrapS = THREE.RepeatWrapping;
+    checkerTexture.repeat.set(2, 1);
+  }
   const bannerMaterial = new THREE.MeshPhysicalMaterial({
     map: checkerTexture,
     emissive: 0xffffff,
@@ -212,26 +253,29 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
     clearcoatRoughness: 0.1,
     roughness: 0.22,
   });
-  const bannerWidth = finishFrame.width + 0.9;
+  const bannerWidth = finishFrame.width + (isClosed ? 1.4 : 0.9);
+  const bannerHeight = gateCfg.bannerHeight * (isClosed ? 1.25 : 1);
   const bannerGeom = new RoundedBoxGeometry(
     bannerWidth,
-    gateCfg.bannerHeight,
-    gateCfg.thickness * 0.92,
+    bannerHeight,
+    finishTubeR * 1.85,
     3,
     0.1,
   );
   const bannerMesh = new THREE.Mesh(bannerGeom, bannerMaterial);
-  bannerMesh.position.set(0, gateCfg.height - 0.18, 0);
+  bannerMesh.position.set(0, finishHeight - (isClosed ? 0.42 : 0.53), 0);
   bannerMesh.castShadow = true;
   finishGroup.add(bannerMesh);
 
-  // Checkered finish line strip directly across the deck at finishS
-  const stripGeom = new THREE.PlaneGeometry(finishFrame.width - 0.4, 1.35);
-  const stripMesh = new THREE.Mesh(stripGeom, bannerMaterial);
-  stripMesh.rotation.x = -Math.PI / 2;
-  stripMesh.position.set(0, 0.015, 0);
-  stripMesh.receiveShadow = true;
-  finishGroup.add(stripMesh);
+  if (!isClosed) {
+    // Checkered finish line strip directly across the deck at finishS (closed courses use StartGridStrip at s=0)
+    const stripGeom = new THREE.PlaneGeometry(finishFrame.width - 0.4, 1.35);
+    const stripMesh = new THREE.Mesh(stripGeom, bannerMaterial);
+    stripMesh.rotation.x = -Math.PI / 2;
+    stripMesh.position.set(0, 0.015, 0);
+    stripMesh.receiveShadow = true;
+    finishGroup.add(stripMesh);
+  }
 
   group.add(finishGroup);
 

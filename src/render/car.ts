@@ -1,36 +1,106 @@
 // src/render/car.ts
 
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
+import { CONFIG, VISUAL_PRESETS, type VisualPresetName } from '../config';
 import type { CarState } from '../core/physics';
+import type { CarDesignId } from './carDesigns';
+import { getCachedCarGeometryBundle, type WheelGeomSet } from './carGeometry';
+
+export interface CarColorPalette {
+  body?: string;
+  accent?: string;
+  stripe?: string;
+}
+
+export interface BuildCarMeshOptions {
+  designId?: CarDesignId;
+  colors?: CarColorPalette;
+  maxAnisotropy?: number;
+  presetName?: VisualPresetName;
+}
 
 export interface CarVisual {
   group: THREE.Group;
   update: (state: CarState, dt: number) => void;
   applyPalette: (name: VisualPresetName) => void;
+  getDesignId: () => CarDesignId;
+  dispose: () => void;
 }
 
 function createBodyPaintTexture(
   maxAnisotropy: number,
-  preset: VisualPreset,
+  bodyColor: string,
+  stripeColor: string,
+  accentColor: string,
 ): THREE.CanvasTexture {
-  const size = 256;
+  const width = 512;
+  const height = 256;
   const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext('2d');
 
   if (ctx) {
-    ctx.fillStyle = preset.car.bodyColor;
-    ctx.fillRect(0, 0, size, size);
+    // Base automotive clearcoat base paint
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(0, 0, width, height);
 
-    ctx.fillStyle = preset.car.stripeColor;
-    ctx.fillRect(size * 0.41, 0, size * 0.075, size);
-    ctx.fillRect(size * 0.515, 0, size * 0.075, size);
+    // Subtle longitudinal clearcoat shading band along flanks for die-cast depth
+    const flankGrad = ctx.createLinearGradient(0, 0, 0, height);
+    flankGrad.addColorStop(0, 'rgba(0,0,0,0.22)');
+    flankGrad.addColorStop(0.22, 'rgba(0,0,0,0.0)');
+    flankGrad.addColorStop(0.5, 'rgba(255,255,255,0.06)');
+    flankGrad.addColorStop(0.78, 'rgba(0,0,0,0.0)');
+    flankGrad.addColorStop(1, 'rgba(0,0,0,0.22)');
+    ctx.fillStyle = flankGrad;
+    ctx.fillRect(0, 0, width, height);
 
-    ctx.fillStyle = preset.car.accentColor;
-    ctx.fillRect(size * 0.488, 0, size * 0.024, size);
+    // Twin central racing stripes along top hood, roof & rear deck (v around 0.5 -> canvasY around 0.5 * height)
+    const stripeStartX = width * 0.02;
+    const stripeLenX = width * 0.96;
+    ctx.fillStyle = stripeColor;
+    ctx.fillRect(stripeStartX, height * 0.442, stripeLenX, height * 0.044);
+    ctx.fillRect(stripeStartX, height * 0.514, stripeLenX, height * 0.044);
+
+    // Thin center accent pinstripe between racing stripes
+    ctx.fillStyle = accentColor;
+    ctx.fillRect(stripeStartX, height * 0.493, stripeLenX, height * 0.014);
+
+    // Subtle flank rocker pinstripes (v ~ 0.16 right, v ~ 0.84 left)
+    ctx.fillStyle = accentColor;
+    ctx.fillRect(width * 0.24, height * 0.155, width * 0.52, height * 0.01);
+    ctx.fillRect(width * 0.24, height * 0.835, width * 0.52, height * 0.01);
+
+    // Generic racing door number "01" roundel on both doors (right: v~0.24 => y~0.76H; left: v~0.76 => y~0.24H)
+    const drawDoorRoundel = (cx: number, cy: number, flip180: boolean): void => {
+      ctx.save();
+      ctx.translate(cx, cy);
+      if (flip180) {
+        ctx.rotate(Math.PI);
+      }
+      ctx.fillStyle = stripeColor;
+      ctx.beginPath();
+      ctx.arc(0, 0, 17, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 15.2, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = '#111824';
+      ctx.font = '900 16px system-ui, -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('01', 0, 1);
+      ctx.restore();
+    };
+
+    // Right flank (v ~ 0.24 -> canvasY = 0.76 * height), upright normal text
+    drawDoorRoundel(width * 0.52, height * 0.76, false);
+    // Left flank (v ~ 0.76 -> canvasY = 0.24 * height), rotated 180° so u & v inversion aligns upright
+    drawDoorRoundel(width * 0.52, height * 0.24, true);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -39,119 +109,215 @@ function createBodyPaintTexture(
   return texture;
 }
 
-function createWheelAssembly(
-  tireMaterial: THREE.Material,
-  rimMaterial: THREE.Material,
-  hubMaterial: THREE.Material,
-  radius: number,
-  width: number,
-): { steerPivot: THREE.Group; spinMesh: THREE.Group } {
-  const steerPivot = new THREE.Group();
-  const spinMesh = new THREE.Group();
+interface WheelControl {
+  steerPivot: THREE.Group;
+  spinMesh: THREE.Group;
+}
 
-  const tireGeom = new THREE.CylinderGeometry(radius, radius, width, 24);
-  tireGeom.rotateZ(Math.PI / 2);
-  const tireMesh = new THREE.Mesh(tireGeom, tireMaterial);
+function createWheelInstance(
+  geomSet: WheelGeomSet,
+  materials: {
+    tire: THREE.Material;
+    rim: THREE.Material;
+    hub: THREE.Material;
+    disc: THREE.Material;
+    caliper: THREE.Material;
+  },
+  side: -1 | 1,
+  camberRad: number,
+): WheelControl {
+  const steerPivot = new THREE.Group();
+  const camberGroup = new THREE.Group();
+  // Negative camber: top of tire leans inward toward vehicle centerline
+  camberGroup.rotation.z = side * camberRad;
+  steerPivot.add(camberGroup);
+
+  // Stationary brake caliper mounted inside camberGroup (does not spin with wheel)
+  const caliperMesh = new THREE.Mesh(geomSet.caliperGeom, materials.caliper);
+  if (side === -1) {
+    caliperMesh.rotation.y = Math.PI;
+  }
+  camberGroup.add(caliperMesh);
+
+  const spinMesh = new THREE.Group();
+  camberGroup.add(spinMesh);
+
+  // Inner holder flipped PI around Y for left wheels so outer spokes/hub face -X while spinMesh.rotation.x rolls forward
+  const wheelFaceHolder = new THREE.Group();
+  if (side === -1) {
+    wheelFaceHolder.rotation.y = Math.PI;
+  }
+  spinMesh.add(wheelFaceHolder);
+
+  const tireMesh = new THREE.Mesh(geomSet.tireGeom, materials.tire);
   tireMesh.castShadow = true;
   tireMesh.receiveShadow = true;
-  spinMesh.add(tireMesh);
+  wheelFaceHolder.add(tireMesh);
 
-  const rimGeom = new THREE.CylinderGeometry(radius * 0.62, radius * 0.62, width + 0.015, 20);
-  rimGeom.rotateZ(Math.PI / 2);
-  const rimMesh = new THREE.Mesh(rimGeom, rimMaterial);
+  const rimMesh = new THREE.Mesh(geomSet.rimGeom, materials.rim);
   rimMesh.castShadow = true;
-  spinMesh.add(rimMesh);
+  wheelFaceHolder.add(rimMesh);
 
-  // Subtle spoke bar across the chrome rim so wheel rotation is visibly crisp
-  const spokeGeom = new THREE.BoxGeometry(width + 0.028, radius * 0.96, radius * 0.18);
-  const spokeA = new THREE.Mesh(spokeGeom, rimMaterial);
-  const spokeB = new THREE.Mesh(spokeGeom, rimMaterial);
-  spokeB.rotation.x = Math.PI / 2;
-  spinMesh.add(spokeA);
-  spinMesh.add(spokeB);
+  const spokeMesh = new THREE.Mesh(geomSet.spokeGeom, materials.rim);
+  spokeMesh.castShadow = true;
+  wheelFaceHolder.add(spokeMesh);
 
-  const hubGeom = new THREE.CylinderGeometry(radius * 0.22, radius * 0.22, width + 0.036, 14);
-  hubGeom.rotateZ(Math.PI / 2);
-  const hubMesh = new THREE.Mesh(hubGeom, hubMaterial);
-  spinMesh.add(hubMesh);
+  const hubMesh = new THREE.Mesh(geomSet.hubGeom, materials.hub);
+  wheelFaceHolder.add(hubMesh);
 
-  steerPivot.add(spinMesh);
+  const discMesh = new THREE.Mesh(geomSet.discGeom, materials.disc);
+  wheelFaceHolder.add(discMesh);
+
   return { steerPivot, spinMesh };
 }
 
-export function buildCarMesh(
-  maxAnisotropy = 8,
-  initialPreset: VisualPresetName = CONFIG.visual.activePreset,
-): CarVisual {
+export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   const cfg = CONFIG.car;
-  const activePreset = VISUAL_PRESETS[initialPreset];
-  const root = new THREE.Group();
-  root.name = 'PlayerCar';
+  const visualCfg = cfg.visual;
+  const designId: CarDesignId = options.designId ?? visualCfg.designId;
+  const initialPresetName: VisualPresetName = options.presetName ?? CONFIG.visual.activePreset;
+  const maxAnisotropy = options.maxAnisotropy ?? 8;
 
-  // Sprung body group (rolls and pitches independently of wheels touching the deck)
+  const activePreset = VISUAL_PRESETS[initialPresetName];
+  const designDefaults = visualCfg.designs[designId];
+  const hasCustomPalette = Boolean(options.colors?.body || options.colors?.accent || options.colors?.stripe);
+
+  const resolveColors = (presetName: VisualPresetName): { body: string; accent: string; stripe: string } => {
+    const presetCar = VISUAL_PRESETS[presetName].car;
+    if (hasCustomPalette) {
+      return {
+        body: options.colors?.body ?? designDefaults.body,
+        accent: options.colors?.accent ?? designDefaults.accent,
+        stripe: options.colors?.stripe ?? designDefaults.stripe,
+      };
+    }
+    if (designId === 'gt') {
+      return {
+        body: presetCar.bodyColor,
+        accent: presetCar.accentColor,
+        stripe: presetCar.stripeColor,
+      };
+    }
+    return {
+      body: designDefaults.body,
+      accent: designDefaults.accent,
+      stripe: designDefaults.stripe,
+    };
+  };
+
+  const initialColors = resolveColors(initialPresetName);
+
+  const bundle = getCachedCarGeometryBundle(designId, {
+    spokeCount: visualCfg.wheelDetail.spokeCount,
+    tireThicknessRatio: visualCfg.wheelDetail.tireThicknessRatio,
+  });
+  const design = bundle.design;
+
+  const root = new THREE.Group();
+  root.name = `PlayerCar_${designId}`;
+
   const sprungBody = new THREE.Group();
   root.add(sprungBody);
 
-  let bodyTexture = createBodyPaintTexture(maxAnisotropy, activePreset);
+  // Materials (owned by this car instance and disposed cleanly on dispose())
+  const ownedMaterials: THREE.Material[] = [];
+  let bodyTexture = createBodyPaintTexture(
+    maxAnisotropy,
+    initialColors.body,
+    initialColors.stripe,
+    initialColors.accent,
+  );
+
   const bodyMaterial = new THREE.MeshPhysicalMaterial({
     map: bodyTexture,
-    clearcoat: cfg.bodyClearcoat,
-    clearcoatRoughness: cfg.bodyClearcoatRoughness,
-    roughness: cfg.bodyRoughness,
-    metalness: cfg.bodyMetalness,
+    clearcoat: visualCfg.clearcoat,
+    clearcoatRoughness: visualCfg.clearcoatRoughness,
+    roughness: visualCfg.roughness,
+    metalness: visualCfg.metalness,
+    envMapIntensity: visualCfg.envMapIntensity,
   });
+  ownedMaterials.push(bodyMaterial);
 
-  const stripeMaterial = new THREE.MeshPhysicalMaterial({
-    color: activePreset.car.stripeColor,
-    clearcoat: cfg.bodyClearcoat,
-    clearcoatRoughness: cfg.bodyClearcoatRoughness,
-    roughness: cfg.bodyRoughness,
-    metalness: 0.08,
+  const paintSolidMaterial = new THREE.MeshPhysicalMaterial({
+    color: initialColors.body,
+    clearcoat: visualCfg.clearcoat,
+    clearcoatRoughness: visualCfg.clearcoatRoughness,
+    roughness: visualCfg.roughness,
+    metalness: visualCfg.metalness,
+    envMapIntensity: visualCfg.envMapIntensity,
   });
+  ownedMaterials.push(paintSolidMaterial);
 
   const accentMaterial = new THREE.MeshPhysicalMaterial({
-    color: activePreset.car.accentColor,
-    clearcoat: cfg.bodyClearcoat,
-    clearcoatRoughness: 0.1,
-    roughness: 0.2,
-    metalness: 0.1,
+    color: initialColors.accent,
+    clearcoat: visualCfg.clearcoat,
+    clearcoatRoughness: 0.08,
+    roughness: 0.22,
+    metalness: 0.14,
+    envMapIntensity: visualCfg.envMapIntensity,
   });
+  ownedMaterials.push(accentMaterial);
 
-  const cabinMaterial = new THREE.MeshPhysicalMaterial({
+  const glassMaterial = new THREE.MeshPhysicalMaterial({
     color: activePreset.car.cabinColorHex,
     clearcoat: 1.0,
-    clearcoatRoughness: 0.05,
-    roughness: 0.08,
-    metalness: 0.15,
+    clearcoatRoughness: 0.04,
+    roughness: 0.06,
+    metalness: 0.2,
+    envMapIntensity: 1.35,
   });
+  ownedMaterials.push(glassMaterial);
 
   const trimMaterial = new THREE.MeshStandardMaterial({
     color: activePreset.car.bumperColorHex,
-    roughness: 0.52,
-    metalness: 0.25,
+    roughness: 0.48,
+    metalness: 0.28,
+    envMapIntensity: 0.65,
   });
+  ownedMaterials.push(trimMaterial);
+
+  const wellMaterial = new THREE.MeshStandardMaterial({
+    color: 0x0b0e14,
+    roughness: 0.94,
+    metalness: 0.02,
+    envMapIntensity: 0.15,
+  });
+  ownedMaterials.push(wellMaterial);
 
   const headlightMaterial = new THREE.MeshStandardMaterial({
     color: cfg.headlightColorHex,
     emissive: cfg.headlightColorHex,
     emissiveIntensity: cfg.headlightEmissiveIntensity,
-    roughness: 0.15,
+    roughness: 0.14,
   });
+  ownedMaterials.push(headlightMaterial);
 
   const taillightMaterial = new THREE.MeshStandardMaterial({
     color: cfg.taillightColorHex,
     emissive: cfg.taillightColorHex,
     emissiveIntensity: cfg.taillightEmissiveIntensity,
-    roughness: 0.2,
+    roughness: 0.18,
   });
+  ownedMaterials.push(taillightMaterial);
+
+  const underglowMaterial = new THREE.MeshStandardMaterial({
+    color: activePreset.car.exhaustGlowColorHex,
+    emissive: activePreset.car.exhaustGlowColorHex,
+    emissiveIntensity: 1.15,
+    roughness: 0.2,
+    transparent: true,
+    opacity: 0.72,
+  });
+  ownedMaterials.push(underglowMaterial);
 
   const exhaustGlowMaterial = new THREE.MeshBasicMaterial({
     color: activePreset.car.exhaustGlowColorHex,
     transparent: true,
-    opacity: 0.25,
+    opacity: 0.24,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
+  ownedMaterials.push(exhaustGlowMaterial);
 
   const exhaustCoreMaterial = new THREE.MeshStandardMaterial({
     color: activePreset.car.exhaustGlowColorHex,
@@ -159,198 +325,160 @@ export function buildCarMesh(
     emissiveIntensity: cfg.exhaustEmissiveIntensity,
     roughness: 0.2,
   });
+  ownedMaterials.push(exhaustCoreMaterial);
 
   const tireMaterial = new THREE.MeshStandardMaterial({
     color: activePreset.car.tireColorHex,
-    roughness: 0.84,
-    metalness: 0.05,
+    roughness: 0.86,
+    metalness: 0.04,
+    envMapIntensity: 0.22,
   });
+  ownedMaterials.push(tireMaterial);
 
   const rimMaterial = new THREE.MeshPhysicalMaterial({
     color: activePreset.car.rimColorHex,
     metalness: cfg.rimMetalness,
     roughness: cfg.rimRoughness,
-    clearcoat: 0.6,
+    clearcoat: 0.65,
     clearcoatRoughness: 0.08,
+    envMapIntensity: 1.35,
   });
+  ownedMaterials.push(rimMaterial);
 
-  // 1. Main sculpted die-cast body shell (forward = -Z)
-  const bodyCenterY = cfg.bodyClearance + cfg.bodyHeight * 0.5;
-  const mainBodyGeom = new RoundedBoxGeometry(
-    cfg.bodyWidth,
-    cfg.bodyHeight,
-    cfg.bodyLength,
-    4,
-    cfg.bodyCornerRadius,
-  );
-  const mainBody = new THREE.Mesh(mainBodyGeom, bodyMaterial);
-  mainBody.position.set(0, bodyCenterY, 0);
-  mainBody.castShadow = true;
-  mainBody.receiveShadow = true;
-  sprungBody.add(mainBody);
+  const discMaterial = new THREE.MeshStandardMaterial({
+    color: 0x9aa4b2,
+    metalness: 0.86,
+    roughness: 0.34,
+    envMapIntensity: 0.9,
+  });
+  ownedMaterials.push(discMaterial);
 
-  // 2. Dark glass cabin canopy
-  const cabinGeom = new RoundedBoxGeometry(
-    cfg.cabinWidth,
-    cfg.cabinHeight,
-    cfg.cabinLength,
-    4,
-    0.14,
-  );
-  const cabin = new THREE.Mesh(cabinGeom, cabinMaterial);
-  cabin.position.set(
-    0,
-    cfg.bodyClearance + cfg.bodyHeight + cfg.cabinHeight * 0.36,
-    cfg.cabinOffsetZ,
-  );
-  cabin.castShadow = true;
-  cabin.receiveShadow = true;
-  sprungBody.add(cabin);
+  const caliperMaterial = new THREE.MeshStandardMaterial({
+    color: initialColors.accent,
+    roughness: 0.32,
+    metalness: 0.25,
+    envMapIntensity: 0.85,
+  });
+  ownedMaterials.push(caliperMaterial);
 
-  // 3. Front and rear bumpers
-  const frontBumperGeom = new RoundedBoxGeometry(
-    cfg.bodyWidth * 0.96,
-    cfg.bumperThickness,
-    0.26,
-    3,
-    0.06,
-  );
-  const frontBumper = new THREE.Mesh(frontBumperGeom, trimMaterial);
-  frontBumper.position.set(0, cfg.bodyClearance + 0.1, -cfg.bodyLength * 0.5 - 0.03);
-  frontBumper.castShadow = true;
-  sprungBody.add(frontBumper);
+  // 1. Sculpted superellipse loft body + painted roof cap + arch flares
+  const bodyMesh = new THREE.Mesh(bundle.bodyGeom, bodyMaterial);
+  bodyMesh.castShadow = true;
+  bodyMesh.receiveShadow = true;
+  sprungBody.add(bodyMesh);
 
-  const rearBumper = new THREE.Mesh(frontBumperGeom, trimMaterial);
-  rearBumper.position.set(0, cfg.bodyClearance + 0.1, cfg.bodyLength * 0.5 + 0.03);
-  rearBumper.castShadow = true;
-  sprungBody.add(rearBumper);
+  const roofMesh = new THREE.Mesh(bundle.cabin.roofGeom, bodyMaterial);
+  roofMesh.castShadow = true;
+  roofMesh.receiveShadow = true;
+  sprungBody.add(roofMesh);
 
-  // 4. Two small emissive headlights & taillights
-  const lampGeom = new RoundedBoxGeometry(0.28, 0.12, 0.08, 2, 0.03);
-  for (const side of [-1, 1]) {
-    const headlight = new THREE.Mesh(lampGeom, headlightMaterial);
-    headlight.position.set(
-      side * (cfg.bodyWidth * 0.32),
-      bodyCenterY + 0.05,
-      -cfg.bodyLength * 0.5 - 0.01,
-    );
-    sprungBody.add(headlight);
+  const glassMesh = new THREE.Mesh(bundle.cabin.glassGeom, glassMaterial);
+  glassMesh.castShadow = true;
+  glassMesh.receiveShadow = true;
+  sprungBody.add(glassMesh);
 
-    const taillight = new THREE.Mesh(lampGeom, taillightMaterial);
-    taillight.position.set(
-      side * (cfg.bodyWidth * 0.32),
-      bodyCenterY + 0.06,
-      cfg.bodyLength * 0.5 + 0.01,
-    );
-    sprungBody.add(taillight);
-  }
+  const cabinTrimMesh = new THREE.Mesh(bundle.cabin.trimGeom, trimMaterial);
+  cabinTrimMesh.castShadow = true;
+  sprungBody.add(cabinTrimMesh);
 
-  // 4b. Twin rear exhaust pipes + emissive boost halo
-  const exhaustPipeGeom = new THREE.CylinderGeometry(
-    cfg.exhaustPipeRadius,
-    cfg.exhaustPipeRadius * 1.12,
-    cfg.exhaustPipeLength,
-    12,
-  );
-  exhaustPipeGeom.rotateX(Math.PI / 2);
-  const exhaustCoreGeom = new THREE.SphereGeometry(cfg.exhaustPipeRadius * 0.85, 10, 8);
-  const exhaustHaloGeom = new THREE.SphereGeometry(cfg.exhaustPipeRadius * 2.1, 12, 10);
-  const exhaustHalos: THREE.Mesh[] = [];
+  const archFlareMesh = new THREE.Mesh(bundle.arch.flareGeom, paintSolidMaterial);
+  archFlareMesh.castShadow = true;
+  archFlareMesh.receiveShadow = true;
+  sprungBody.add(archFlareMesh);
+
+  const wheelWellMesh = new THREE.Mesh(bundle.arch.wellGeom, wellMaterial);
+  sprungBody.add(wheelWellMesh);
+
+  // 2. Aerodynamic & lighting details
+  const headlightMesh = new THREE.Mesh(bundle.details.headlightGeom, headlightMaterial);
+  sprungBody.add(headlightMesh);
+
+  const taillightMesh = new THREE.Mesh(bundle.details.taillightGeom, taillightMaterial);
+  sprungBody.add(taillightMesh);
+
+  const grilleMesh = new THREE.Mesh(bundle.details.grilleGeom, trimMaterial);
+  sprungBody.add(grilleMesh);
+
+  const splitterMesh = new THREE.Mesh(bundle.details.splitterGeom, trimMaterial);
+  splitterMesh.castShadow = true;
+  sprungBody.add(splitterMesh);
+
+  const mirrorMesh = new THREE.Mesh(bundle.details.mirrorGeom, paintSolidMaterial);
+  mirrorMesh.castShadow = true;
+  sprungBody.add(mirrorMesh);
+
+  const diffuserMesh = new THREE.Mesh(bundle.details.diffuserGeom, trimMaterial);
+  diffuserMesh.castShadow = true;
+  sprungBody.add(diffuserMesh);
+
+  const spoilerBodyMesh = new THREE.Mesh(bundle.details.spoilerBodyGeom, paintSolidMaterial);
+  spoilerBodyMesh.castShadow = true;
+  spoilerBodyMesh.receiveShadow = true;
+  sprungBody.add(spoilerBodyMesh);
+
+  const spoilerAccentMesh = new THREE.Mesh(bundle.details.spoilerAccentGeom, accentMaterial);
+  spoilerAccentMesh.castShadow = true;
+  sprungBody.add(spoilerAccentMesh);
+
+  const underglowMesh = new THREE.Mesh(bundle.details.underglowGeom, underglowMaterial);
+  sprungBody.add(underglowMesh);
+
+  // 3. Twin rear exhaust pipes + animated boost jet cores & halos
   const exhaustCores: THREE.Mesh[] = [];
+  const exhaustHalos: THREE.Mesh[] = [];
+  const ex = design.exhausts;
 
   for (const side of [-1, 1]) {
-    const exX = side * (cfg.bodyWidth * 0.22);
-    const exY = cfg.bodyClearance + 0.09;
-    const exZ = cfg.bodyLength * 0.5 + 0.12;
-
-    const pipe = new THREE.Mesh(exhaustPipeGeom, rimMaterial);
-    pipe.position.set(exX, exY, exZ - 0.04);
+    const exX = side * ex.xOffset;
+    const pipe = new THREE.Mesh(bundle.details.exhaustPipeGeom, rimMaterial);
+    pipe.position.set(exX, ex.y, ex.z - ex.length * 0.22);
     pipe.castShadow = true;
     sprungBody.add(pipe);
 
-    const core = new THREE.Mesh(exhaustCoreGeom, exhaustCoreMaterial);
-    core.position.set(exX, exY, exZ + 0.03);
-    core.scale.set(0.7, 0.7, 1.1);
+    const core = new THREE.Mesh(bundle.details.exhaustCoreGeom, exhaustCoreMaterial);
+    core.position.set(exX, ex.y, ex.z + 0.045);
+    core.scale.set(0.65, 0.65, 1.0);
     sprungBody.add(core);
     exhaustCores.push(core);
 
-    const halo = new THREE.Mesh(exhaustHaloGeom, exhaustGlowMaterial);
-    halo.position.set(exX, exY, exZ + 0.09);
-    halo.scale.set(cfg.exhaustHaloBaseScale, cfg.exhaustHaloBaseScale, cfg.exhaustHaloBaseScale * 1.5);
+    const halo = new THREE.Mesh(bundle.details.exhaustHaloGeom, exhaustGlowMaterial);
+    halo.position.set(exX, ex.y, ex.z + 0.09);
+    halo.scale.set(
+      cfg.exhaustHaloBaseScale,
+      cfg.exhaustHaloBaseScale,
+      cfg.exhaustHaloBaseScale * 1.4,
+    );
     sprungBody.add(halo);
     exhaustHalos.push(halo);
   }
 
-  // 5. Rear stunt spoiler (pylons + wing + endplates)
-  const wingZ = cfg.bodyLength * 0.5 - 0.25;
-  const wingY = cfg.bodyClearance + cfg.bodyHeight + cfg.spoilerHeight;
+  // 4. Staggered 4-wheel assemblies with camber, brake rotors/calipers & spinning multi-spoke rims
+  const wheelMats = {
+    tire: tireMaterial,
+    rim: rimMaterial,
+    hub: accentMaterial,
+    disc: discMaterial,
+    caliper: caliperMaterial,
+  };
 
-  const pylonGeom = new THREE.BoxGeometry(0.08, cfg.spoilerHeight, 0.22);
-  for (const side of [-1, 1]) {
-    const pylon = new THREE.Mesh(pylonGeom, trimMaterial);
-    pylon.position.set(
-      side * (cfg.spoilerWidth * 0.28),
-      cfg.bodyClearance + cfg.bodyHeight + cfg.spoilerHeight * 0.45,
-      wingZ,
-    );
-    pylon.castShadow = true;
-    sprungBody.add(pylon);
-  }
+  const wSpec = design.wheels;
+  const frontCamber = wSpec.frontCamberRad || visualCfg.wheelDetail.camberRad;
+  const rearCamber = wSpec.rearCamberRad || visualCfg.wheelDetail.camberRad;
 
-  const wingGeom = new RoundedBoxGeometry(cfg.spoilerWidth, 0.09, cfg.spoilerChord, 2, 0.03);
-  const wing = new THREE.Mesh(wingGeom, stripeMaterial);
-  wing.position.set(0, wingY, wingZ);
-  wing.rotation.x = -0.14;
-  wing.castShadow = true;
-  sprungBody.add(wing);
-
-  const endplateGeom = new RoundedBoxGeometry(0.06, 0.2, cfg.spoilerChord + 0.06, 2, 0.02);
-  for (const side of [-1, 1]) {
-    const endplate = new THREE.Mesh(endplateGeom, accentMaterial);
-    endplate.position.set(side * (cfg.spoilerWidth * 0.5), wingY, wingZ);
-    endplate.castShadow = true;
-    sprungBody.add(endplate);
-  }
-
-  // 6. Four wheels (bottom of tire rests at y = 0)
-  const fl = createWheelAssembly(
-    tireMaterial,
-    rimMaterial,
-    accentMaterial,
-    cfg.wheelRadius,
-    cfg.wheelWidth,
-  );
-  fl.steerPivot.position.set(-cfg.wheelTrackHalfWidth, cfg.wheelRadius, -cfg.wheelBaseHalfLength);
+  const fl = createWheelInstance(bundle.wheels.front, wheelMats, -1, frontCamber);
+  fl.steerPivot.position.set(-wSpec.frontTrackHalfWidth, wSpec.frontRadius, wSpec.frontOffsetZ);
   root.add(fl.steerPivot);
 
-  const fr = createWheelAssembly(
-    tireMaterial,
-    rimMaterial,
-    accentMaterial,
-    cfg.wheelRadius,
-    cfg.wheelWidth,
-  );
-  fr.steerPivot.position.set(cfg.wheelTrackHalfWidth, cfg.wheelRadius, -cfg.wheelBaseHalfLength);
+  const fr = createWheelInstance(bundle.wheels.front, wheelMats, 1, frontCamber);
+  fr.steerPivot.position.set(wSpec.frontTrackHalfWidth, wSpec.frontRadius, wSpec.frontOffsetZ);
   root.add(fr.steerPivot);
 
-  const rl = createWheelAssembly(
-    tireMaterial,
-    rimMaterial,
-    accentMaterial,
-    cfg.wheelRadius,
-    cfg.wheelWidth,
-  );
-  rl.steerPivot.position.set(-cfg.wheelTrackHalfWidth, cfg.wheelRadius, cfg.wheelBaseHalfLength);
+  const rl = createWheelInstance(bundle.wheels.rear, wheelMats, -1, rearCamber);
+  rl.steerPivot.position.set(-wSpec.rearTrackHalfWidth, wSpec.rearRadius, wSpec.rearOffsetZ);
   root.add(rl.steerPivot);
 
-  const rr = createWheelAssembly(
-    tireMaterial,
-    rimMaterial,
-    accentMaterial,
-    cfg.wheelRadius,
-    cfg.wheelWidth,
-  );
-  rr.steerPivot.position.set(cfg.wheelTrackHalfWidth, cfg.wheelRadius, cfg.wheelBaseHalfLength);
+  const rr = createWheelInstance(bundle.wheels.rear, wheelMats, 1, rearCamber);
+  rr.steerPivot.position.set(wSpec.rearTrackHalfWidth, wSpec.rearRadius, wSpec.rearOffsetZ);
   root.add(rr.steerPivot);
 
   let currentRoll = 0;
@@ -409,39 +537,70 @@ export function buildCarMesh(
     exhaustCoreMaterial.emissiveIntensity = isBoosting
       ? cfg.exhaustEmissiveIntensity * (1.2 + 0.45 * boostFade)
       : 0.45;
+    underglowMaterial.emissiveIntensity = isBoosting ? 1.85 + 0.65 * boostFade : 0.85;
+    underglowMaterial.opacity = isBoosting ? 0.92 : 0.58;
+
     taillightMaterial.emissiveIntensity =
       state.mode === 'grounded' && state.longAccel < -8
-        ? cfg.taillightEmissiveIntensity * 1.55
+        ? cfg.taillightEmissiveIntensity * 1.75
         : cfg.taillightEmissiveIntensity;
 
     for (let i = 0; i < exhaustHalos.length; i++) {
-      exhaustHalos[i].scale.set(targetHaloScale, targetHaloScale, targetHaloScale * (isBoosting ? 2.6 : 1.3));
+      exhaustHalos[i].scale.set(
+        targetHaloScale,
+        targetHaloScale,
+        targetHaloScale * (isBoosting ? 2.6 : 1.3),
+      );
       exhaustCores[i].scale.set(coreScale, coreScale, isBoosting ? 2.1 : 1.0);
     }
   }
 
   function applyPalette(name: VisualPresetName): void {
     const p = VISUAL_PRESETS[name].car;
+    const resolved = resolveColors(name);
+
     const prevBodyTex = bodyTexture;
-    bodyTexture = createBodyPaintTexture(maxAnisotropy, VISUAL_PRESETS[name]);
+    bodyTexture = createBodyPaintTexture(
+      maxAnisotropy,
+      resolved.body,
+      resolved.stripe,
+      resolved.accent,
+    );
     bodyMaterial.map = bodyTexture;
     bodyMaterial.needsUpdate = true;
     prevBodyTex.dispose();
 
-    stripeMaterial.color.set(p.stripeColor);
-    accentMaterial.color.set(p.accentColor);
-    cabinMaterial.color.setHex(p.cabinColorHex);
+    paintSolidMaterial.color.set(resolved.body);
+    accentMaterial.color.set(resolved.accent);
+    caliperMaterial.color.set(resolved.accent);
+
+    glassMaterial.color.setHex(p.cabinColorHex);
     trimMaterial.color.setHex(p.bumperColorHex);
     tireMaterial.color.setHex(p.tireColorHex);
     rimMaterial.color.setHex(p.rimColorHex);
+    underglowMaterial.color.setHex(p.exhaustGlowColorHex);
+    underglowMaterial.emissive.setHex(p.exhaustGlowColorHex);
     exhaustGlowMaterial.color.setHex(p.exhaustGlowColorHex);
     exhaustCoreMaterial.color.setHex(p.exhaustGlowColorHex);
     exhaustCoreMaterial.emissive.setHex(p.exhaustGlowColorHex);
+  }
+
+  function getDesignId(): CarDesignId {
+    return designId;
+  }
+
+  function dispose(): void {
+    bodyTexture.dispose();
+    for (const mat of ownedMaterials) {
+      mat.dispose();
+    }
   }
 
   return {
     group: root,
     update,
     applyPalette,
+    getDesignId,
+    dispose,
   };
 }

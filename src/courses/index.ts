@@ -1,5 +1,6 @@
 // src/courses/index.ts
 
+import { fantasyLandCourse } from './fantasyLand';
 import { skyCircuitCourse } from './skyCircuit';
 import type { CourseDefinition } from './types';
 
@@ -12,7 +13,7 @@ export type {
 
 export const defaultCourseId = skyCircuitCourse.id;
 
-const COURSES: readonly CourseDefinition[] = [skyCircuitCourse];
+const COURSES: readonly CourseDefinition[] = [skyCircuitCourse, fantasyLandCourse];
 
 const COURSE_BY_ID = new Map<string, CourseDefinition>(
   COURSES.map((course) => [course.id, course]),

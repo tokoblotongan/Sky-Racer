@@ -106,11 +106,18 @@ const LOCKED_FINISH_INPUT: CarInput = {
   confirmPressed: false,
 };
 
-export function createCarState(): CarState {
+export interface CreateCarStateOptions {
+  s?: number;
+  lateral?: number;
+}
+
+export function createCarState(options?: CreateCarStateOptions): CarState {
+  const startS = options?.s ?? CONFIG.car.startS;
+  const startLat = options?.lateral ?? CONFIG.car.startLateral;
   return {
     mode: 'grounded',
-    s: CONFIG.car.startS,
-    lateral: CONFIG.car.startLateral,
+    s: startS,
+    lateral: startLat,
     vForward: 0,
     vLateral: 0,
     yaw: 0,
@@ -130,8 +137,8 @@ export function createCarState(): CarState {
     worldQuat: new THREE.Quaternion(),
     airtime: 0,
     fallTimer: 0,
-    sApprox: CONFIG.car.startS,
-    lastSafeS: CONFIG.car.startS,
+    sApprox: startS,
+    lastSafeS: startS,
     lastGapEndS: 0,
     landingAlignTimer: 0,
     landingStartQuat: new THREE.Quaternion(),
@@ -559,22 +566,24 @@ function stepGroundedCar(
       ? Math.atan2(Math.abs(state.vLateral), Math.max(0.5, Math.abs(state.vForward)))
       : 0;
 
-  // 7. Clamp s to [0, endClampS] with smooth stop past finish
+  // 7. Clamp s to [0, endClampS] with smooth stop past finish (open courses only)
   const totalLength = course.getLength();
-  const endClampS = Math.max(totalLength, course.getFinishS() + 0.5);
-  if (state.s <= 0) {
-    state.s = 0;
-    if (state.vForward < 0) {
-      state.vForward = 0;
-      state.vLateral = 0;
-    }
-  } else if (state.s >= endClampS) {
-    state.s = endClampS;
-    const stopDecay = Math.exp(-cfg.endStopDamping * dt);
-    state.vForward *= stopDecay;
-    state.vLateral *= stopDecay;
-    if (Math.abs(state.vForward) < 0.08) {
-      state.vForward = 0;
+  if (!course.isClosed()) {
+    const endClampS = Math.max(totalLength, course.getFinishS() + 0.5);
+    if (state.s <= 0) {
+      state.s = 0;
+      if (state.vForward < 0) {
+        state.vForward = 0;
+        state.vLateral = 0;
+      }
+    } else if (state.s >= endClampS) {
+      state.s = endClampS;
+      const stopDecay = Math.exp(-cfg.endStopDamping * dt);
+      state.vForward *= stopDecay;
+      state.vLateral *= stopDecay;
+      if (Math.abs(state.vForward) < 0.08) {
+        state.vForward = 0;
+      }
     }
   }
 
@@ -593,12 +602,15 @@ function stepGroundedCar(
       (state.vLateral - prevVLateral) / dt + state.vForward * (yawRate + trackTurnRate);
   }
 
-  // 10. Boost pad detection (only while grounded and during RACING)
+  // 10. Boost pad detection (only while grounded and during RACING; wrapped on closed circuits)
   if (phase === 'RACING' && state.boostCooldown <= 0 && !course.isGapAt(state.s)) {
     const boostPads = course.getBoostPads();
+    const checkS = course.isClosed() ? course.wrapDistance(state.s) : state.s;
     for (const pad of boostPads) {
+      const rawDiff = Math.abs(checkS - pad.s);
+      const longDist = course.isClosed() ? Math.min(rawDiff, totalLength - rawDiff) : rawDiff;
       if (
-        Math.abs(state.s - pad.s) <= pad.length * 0.5 &&
+        longDist <= pad.length * 0.5 &&
         Math.abs(state.lateral - pad.lateral) < pad.width * 0.5
       ) {
         triggerBoost(state);

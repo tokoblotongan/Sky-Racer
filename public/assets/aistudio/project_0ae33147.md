@@ -87,3 +87,11 @@ src/
 - [ ] 10. Lintasan penuh + hasil + best time
 - [ ] 11. Deploy GitHub + Vercel
 - [ ] 12. Leaderboard Supabase (opsional)
+
+## ARENA: FantasyLand (pilihan arena baru, 4 pemain: 1 manusia + 3 AI)
+- Sirkuit tertutup, 3 lap, lebar lintasan 16 m (4 jalur), data di src/courses/fantasyLand.ts.
+- Tema dunia fantasi orisinal (tanpa meniru taman hiburan, karakter, atau merek yang ada). Warna tajam dan cerah.
+- Fisika multi-mobil: senggolan, tabrakan, terguling (tahap F4).
+- Sky Circuit tetap tersedia sebagai arena satu arah.
+Pelacak: [ ] F1A  [ ] F1B  [ ] F2  [ ] F3  [ ] F4  [ ] F5  [ ] F6  [ ] F7
+

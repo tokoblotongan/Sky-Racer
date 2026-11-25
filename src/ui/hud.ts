@@ -17,6 +17,10 @@ export interface HudViewModel {
   boost01: number;
   progress01: number;
   timeSeconds: number;
+  lap: number;
+  totalLaps: number;
+  lapTimeSeconds: number;
+  bestLapSeconds: number | null;
   cpPassed: number;
   cpTotal: number;
   bestTime: number | null;
@@ -29,6 +33,13 @@ export interface CheckpointSplitNotice {
   total: number;
   time: number;
   delta: number | null;
+}
+
+export interface LapPopupNotice {
+  lap: number;
+  totalLaps: number;
+  lapTime: number;
+  isBestLap: boolean;
 }
 
 export interface TitleScreenData {
@@ -67,10 +78,14 @@ export interface HudHandle {
   boostStateEl: HTMLElement;
   boostFillEl: HTMLElement;
   timerValueEl: HTMLElement;
+  timerLapEl: HTMLElement;
   timerBestEl: HTMLElement;
+  timerBestLapEl: HTMLElement;
+  lapSlotEl: HTMLElement;
   cpSlotEl: HTMLElement;
   splitSlotEl: HTMLElement;
   airtimeSlotEl: HTMLElement;
+  lapPopupSlotEl: HTMLElement;
   titleScreenEl: HTMLElement;
   titleCourseNameEl: HTMLElement;
   titleBestPillEl: HTMLElement;
@@ -92,6 +107,8 @@ export interface HudHandle {
   finishTimeEl: HTMLElement;
   finishDeltaEl: HTMLElement;
   finishStatsGridEl: HTMLElement;
+  finishLapsBoxEl: HTMLElement;
+  finishLapsEl: HTMLElement;
   finishSplitsEl: HTMLElement;
   finishTopListEl: HTMLElement;
   finishRetryBtnEl: HTMLButtonElement;
@@ -100,6 +117,7 @@ export interface HudHandle {
   audioBtnEl: HTMLButtonElement;
   airtimeTimerId: number | null;
   splitTimerId: number | null;
+  lapPopupTimerId: number | null;
   countdownHideTimerId: number | null;
   copyResetTimerId: number | null;
   clearHoldRafId: number;
@@ -115,7 +133,11 @@ export interface HudHandle {
   lastProgressQuantized: number;
   lastCpPassed: number;
   lastTimeText: string;
+  lastTimerLapText: string;
   lastBestText: string;
+  lastBestLapText: string;
+  lastLapText: string;
+  lastShowLap: boolean | null;
   lastCpText: string;
   lastMuted: boolean | null;
   lastTouchActive: boolean | null;
@@ -205,12 +227,17 @@ export function createHud(
 
   root.innerHTML = `
     <div class="sr-hud-top sr-hud-hidden">
+      <div class="sr-hud-panel sr-lap-slot sr-hud-hidden" data-slot="lap">LAP 1 / 1</div>
       <div class="sr-hud-panel sr-timer-card">
         <div class="sr-timer-main">
           <span class="sr-timer-label">Time</span>
           <span class="sr-timer-value">00:00.00</span>
         </div>
-        <div class="sr-timer-best sr-hud-hidden">BEST 00:00.00</div>
+        <div class="sr-timer-sub">
+          <span class="sr-timer-lap sr-hud-hidden">LAP 00:00.00</span>
+          <span class="sr-timer-best sr-hud-hidden">BEST 00:00.00</span>
+          <span class="sr-timer-best-lap sr-hud-hidden">BL 00:00.00</span>
+        </div>
       </div>
       <div class="sr-hud-panel sr-checkpoint-slot" data-slot="checkpoint">CP 0 / 0</div>
     </div>
@@ -235,6 +262,7 @@ export function createHud(
 
     <div class="sr-hud-panel sr-split-slot sr-hud-hidden" data-slot="split"></div>
     <div class="sr-hud-panel sr-airtime-slot sr-hud-hidden" data-slot="airtime"></div>
+    <div class="sr-hud-panel sr-lap-popup sr-hud-hidden" data-slot="lap-popup"></div>
 
     <div class="${hintClass}">
       <span class="sr-hint-item"><span class="sr-key">W A S D</span> / <span class="sr-key">Panah</span> Kemudi</span>
@@ -390,6 +418,10 @@ export function createHud(
         </div>
 
         <div class="sr-finish-col sr-finish-col-right">
+          <div class="sr-finish-panel-box sr-finish-laps-box sr-hud-hidden">
+            <div class="sr-box-heading">Waktu Per Lap</div>
+            <div class="sr-finish-laps"></div>
+          </div>
           <div class="sr-finish-panel-box">
             <div class="sr-box-heading">Catatan Split Checkpoint</div>
             <div class="sr-finish-splits"></div>
@@ -543,10 +575,14 @@ export function createHud(
     boostStateEl: root.querySelector('.sr-boost-state') as HTMLElement,
     boostFillEl: root.querySelector('.sr-boost-fill') as HTMLElement,
     timerValueEl: root.querySelector('.sr-timer-value') as HTMLElement,
+    timerLapEl: root.querySelector('.sr-timer-lap') as HTMLElement,
     timerBestEl: root.querySelector('.sr-timer-best') as HTMLElement,
+    timerBestLapEl: root.querySelector('.sr-timer-best-lap') as HTMLElement,
+    lapSlotEl: root.querySelector('[data-slot="lap"]') as HTMLElement,
     cpSlotEl: root.querySelector('[data-slot="checkpoint"]') as HTMLElement,
     splitSlotEl: root.querySelector('[data-slot="split"]') as HTMLElement,
     airtimeSlotEl: root.querySelector('[data-slot="airtime"]') as HTMLElement,
+    lapPopupSlotEl: root.querySelector('[data-slot="lap-popup"]') as HTMLElement,
     titleScreenEl: root.querySelector('.sr-title-screen') as HTMLElement,
     titleCourseNameEl: root.querySelector('.sr-title-course-name') as HTMLElement,
     titleBestPillEl: root.querySelector('.sr-title-best-pill') as HTMLElement,
@@ -568,6 +604,8 @@ export function createHud(
     finishTimeEl: root.querySelector('.sr-finish-final-time') as HTMLElement,
     finishDeltaEl: root.querySelector('.sr-finish-delta') as HTMLElement,
     finishStatsGridEl: root.querySelector('.sr-finish-stats-grid') as HTMLElement,
+    finishLapsBoxEl: root.querySelector('.sr-finish-laps-box') as HTMLElement,
+    finishLapsEl: root.querySelector('.sr-finish-laps') as HTMLElement,
     finishSplitsEl: root.querySelector('.sr-finish-splits') as HTMLElement,
     finishTopListEl: root.querySelector('.sr-finish-top-list') as HTMLElement,
     finishRetryBtnEl,
@@ -576,6 +614,7 @@ export function createHud(
     audioBtnEl: root.querySelector('.sr-audio-btn') as HTMLButtonElement,
     airtimeTimerId: null,
     splitTimerId: null,
+    lapPopupTimerId: null,
     countdownHideTimerId: null,
     copyResetTimerId: null,
     clearHoldRafId: 0,
@@ -605,7 +644,11 @@ export function createHud(
     lastProgressQuantized: 0,
     lastCpPassed: 0,
     lastTimeText: '00:00.00',
+    lastTimerLapText: '',
     lastBestText: '',
+    lastBestLapText: '',
+    lastLapText: '',
+    lastShowLap: null,
     lastCpText: 'CP 0 / 0',
     lastMuted: null,
     lastTouchActive: null,
@@ -778,6 +821,51 @@ export function hideSplitPopup(hud: HudHandle): void {
   hud.splitSlotEl.classList.remove('sr-split-active');
 }
 
+export function showLapPopup(hud: HudHandle, notice: LapPopupNotice): void {
+  if (hud.lapPopupTimerId !== null) {
+    window.clearTimeout(hud.lapPopupTimerId);
+    hud.lapPopupTimerId = null;
+  }
+
+  hud.lapPopupSlotEl.textContent = '';
+
+  const labelEl = document.createElement('span');
+  labelEl.className = 'sr-lap-popup-label';
+  labelEl.textContent = `LAP ${notice.lap} / ${notice.totalLaps}`;
+  hud.lapPopupSlotEl.appendChild(labelEl);
+
+  const timeEl = document.createElement('span');
+  timeEl.className = 'sr-lap-popup-time';
+  timeEl.textContent = formatRaceTime(notice.lapTime);
+  hud.lapPopupSlotEl.appendChild(timeEl);
+
+  if (notice.isBestLap) {
+    const tagEl = document.createElement('span');
+    tagEl.className = 'sr-lap-popup-best';
+    tagEl.textContent = 'TERCEPAT!';
+    hud.lapPopupSlotEl.appendChild(tagEl);
+  }
+
+  hud.lapPopupSlotEl.classList.remove('sr-hud-hidden', 'sr-lap-popup-active');
+  void hud.lapPopupSlotEl.offsetWidth;
+  hud.lapPopupSlotEl.classList.add('sr-lap-popup-active');
+
+  hud.lapPopupTimerId = window.setTimeout(() => {
+    hud.lapPopupSlotEl.classList.add('sr-hud-hidden');
+    hud.lapPopupSlotEl.classList.remove('sr-lap-popup-active');
+    hud.lapPopupTimerId = null;
+  }, CONFIG.hud.splitPopupDurationMs + 300);
+}
+
+export function hideLapPopup(hud: HudHandle): void {
+  if (hud.lapPopupTimerId !== null) {
+    window.clearTimeout(hud.lapPopupTimerId);
+    hud.lapPopupTimerId = null;
+  }
+  hud.lapPopupSlotEl.classList.add('sr-hud-hidden');
+  hud.lapPopupSlotEl.classList.remove('sr-lap-popup-active');
+}
+
 export function showCountdownOverlay(hud: HudHandle, label: string, isGo: boolean): void {
   if (hud.countdownHideTimerId !== null) {
     window.clearTimeout(hud.countdownHideTimerId);
@@ -858,7 +946,46 @@ export function showFinishScreen(hud: HudHandle, data: FinishScreenData): void {
     hud.finishStatsGridEl.appendChild(tile);
   }
 
+  // Per-lap breakdown (shown for multi-lap courses)
+  const hasMultipleLaps = finish.lapTimes.length > 1;
+  hud.finishLapsBoxEl.classList.toggle('sr-hud-hidden', !hasMultipleLaps);
+  hud.finishLapsEl.textContent = '';
+  if (hasMultipleLaps) {
+    const runMinLap = Math.min(...finish.lapTimes);
+    for (let i = 0; i < finish.lapTimes.length; i++) {
+      const lapVal = finish.lapTimes[i];
+      const isRunBest = Math.abs(lapVal - runMinLap) <= 1e-4;
+      const isRecordBest = finish.bestLap !== null && lapVal <= finish.bestLap + 1e-4;
+
+      const row = document.createElement('div');
+      row.className = isRunBest ? 'sr-finish-lap-row sr-finish-lap-row--best' : 'sr-finish-lap-row';
+
+      const labelEl = document.createElement('span');
+      labelEl.className = 'sr-finish-lap-label';
+      labelEl.textContent = `Lap ${i + 1}`;
+      row.appendChild(labelEl);
+
+      const valEl = document.createElement('span');
+      valEl.className = 'sr-finish-lap-val';
+      valEl.textContent = formatRaceTime(lapVal);
+      row.appendChild(valEl);
+
+      if (isRecordBest || isRunBest) {
+        const tagEl = document.createElement('span');
+        tagEl.className = 'sr-finish-split-best-tag';
+        tagEl.textContent = isRecordBest ? 'TERBAIK' : 'TERCEPAT';
+        row.appendChild(tagEl);
+      }
+
+      hud.finishLapsEl.appendChild(row);
+    }
+  }
+
   // Checkpoint splits table
+  const cpPerLap =
+    hasMultipleLaps && finish.splits.length % finish.lapTimes.length === 0
+      ? finish.splits.length / finish.lapTimes.length
+      : 0;
   hud.finishSplitsEl.textContent = '';
   for (let i = 0; i < finish.splits.length; i++) {
     const splitVal = finish.splits[i];
@@ -870,7 +997,13 @@ export function showFinishScreen(hud: HudHandle, data: FinishScreenData): void {
 
     const labelEl = document.createElement('span');
     labelEl.className = 'sr-finish-split-label';
-    labelEl.textContent = `CP ${i + 1}`;
+    if (cpPerLap > 0) {
+      const lapNum = Math.floor(i / cpPerLap) + 1;
+      const cpNum = (i % cpPerLap) + 1;
+      labelEl.textContent = `L${lapNum}·CP${cpNum}`;
+    } else {
+      labelEl.textContent = `CP ${i + 1}`;
+    }
     row.appendChild(labelEl);
 
     const valEl = document.createElement('span');
@@ -986,6 +1119,27 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     hud.boostStateEl.textContent = boostActive ? 'BOOST!' : 'Siap';
   }
 
+  const showLap = viewModel.totalLaps > 1;
+  if (showLap !== hud.lastShowLap) {
+    hud.lastShowLap = showLap;
+    hud.lapSlotEl.classList.toggle('sr-hud-hidden', !showLap);
+    hud.timerLapEl.classList.toggle('sr-hud-hidden', !showLap);
+  }
+
+  if (showLap) {
+    const lapText = `LAP ${viewModel.lap} / ${viewModel.totalLaps}`;
+    if (lapText !== hud.lastLapText) {
+      hud.lastLapText = lapText;
+      hud.lapSlotEl.textContent = lapText;
+    }
+
+    const timerLapText = `LAP ${formatRaceTime(viewModel.lapTimeSeconds)}`;
+    if (timerLapText !== hud.lastTimerLapText) {
+      hud.lastTimerLapText = timerLapText;
+      hud.timerLapEl.textContent = timerLapText;
+    }
+  }
+
   const timeText = formatRaceTime(viewModel.timeSeconds);
   if (timeText !== hud.lastTimeText) {
     hud.lastTimeText = timeText;
@@ -998,6 +1152,16 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     hud.lastBestText = bestText;
     hud.timerBestEl.textContent = bestText;
     hud.timerBestEl.classList.toggle('sr-hud-hidden', bestText === '');
+  }
+
+  const bestLapText =
+    showLap && viewModel.bestLapSeconds !== null
+      ? `BL ${formatRaceTime(viewModel.bestLapSeconds)}`
+      : '';
+  if (bestLapText !== hud.lastBestLapText) {
+    hud.lastBestLapText = bestLapText;
+    hud.timerBestLapEl.textContent = bestLapText;
+    hud.timerBestLapEl.classList.toggle('sr-hud-hidden', bestLapText === '');
   }
 
   const cpText = `CP ${viewModel.cpPassed} / ${viewModel.cpTotal}`;
@@ -1027,6 +1191,7 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
 export function disposeHud(hud: HudHandle): void {
   hideAirtimePopup(hud);
   hideSplitPopup(hud);
+  hideLapPopup(hud);
   hideCountdownOverlay(hud);
   hideFinishScreen(hud);
   hud.disposeEvents();

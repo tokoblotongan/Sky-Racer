@@ -1,68 +1,88 @@
 {
-  "courseId": "sky-circuit",
-  "courseName": "Sky Circuit",
-  "buildMs": 133.85,
+  "courseId": "fantasy-land",
+  "courseName": "FantasyLand",
+  "buildMs": 56.85,
   "recommendedMedals": {
-    "gold": 28.86,
-    "silver": 34.1,
-    "bronze": 41.97
+    "gold": 126.28,
+    "silver": 149.24,
+    "bronze": 183.68
   },
   "ok": true,
-  "lengthM": 1186.9,
-  "referenceTime": 26.233,
+  "closed": true,
+  "laps": 3,
+  "trackWidth": 16,
+  "lengthM": 1607.2,
+  "referenceTime": 114.8,
+  "referenceLapTime": 38.267,
+  "lapTimes": [
+    39.017,
+    37.9,
+    37.883
+  ],
+  "bestLap": 37.883,
+  "minNonAdjacentClearanceM": 49.69,
+  "closure": {
+    "converged": true,
+    "iterations": 2,
+    "posErrorM": 0.00001645239124987735,
+    "dx": -0.000004557251844619571,
+    "dy": -0.0000017497073621086656,
+    "dz": -0.000015711497624693038,
+    "dYawDeg": -0.000021803078541217564,
+    "dPitchDeg": 1.0958744500551487e-15,
+    "totalLengthM": 1607.1997768785418,
+    "adjustments": [
+      {
+        "segmentIndex": 9,
+        "type": "straight",
+        "field": "length",
+        "originalValue": 220,
+        "solvedValue": 208.8679
+      },
+      {
+        "segmentIndex": 10,
+        "type": "curve",
+        "field": "angleDeg",
+        "originalValue": 60,
+        "solvedValue": 60
+      },
+      {
+        "segmentIndex": 11,
+        "type": "slope",
+        "field": "pitchDeg",
+        "originalValue": -4,
+        "solvedValue": -3.4167
+      },
+      {
+        "segmentIndex": 13,
+        "type": "straight",
+        "field": "length",
+        "originalValue": 120,
+        "solvedValue": 87.1816
+      }
+    ],
+    "blendApplied": true,
+    "blendLengthM": 100
+  },
   "checkpointTimes": [
-    2.217,
-    5.05,
-    8.9,
-    11.517,
-    15.133,
-    18.283,
-    20.417,
-    22.667,
-    23.833
+    4.883,
+    14.933,
+    22.083,
+    30.683,
+    35,
+    42.783,
+    52.833,
+    59.983,
+    68.583,
+    72.9,
+    80.683,
+    90.733,
+    97.867,
+    106.467,
+    110.8
   ],
-  "loops": [
-    {
-      "segmentIndex": 6,
-      "startS": 232.81,
-      "endS": 311.35,
-      "radius": 12.5,
-      "entrySpeed": 51.8,
-      "topSpeed": 43.74,
-      "minApexSpeedRequired": 18.71,
-      "completed": true
-    },
-    {
-      "segmentIndex": 25,
-      "startS": 937.24,
-      "endS": 1003.21,
-      "radius": 10.5,
-      "entrySpeed": 51.8,
-      "topSpeed": 44.65,
-      "minApexSpeedRequired": 17.15,
-      "completed": true
-    }
-  ],
-  "jumps": [
-    {
-      "segmentIndex": 12,
-      "startS": 447.34,
-      "endS": 463.34,
-      "gapLength": 16,
-      "takeoffSpeed": 51.12,
-      "landed": true,
-      "airtime": 0.933
-    },
-    {
-      "segmentIndex": 28,
-      "startS": 1041.21,
-      "endS": 1059.21,
-      "gapLength": 18,
-      "takeoffSpeed": 56.31,
-      "landed": true,
-      "airtime": 1
-    }
-  ],
+  "loops": [],
+  "jumps": [],
   "railHits": 0,
   "stuckEvents": 0,
   "falls": 0,

@@ -31,7 +31,8 @@ import {
 } from './core/state';
 import { createKeyboardControls } from './input/controls';
 import { createTouchControls } from './input/touch';
-import { buildCarMesh } from './render/car';
+import { buildCarMesh, type CarVisual } from './render/car';
+import type { CarDesignId } from './render/carDesigns';
 import { ChaseCamera } from './render/chaseCamera';
 import { buildGates } from './render/gates';
 import { createParticles } from './render/particles';
@@ -52,11 +53,13 @@ import {
   hideAirtimePopup,
   hideCountdownOverlay,
   hideFinishScreen,
+  hideLapPopup,
   hideSplitPopup,
   setHudProgressCheckpoints,
   showAirtimePopup,
   showCountdownOverlay,
   showFinishScreen,
+  showLapPopup,
   showSplitPopup,
   updateHud,
   updateTitleScreen,
@@ -71,6 +74,7 @@ interface DebugOverlay {
     course: Course,
     qualityLevel: QualityLevel,
     presetName: VisualPresetName,
+    carDesignId: CarDesignId,
   ) => void;
   dispose: () => void;
 }
@@ -122,6 +126,7 @@ function createDebugOverlay(container: HTMLElement): DebugOverlay | null {
       course: Course,
       qualityLevel: QualityLevel,
       presetName: VisualPresetName,
+      carDesignId: CarDesignId,
     ): void {
       frameCount++;
       const elapsedSec = (nowMs - lastSampleMs) / 1000;
@@ -143,10 +148,11 @@ function createDebugOverlay(container: HTMLElement): DebugOverlay | null {
       const bankDeg = Math.round(THREE.MathUtils.radToDeg(tmpFrame.bank));
       const yawDeg = THREE.MathUtils.radToDeg(carState.yaw);
 
+      const lapInfo = raceState.laps > 1 ? ` | LAP: ${raceState.currentLap}/${raceState.laps}` : '';
       panel.textContent =
-        `FPS: ${displayedFps} | PRESET: ${presetName.toUpperCase()} | QUAL: ${qualityLevel.toUpperCase()} | PHASE: ${raceState.phase} | MODE: ${carState.mode.toUpperCase()} | SPD: ${speedKmh} km/h\n` +
+        `FPS: ${displayedFps} | DESIGN: ${carDesignId.toUpperCase()} | PRESET: ${presetName.toUpperCase()} | QUAL: ${qualityLevel.toUpperCase()} | PHASE: ${raceState.phase} | MODE: ${carState.mode.toUpperCase()} | SPD: ${speedKmh} km/h\n` +
         `POS: s=${carState.s.toFixed(1)}m sApprox=${carState.sApprox.toFixed(1)}m lat=${carState.lateral.toFixed(2)}m | yaw=${yawDeg.toFixed(1)}° vLat=${carState.vLateral.toFixed(2)}m/s steer=${carState.steer.toFixed(2)} rail=${carState.railContactTimer.toFixed(2)}s\n` +
-        `CP: next=${raceState.nextCheckpointIndex}/${raceState.totalCheckpoints} | BOOST: ${carState.boostTimeLeft.toFixed(2)}s | AIR: ${carState.airtime.toFixed(2)}s\n` +
+        `CP: next=${raceState.nextCheckpointIndex}/${raceState.totalCheckpoints}${lapInfo} | BOOST: ${carState.boostTimeLeft.toFixed(2)}s | AIR: ${carState.airtime.toFixed(2)}s\n` +
         `SEG: #${seg.index} ${seg.type} (${Math.round(seg.progress * 100)}%) | PITCH: ${pitchDeg}° BANK: ${bankDeg}°`;
     },
     dispose(): void {
@@ -196,6 +202,7 @@ function bootstrap(): void {
   let propsVisual: PropsVisual | null = null;
   let activePropsDensityScale = -1;
   let activePreset: VisualPresetName = CONFIG.visual.activePreset;
+  let activeCarDesign: CarDesignId = CONFIG.car.visual.designId;
 
   const sceneCtx = createSceneContext(container);
   const debugOverlay = createDebugOverlay(container);
@@ -255,11 +262,20 @@ function bootstrap(): void {
   }
   hud.audioBtnEl.addEventListener('click', handleAudioButtonClick);
 
+  const startGridSlot = course.getGridSlots(1)[0];
+  const isClosedCourse = course.isClosed();
   const finishS = course.getFinishS();
-  const progressSpanS = Math.max(1, finishS - CONFIG.car.startS);
+  const lapLength = Math.max(1, course.getLength());
+  const progressSpanS = isClosedCourse ? lapLength : Math.max(1, finishS - startGridSlot.s);
   const checkpointRatios = course
     .getCheckpoints()
-    .map((cp) => THREE.MathUtils.clamp((cp.s - CONFIG.car.startS) / progressSpanS, 0, 1));
+    .map((cp) =>
+      THREE.MathUtils.clamp(
+        (isClosedCourse ? cp.s : cp.s - startGridSlot.s) / progressSpanS,
+        0,
+        1,
+      ),
+    );
   setHudProgressCheckpoints(hud, checkpointRatios);
 
   const bounds = course.getBounds();
@@ -277,7 +293,11 @@ function bootstrap(): void {
   );
   sceneCtx.setOrbitTarget(bounds.center, orbitRadius, CONFIG.camera.orbitHeight);
 
-  const carVisual = buildCarMesh(sceneCtx.maxAnisotropy);
+  let carVisual: CarVisual = buildCarMesh({
+    designId: activeCarDesign,
+    maxAnisotropy: sceneCtx.maxAnisotropy,
+    presetName: activePreset,
+  });
   sceneCtx.scene.add(carVisual.group);
 
   const chaseCamera = new ChaseCamera(sceneCtx.camera);
@@ -344,17 +364,81 @@ function bootstrap(): void {
 
   syncHudPalette(activePreset);
 
+  const rootContainer: HTMLElement = container;
   const debugFlagActive = CONFIG.visual.debugKeys || CONFIG.debug.showFps;
-  function handleDebugPaletteKey(event: KeyboardEvent): void {
-    if (!debugFlagActive || event.code !== 'F5') {
+  let debugToastEl: HTMLDivElement | null = null;
+  let debugToastTimeout = 0;
+
+  function showDebugToast(text: string): void {
+    if (CONFIG.debug.showFps) {
       return;
     }
-    event.preventDefault();
-    const nextPreset: VisualPresetName = activePreset === 'vivid' ? 'pastel' : 'vivid';
-    applyPalette(nextPreset);
+    if (!debugToastEl) {
+      debugToastEl = document.createElement('div');
+      debugToastEl.style.position = 'fixed';
+      debugToastEl.style.top = '10px';
+      debugToastEl.style.left = '10px';
+      debugToastEl.style.padding = '5px 9px';
+      debugToastEl.style.borderRadius = '4px';
+      debugToastEl.style.background = 'rgba(15, 23, 42, 0.78)';
+      debugToastEl.style.color = '#FFD000';
+      debugToastEl.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+      debugToastEl.style.fontSize = '12px';
+      debugToastEl.style.fontWeight = '700';
+      debugToastEl.style.pointerEvents = 'none';
+      debugToastEl.style.userSelect = 'none';
+      debugToastEl.style.zIndex = '30';
+      rootContainer.appendChild(debugToastEl);
+    }
+    debugToastEl.textContent = text;
+    debugToastEl.style.display = 'block';
+    window.clearTimeout(debugToastTimeout);
+    debugToastTimeout = window.setTimeout(() => {
+      if (debugToastEl) {
+        debugToastEl.style.display = 'none';
+      }
+    }, 2400);
+  }
+
+  function swapCarDesign(nextDesign: CarDesignId): void {
+    if (nextDesign === activeCarDesign) {
+      return;
+    }
+    activeCarDesign = nextDesign;
+    const prevPos = carVisual.group.position.clone();
+    const prevQuat = carVisual.group.quaternion.clone();
+    sceneCtx.scene.remove(carVisual.group);
+    carVisual.dispose();
+
+    carVisual = buildCarMesh({
+      designId: activeCarDesign,
+      maxAnisotropy: sceneCtx.maxAnisotropy,
+      presetName: activePreset,
+    });
+    carVisual.group.position.copy(prevPos);
+    carVisual.group.quaternion.copy(prevQuat);
+    carVisual.update(currState, 0);
+    sceneCtx.scene.add(carVisual.group);
+    showDebugToast(`CAR: ${activeCarDesign.toUpperCase()} | PRESET: ${activePreset.toUpperCase()}`);
+  }
+
+  function handleDebugKey(event: KeyboardEvent): void {
+    if (!debugFlagActive) {
+      return;
+    }
+    if (event.code === 'F5') {
+      event.preventDefault();
+      const nextPreset: VisualPresetName = activePreset === 'vivid' ? 'pastel' : 'vivid';
+      applyPalette(nextPreset);
+      showDebugToast(`CAR: ${activeCarDesign.toUpperCase()} | PRESET: ${activePreset.toUpperCase()}`);
+    } else if (event.code === 'F6') {
+      event.preventDefault();
+      const nextDesign: CarDesignId = activeCarDesign === 'gt' ? 'wedge' : 'gt';
+      swapCarDesign(nextDesign);
+    }
   }
   if (debugFlagActive) {
-    window.addEventListener('keydown', handleDebugPaletteKey);
+    window.addEventListener('keydown', handleDebugKey);
   }
 
   function handleWindowResize(): void {
@@ -363,9 +447,12 @@ function bootstrap(): void {
   }
   window.addEventListener('resize', handleWindowResize);
 
-  let prevState = createCarState();
-  let currState = createCarState();
-  const renderState = createCarState();
+  const createStartCarState = (): CarState =>
+    createCarState({ s: startGridSlot.s, lateral: startGridSlot.lateral });
+
+  let prevState = createStartCarState();
+  let currState = createStartCarState();
+  const renderState = createStartCarState();
 
   const renderPose: CarPose = {
     position: new THREE.Vector3(),
@@ -390,6 +477,10 @@ function bootstrap(): void {
     boost01: 0,
     progress01: 0,
     timeSeconds: 0,
+    lap: raceState.currentLap,
+    totalLaps: raceState.laps,
+    lapTimeSeconds: 0,
+    bestLapSeconds: raceState.bestLap,
     cpPassed: 0,
     cpTotal: raceState.totalCheckpoints,
     bestTime: raceState.bestTime,
@@ -475,6 +566,9 @@ function bootstrap(): void {
         gates.setPassed(ev.index);
         gates.setActive(ev.index + 1);
         showSplitPopup(hud, ev);
+      } else if (ev.type === 'lap') {
+        gates.reset();
+        showLapPopup(hud, ev);
       } else if (ev.type === 'finish') {
         lastFinishData = ev;
         lastFinishRecords = getRecords(course.getId(), course.getMedals());
@@ -507,13 +601,14 @@ function bootstrap(): void {
       return;
     }
 
-    prevState = createCarState();
-    currState = createCarState();
+    prevState = createStartCarState();
+    currState = createStartCarState();
     gates.reset();
     particles.reset();
     postfx.setSpeedIntensity(0);
     hideAirtimePopup(hud);
     hideSplitPopup(hud);
+    hideLapPopup(hud);
     hideCountdownOverlay(hud);
 
     sound.reset();
@@ -534,13 +629,14 @@ function bootstrap(): void {
     lastFinishRecords = null;
     lastThrottle = 0;
 
-    prevState = createCarState();
-    currState = createCarState();
+    prevState = createStartCarState();
+    currState = createStartCarState();
     gates.reset();
     particles.reset();
     postfx.setSpeedIntensity(0);
     hideAirtimePopup(hud);
     hideSplitPopup(hud);
+    hideLapPopup(hud);
     hideCountdownOverlay(hud);
     hideFinishScreen(hud);
 
@@ -735,6 +831,13 @@ function bootstrap(): void {
 
     const activeProgressS =
       renderState.mode === 'grounded' ? renderState.s : renderState.sApprox;
+    const lapStartS = Math.max(0, raceState.currentLap - 1) * progressSpanS;
+    const progress01 = isClosedCourse
+      ? activeProgressS < lapStartS
+        ? 0
+        : THREE.MathUtils.clamp((activeProgressS - lapStartS) / progressSpanS, 0, 1)
+      : THREE.MathUtils.clamp((activeProgressS - startGridSlot.s) / progressSpanS, 0, 1);
+
     hudViewModel.phase = raceState.phase;
     hudViewModel.resultReady = raceState.resultReady;
     hudViewModel.speedKmh = speedMs * CONFIG.hud.speedScale;
@@ -742,13 +845,16 @@ function bootstrap(): void {
       CONFIG.boost.duration > 1e-4
         ? Math.min(1, Math.max(0, renderState.boostTimeLeft / CONFIG.boost.duration))
         : 0;
-    hudViewModel.progress01 = THREE.MathUtils.clamp(
-      (activeProgressS - CONFIG.car.startS) / progressSpanS,
-      0,
-      1,
-    );
+    hudViewModel.progress01 = progress01;
     hudViewModel.timeSeconds = raceState.timer;
-    hudViewModel.cpPassed = raceState.passedCheckpoints.length;
+    hudViewModel.lap = raceState.currentLap;
+    hudViewModel.totalLaps = raceState.laps;
+    hudViewModel.lapTimeSeconds =
+      raceState.phase === 'RACING' || raceState.phase === 'FINISH'
+        ? Math.max(0, raceState.timer - raceState.lapStartTime)
+        : 0;
+    hudViewModel.bestLapSeconds = raceState.bestLap;
+    hudViewModel.cpPassed = raceState.nextCheckpointIndex;
     hudViewModel.cpTotal = raceState.totalCheckpoints;
     hudViewModel.bestTime = raceState.bestTime;
     hudViewModel.muted = sound.getMuted();
@@ -810,6 +916,7 @@ function bootstrap(): void {
         course,
         qualityManager.getLevel(),
         activePreset,
+        activeCarDesign,
       );
     }
 
@@ -835,8 +942,12 @@ function bootstrap(): void {
     disposed = true;
     window.cancelAnimationFrame(frameHandle);
     window.clearTimeout(frameHandle);
+    window.clearTimeout(debugToastTimeout);
+    if (debugToastEl && debugToastEl.parentElement === container) {
+      container.removeChild(debugToastEl);
+    }
     if (debugFlagActive) {
-      window.removeEventListener('keydown', handleDebugPaletteKey);
+      window.removeEventListener('keydown', handleDebugKey);
     }
     window.removeEventListener('resize', handleWindowResize);
     document.removeEventListener('visibilitychange', syncPauseState);
@@ -851,6 +962,7 @@ function bootstrap(): void {
     particles.dispose();
     postfx.dispose();
     propsVisual?.dispose();
+    carVisual.dispose();
     sceneCtx.dispose();
   });
 }
