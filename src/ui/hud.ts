@@ -8,6 +8,7 @@ import {
   type CourseRecords,
   type MedalType,
 } from '../services/records';
+import { createToastQueue, type ToastQueue } from './toastQueue';
 import './hud.css';
 
 export interface HudViewModel {
@@ -72,6 +73,8 @@ export interface HudHandle {
   progressMarkersEl: HTMLElement;
   progressMarkerEls: HTMLElement[];
   bottomLeftEl: HTMLElement;
+  hintFullEl: HTMLElement;
+  hintBadgeEl: HTMLButtonElement;
   bottomRightEl: HTMLElement;
   speedValueEl: HTMLElement;
   arcFillEl: SVGCircleElement;
@@ -84,11 +87,8 @@ export interface HudHandle {
   timerBestLapEl: HTMLElement;
   lapSlotEl: HTMLElement;
   cpSlotEl: HTMLElement;
-  splitSlotEl: HTMLElement;
-  airtimeSlotEl: HTMLElement;
-  lapPopupSlotEl: HTMLElement;
-  zoneToastEl: HTMLElement;
-  wrongWayEl: HTMLElement;
+  toastLaneEl: HTMLElement;
+  toastQueue: ToastQueue;
   loadingOverlayEl: HTMLElement;
   titleScreenEl: HTMLElement;
   titleCourseSelectSlotEl: HTMLElement;
@@ -118,10 +118,6 @@ export interface HudHandle {
   finishMenuBtnEl: HTMLButtonElement;
   finishCopyBtnEl: HTMLButtonElement;
   audioBtnEl: HTMLButtonElement;
-  airtimeTimerId: number | null;
-  splitTimerId: number | null;
-  lapPopupTimerId: number | null;
-  zoneToastTimerId: number | null;
   countdownHideTimerId: number | null;
   copyResetTimerId: number | null;
   clearHoldRafId: number;
@@ -140,12 +136,17 @@ export interface HudHandle {
   lastTimerLapText: string;
   lastBestText: string;
   lastBestLapText: string;
+  lastBestLapSeconds: number | null;
   lastLapText: string;
   lastShowLap: boolean | null;
   lastCpText: string;
   lastWrongWay: boolean | null;
   lastMuted: boolean | null;
   lastTouchActive: boolean | null;
+  lastTimeSeconds: number;
+  lastToastTickMs: number;
+  hintManualExpanded: boolean | null;
+  lastHintCollapsed: boolean | null;
 }
 
 const CLEAR_HOLD_DURATION_MS = 1200;
@@ -217,6 +218,29 @@ function createMedalBadgeSvg(medal: MedalType): string {
   `;
 }
 
+function applyHudConfigCssVars(root: HTMLElement): void {
+  const cfg = CONFIG.hud;
+  root.style.setProperty('--sr-panel-opacity', String(cfg.panelOpacity));
+  root.style.setProperty('--sr-panel-border-opacity', String(cfg.panelBorderOpacity));
+  root.style.setProperty('--sr-toast-bg-opacity', String(cfg.toastBgOpacity));
+  root.style.setProperty('--sr-toast-border-opacity', String(cfg.toastBorderOpacity));
+  root.style.setProperty('--sr-toast-fade-in', `${cfg.toastFadeInMs}ms`);
+  root.style.setProperty('--sr-toast-fade-out', `${cfg.toastFadeOutMs}ms`);
+  root.style.setProperty('--sr-toast-top', `${cfg.toastTopVh}vh`);
+  root.style.setProperty('--sr-toast-font-size', `${cfg.toastFontVh}vh`);
+  root.style.setProperty('--sr-toast-zone-font-size', `${cfg.toastZoneFontVh}vh`);
+  root.style.setProperty('--sr-toast-wrongway-font-size', `${cfg.toastWrongWayFontVh}vh`);
+  root.style.setProperty('--sr-progress-height', `${cfg.progressBarHeightPx}px`);
+  root.style.setProperty('--sr-speedo-scale', String(cfg.speedoScale));
+  root.style.setProperty('--sr-speedo-opacity', String(cfg.speedoOpacity));
+  root.style.setProperty('--sr-speedo-right', `${cfg.speedoEdgeRightPx}px`);
+  root.style.setProperty('--sr-speedo-bottom', `${cfg.speedoEdgeBottomPx}px`);
+  root.style.setProperty(
+    '--sr-hint-collapsed-opacity',
+    String(cfg.controlsHintCollapsedOpacity),
+  );
+}
+
 export function createHud(
   container: HTMLElement = document.body,
   callbacks: HudCallbacks = {},
@@ -227,8 +251,11 @@ export function createHud(
 
   const root = document.createElement('div');
   root.className = 'sr-hud sr-hud--modal';
+  applyHudConfigCssVars(root);
 
-  const hintClass = cfg.showControlsHint ? 'sr-hud-panel sr-hud-bottom-left sr-hud-hidden' : 'sr-hud-hidden';
+  const hintClass = cfg.showControlsHint
+    ? 'sr-hud-bottom-left sr-hud-hidden'
+    : 'sr-hud-hidden';
 
   root.innerHTML = `
     <div class="sr-hud-top sr-hud-hidden">
@@ -254,6 +281,8 @@ export function createHud(
       </div>
     </div>
 
+    <div class="sr-toast-lane" aria-live="polite"></div>
+
     <button type="button" class="sr-hud-panel sr-audio-btn" aria-label="Suara aktif (M)" title="Suara (M)">
       <svg class="sr-audio-icon sr-audio-icon-on" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M4 9.5v5h4l5 4.5V5L8 9.5H4z" fill="currentColor" />
@@ -265,24 +294,16 @@ export function createHud(
       </svg>
     </button>
 
-    <div class="sr-hud-panel sr-split-slot sr-hud-hidden" data-slot="split"></div>
-    <div class="sr-hud-panel sr-airtime-slot sr-hud-hidden" data-slot="airtime"></div>
-    <div class="sr-hud-panel sr-lap-popup sr-hud-hidden" data-slot="lap-popup"></div>
-    <div class="sr-hud-panel sr-zone-toast sr-hud-hidden" data-slot="zone-toast"></div>
-    <div class="sr-hud-panel sr-wrong-way sr-hud-hidden" role="alert" aria-live="assertive">
-      <svg class="sr-wrong-way-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 3L2 20h20L12 3z" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linejoin="round" />
-        <path d="M12 9v5M12 17h.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
-      </svg>
-      <span>ARAH SALAH</span>
-    </div>
-
     <div class="${hintClass}">
-      <span class="sr-hint-item"><span class="sr-key">W A S D</span> / <span class="sr-key">Panah</span> Kemudi</span>
-      <span class="sr-hint-item"><span class="sr-key">Space</span> Drift</span>
-      <span class="sr-hint-item"><span class="sr-key">R</span> Checkpoint</span>
-      <span class="sr-hint-item"><span class="sr-key">Enter</span> Ulang</span>
-      <span class="sr-hint-item"><span class="sr-key">M</span> Suara</span>
+      <div class="sr-hud-panel sr-hint-full">
+        <span class="sr-hint-item"><span class="sr-key">W A S D</span> / <span class="sr-key">Panah</span> Kemudi</span>
+        <span class="sr-hint-item"><span class="sr-key">Space</span> Drift</span>
+        <span class="sr-hint-item"><span class="sr-key">R</span> Checkpoint</span>
+        <span class="sr-hint-item"><span class="sr-key">Enter</span> Ulang</span>
+        <span class="sr-hint-item"><span class="sr-key">M</span> Suara</span>
+        <span class="sr-hint-item"><span class="sr-key">H</span> Panduan</span>
+      </div>
+      <button type="button" class="sr-hud-panel sr-hint-badge" aria-label="Tampilkan panduan tombol (H)" title="Panduan tombol (H)">?</button>
     </div>
 
     <div class="sr-hud-panel sr-hud-bottom-right sr-hud-hidden">
@@ -451,6 +472,13 @@ export function createHud(
 
   container.appendChild(root);
 
+  const toastLaneEl = root.querySelector('.sr-toast-lane') as HTMLElement;
+  const toastQueue = createToastQueue(toastLaneEl);
+
+  const bottomLeftEl = root.querySelector('.sr-hud-bottom-left') as HTMLElement;
+  const hintFullEl = root.querySelector('.sr-hint-full') as HTMLElement;
+  const hintBadgeEl = root.querySelector('.sr-hint-badge') as HTMLButtonElement;
+
   const titleStartBtnEl = root.querySelector('.sr-title-start-btn') as HTMLButtonElement;
   const titleClearBtnEl = root.querySelector('.sr-title-clear-btn') as HTMLButtonElement;
   const titleClearRingFillEl = root.querySelector('.sr-hold-ring-fill') as SVGCircleElement;
@@ -573,6 +601,38 @@ export function createHud(
   titleClearBtnEl.addEventListener('pointercancel', onClearEnd);
   titleClearBtnEl.addEventListener('lostpointercapture', onClearEnd);
 
+  // Debug strip (PALET, FOG, BLOOM, EXP): hidden by default unless ?debug in URL, toggled with ` (Backquote)
+  let debugStripEl: HTMLElement | null = null;
+  let debugStripVisible =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).has('debug');
+
+  const syncDebugStrip = (): void => {
+    if (!debugStripEl) {
+      for (let i = 0; i < container.children.length; i++) {
+        const child = container.children[i];
+        if (
+          child instanceof HTMLElement &&
+          child !== root &&
+          child.textContent?.includes('PALET [')
+        ) {
+          debugStripEl = child;
+          break;
+        }
+      }
+    }
+    if (!debugStripEl) {
+      return;
+    }
+    debugStripEl.classList.add('sr-debug-strip');
+    debugStripEl.style.display = debugStripVisible ? 'block' : 'none';
+    debugStripEl.style.opacity = String(cfg.debugStripOpacity);
+    debugStripEl.style.fontSize = `${cfg.debugStripFontSizePx}px`;
+    debugStripEl.style.padding = '3px 8px';
+    debugStripEl.style.bottom = '8px';
+  };
+  syncDebugStrip();
+
   const handle: HudHandle = {
     root,
     container,
@@ -581,7 +641,9 @@ export function createHud(
     progressFillEl: root.querySelector('.sr-progress-fill') as HTMLElement,
     progressMarkersEl: root.querySelector('.sr-progress-markers') as HTMLElement,
     progressMarkerEls: [],
-    bottomLeftEl: root.querySelector('.sr-hud-bottom-left') as HTMLElement,
+    bottomLeftEl,
+    hintFullEl,
+    hintBadgeEl,
     bottomRightEl: root.querySelector('.sr-hud-bottom-right') as HTMLElement,
     speedValueEl: root.querySelector('.sr-speedo-value') as HTMLElement,
     arcFillEl: root.querySelector('.sr-speedo-fill') as SVGCircleElement,
@@ -594,11 +656,8 @@ export function createHud(
     timerBestLapEl: root.querySelector('.sr-timer-best-lap') as HTMLElement,
     lapSlotEl: root.querySelector('[data-slot="lap"]') as HTMLElement,
     cpSlotEl: root.querySelector('[data-slot="checkpoint"]') as HTMLElement,
-    splitSlotEl: root.querySelector('[data-slot="split"]') as HTMLElement,
-    airtimeSlotEl: root.querySelector('[data-slot="airtime"]') as HTMLElement,
-    lapPopupSlotEl: root.querySelector('[data-slot="lap-popup"]') as HTMLElement,
-    zoneToastEl: root.querySelector('[data-slot="zone-toast"]') as HTMLElement,
-    wrongWayEl: root.querySelector('.sr-wrong-way') as HTMLElement,
+    toastLaneEl,
+    toastQueue,
     loadingOverlayEl: root.querySelector('.sr-loading-overlay') as HTMLElement,
     titleScreenEl: root.querySelector('.sr-title-screen') as HTMLElement,
     titleCourseSelectSlotEl: root.querySelector('.sr-arena-select') as HTMLElement,
@@ -628,29 +687,11 @@ export function createHud(
     finishMenuBtnEl,
     finishCopyBtnEl,
     audioBtnEl: root.querySelector('.sr-audio-btn') as HTMLButtonElement,
-    airtimeTimerId: null,
-    splitTimerId: null,
-    lapPopupTimerId: null,
-    zoneToastTimerId: null,
     countdownHideTimerId: null,
     copyResetTimerId: null,
     clearHoldRafId: 0,
     clearHoldCleanup: cancelClearHold,
-    disposeEvents: () => {
-      cancelClearHold();
-      if (copyResetTimerId !== null) {
-        window.clearTimeout(copyResetTimerId);
-        copyResetTimerId = null;
-      }
-      titleStartBtnEl.removeEventListener('click', handleStartClick);
-      finishRetryBtnEl.removeEventListener('click', handleRetryClick);
-      finishMenuBtnEl.removeEventListener('click', handleMenuClick);
-      finishCopyBtnEl.removeEventListener('click', handleCopyClick);
-      titleClearBtnEl.removeEventListener('pointerdown', onClearDown);
-      titleClearBtnEl.removeEventListener('pointerup', onClearEnd);
-      titleClearBtnEl.removeEventListener('pointercancel', onClearEnd);
-      titleClearBtnEl.removeEventListener('lostpointercapture', onClearEnd);
-    },
+    disposeEvents: () => {},
     arcTotalLen: arcLen,
     lastPhase: null,
     lastResultReady: null,
@@ -664,12 +705,93 @@ export function createHud(
     lastTimerLapText: '',
     lastBestText: '',
     lastBestLapText: '',
+    lastBestLapSeconds: null,
     lastLapText: '',
     lastShowLap: null,
     lastCpText: 'CP 0 / 0',
     lastWrongWay: null,
     lastMuted: null,
     lastTouchActive: null,
+    lastTimeSeconds: 0,
+    lastToastTickMs: performance.now(),
+    hintManualExpanded: null,
+    lastHintCollapsed: null,
+  };
+
+  const syncHintCollapseClass = (): void => {
+    if (!CONFIG.hud.showControlsHint) {
+      return;
+    }
+    const autoExpanded =
+      handle.lastPhase === 'COUNTDOWN' ||
+      (handle.lastPhase === 'RACING' &&
+        handle.lastTimeSeconds < CONFIG.hud.controlsHintFullSeconds);
+    const expanded =
+      handle.hintManualExpanded !== null ? handle.hintManualExpanded : autoExpanded;
+    const collapsed = !expanded;
+    if (collapsed !== handle.lastHintCollapsed) {
+      handle.lastHintCollapsed = collapsed;
+      bottomLeftEl.classList.toggle('sr-hint--collapsed', collapsed);
+    }
+  };
+
+  const toggleControlsHint = (): void => {
+    if (
+      !CONFIG.hud.showControlsHint ||
+      handle.lastTouchActive ||
+      handle.lastPhase === 'TITLE' ||
+      handle.lastPhase === 'FINISH'
+    ) {
+      return;
+    }
+    const currentlyCollapsed = handle.lastHintCollapsed ?? false;
+    handle.hintManualExpanded = currentlyCollapsed;
+    syncHintCollapseClass();
+  };
+
+  const handleHintBadgeClick = (): void => {
+    hintBadgeEl.blur();
+    toggleControlsHint();
+  };
+  hintBadgeEl.addEventListener('click', handleHintBadgeClick);
+
+  const handleHudKeyDown = (event: KeyboardEvent): void => {
+    if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    const target = event.target;
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement
+    ) {
+      return;
+    }
+    if (event.code === 'KeyH') {
+      toggleControlsHint();
+    } else if (event.code === 'Backquote') {
+      debugStripVisible = !debugStripVisible;
+      syncDebugStrip();
+    }
+  };
+  window.addEventListener('keydown', handleHudKeyDown);
+
+  handle.disposeEvents = () => {
+    cancelClearHold();
+    if (copyResetTimerId !== null) {
+      window.clearTimeout(copyResetTimerId);
+      copyResetTimerId = null;
+    }
+    window.removeEventListener('keydown', handleHudKeyDown);
+    hintBadgeEl.removeEventListener('click', handleHintBadgeClick);
+    titleStartBtnEl.removeEventListener('click', handleStartClick);
+    finishRetryBtnEl.removeEventListener('click', handleRetryClick);
+    finishMenuBtnEl.removeEventListener('click', handleMenuClick);
+    finishCopyBtnEl.removeEventListener('click', handleCopyClick);
+    titleClearBtnEl.removeEventListener('pointerdown', onClearDown);
+    titleClearBtnEl.removeEventListener('pointerup', onClearEnd);
+    titleClearBtnEl.removeEventListener('pointercancel', onClearEnd);
+    titleClearBtnEl.removeEventListener('lostpointercapture', onClearEnd);
   };
 
   return handle;
@@ -759,150 +881,71 @@ export function setHudProgressCheckpoints(
 }
 
 export function showAirtimePopup(hud: HudHandle, airtimeSeconds: number): void {
-  if (hud.airtimeTimerId !== null) {
-    window.clearTimeout(hud.airtimeTimerId);
-    hud.airtimeTimerId = null;
+  if (airtimeSeconds < CONFIG.hud.airtimeMinSeconds) {
+    return;
   }
-
-  hud.airtimeSlotEl.textContent = `AIRTIME ${airtimeSeconds.toFixed(2)} s`;
-  hud.airtimeSlotEl.classList.remove('sr-hud-hidden', 'sr-airtime-active');
-  void hud.airtimeSlotEl.offsetWidth;
-  hud.airtimeSlotEl.classList.add('sr-airtime-active');
-
-  hud.airtimeTimerId = window.setTimeout(() => {
-    hud.airtimeSlotEl.classList.add('sr-hud-hidden');
-    hud.airtimeSlotEl.classList.remove('sr-airtime-active');
-    hud.airtimeTimerId = null;
-  }, CONFIG.hud.airtimePopupDurationMs);
+  hud.toastQueue.push({
+    kind: 'airtime',
+    text: `UDARA ${airtimeSeconds.toFixed(1)} s`,
+    priority: CONFIG.hud.toastPriorities.airtime,
+    durationMs: CONFIG.hud.airtimePopupDurationMs,
+  });
 }
 
 export function hideAirtimePopup(hud: HudHandle): void {
-  if (hud.airtimeTimerId !== null) {
-    window.clearTimeout(hud.airtimeTimerId);
-    hud.airtimeTimerId = null;
-  }
-  hud.airtimeSlotEl.classList.add('sr-hud-hidden');
-  hud.airtimeSlotEl.classList.remove('sr-airtime-active');
+  hud.toastQueue.clearKind('airtime');
 }
 
 export function showSplitPopup(hud: HudHandle, notice: CheckpointSplitNotice): void {
-  if (hud.splitTimerId !== null) {
-    window.clearTimeout(hud.splitTimerId);
-    hud.splitTimerId = null;
+  if (notice.delta === null) {
+    return;
   }
-
-  const cpLabel = `CP ${notice.index + 1} / ${notice.total}`;
-  const timeLabel = formatSplitSeconds(notice.time);
-  hud.splitSlotEl.textContent = '';
-
-  const cpSpan = document.createElement('span');
-  cpSpan.className = 'sr-split-cp';
-  cpSpan.textContent = cpLabel;
-  hud.splitSlotEl.appendChild(cpSpan);
-
-  const timeSpan = document.createElement('span');
-  timeSpan.className = 'sr-split-time';
-  timeSpan.textContent = timeLabel;
-  hud.splitSlotEl.appendChild(timeSpan);
-
-  if (notice.delta !== null) {
-    const deltaSpan = document.createElement('span');
-    deltaSpan.className =
-      notice.delta <= 0 ? 'sr-split-delta sr-split-delta-fast' : 'sr-split-delta sr-split-delta-slow';
-    deltaSpan.textContent = formatDelta(notice.delta);
-    hud.splitSlotEl.appendChild(deltaSpan);
-  }
-
-  hud.splitSlotEl.classList.remove('sr-hud-hidden', 'sr-split-active');
-  void hud.splitSlotEl.offsetWidth;
-  hud.splitSlotEl.classList.add('sr-split-active');
-
-  hud.splitTimerId = window.setTimeout(() => {
-    hud.splitSlotEl.classList.add('sr-hud-hidden');
-    hud.splitSlotEl.classList.remove('sr-split-active');
-    hud.splitTimerId = null;
-  }, CONFIG.hud.splitPopupDurationMs);
+  hud.toastQueue.push({
+    kind: 'split',
+    text: formatDelta(notice.delta),
+    tone: notice.delta <= 0 ? 'fast' : 'slow',
+    priority: CONFIG.hud.toastPriorities.split,
+    durationMs: CONFIG.hud.splitPopupDurationMs,
+  });
 }
 
 export function hideSplitPopup(hud: HudHandle): void {
-  if (hud.splitTimerId !== null) {
-    window.clearTimeout(hud.splitTimerId);
-    hud.splitTimerId = null;
-  }
-  hud.splitSlotEl.classList.add('sr-hud-hidden');
-  hud.splitSlotEl.classList.remove('sr-split-active');
+  hud.toastQueue.clearKind('split');
 }
 
 export function showLapPopup(hud: HudHandle, notice: LapPopupNotice): void {
-  if (hud.lapPopupTimerId !== null) {
-    window.clearTimeout(hud.lapPopupTimerId);
-    hud.lapPopupTimerId = null;
+  if (notice.lap >= notice.totalLaps) {
+    return;
   }
+  const prevBestLap = hud.lastBestLapSeconds;
+  const delta = prevBestLap !== null ? notice.lapTime - prevBestLap : null;
 
-  hud.lapPopupSlotEl.textContent = '';
-
-  const labelEl = document.createElement('span');
-  labelEl.className = 'sr-lap-popup-label';
-  labelEl.textContent = `LAP ${notice.lap} / ${notice.totalLaps}`;
-  hud.lapPopupSlotEl.appendChild(labelEl);
-
-  const timeEl = document.createElement('span');
-  timeEl.className = 'sr-lap-popup-time';
-  timeEl.textContent = formatRaceTime(notice.lapTime);
-  hud.lapPopupSlotEl.appendChild(timeEl);
-
-  if (notice.isBestLap) {
-    const tagEl = document.createElement('span');
-    tagEl.className = 'sr-lap-popup-best';
-    tagEl.textContent = 'TERCEPAT!';
-    hud.lapPopupSlotEl.appendChild(tagEl);
-  }
-
-  hud.lapPopupSlotEl.classList.remove('sr-hud-hidden', 'sr-lap-popup-active');
-  void hud.lapPopupSlotEl.offsetWidth;
-  hud.lapPopupSlotEl.classList.add('sr-lap-popup-active');
-
-  hud.lapPopupTimerId = window.setTimeout(() => {
-    hud.lapPopupSlotEl.classList.add('sr-hud-hidden');
-    hud.lapPopupSlotEl.classList.remove('sr-lap-popup-active');
-    hud.lapPopupTimerId = null;
-  }, CONFIG.hud.splitPopupDurationMs + 300);
+  hud.toastQueue.push({
+    kind: 'lap',
+    text: `LAP ${notice.lap} SELESAI`,
+    subtext: formatRaceTime(notice.lapTime),
+    deltaText: delta !== null ? formatDelta(delta) : undefined,
+    tone: delta !== null ? (delta <= 0 ? 'fast' : 'slow') : 'neutral',
+    priority: CONFIG.hud.toastPriorities.lap,
+    durationMs: CONFIG.hud.lapToastDurationMs,
+  });
 }
 
 export function hideLapPopup(hud: HudHandle): void {
-  if (hud.lapPopupTimerId !== null) {
-    window.clearTimeout(hud.lapPopupTimerId);
-    hud.lapPopupTimerId = null;
-  }
-  hud.lapPopupSlotEl.classList.add('sr-hud-hidden');
-  hud.lapPopupSlotEl.classList.remove('sr-lap-popup-active');
+  hud.toastQueue.clearKind('lap');
 }
 
 export function showZoneToast(hud: HudHandle, title: string): void {
-  if (hud.zoneToastTimerId !== null) {
-    window.clearTimeout(hud.zoneToastTimerId);
-    hud.zoneToastTimerId = null;
-  }
-
-  hud.zoneToastEl.textContent = title;
-  hud.zoneToastEl.classList.remove('sr-hud-hidden', 'sr-zone-toast-active');
-  void hud.zoneToastEl.offsetWidth;
-  hud.zoneToastEl.classList.add('sr-zone-toast-active');
-
-  hud.zoneToastTimerId = window.setTimeout(() => {
-    hud.zoneToastEl.classList.add('sr-hud-hidden');
-    hud.zoneToastEl.classList.remove('sr-zone-toast-active');
-    hud.zoneToastTimerId = null;
-  }, CONFIG.styles.zoneToast.durationMs);
+  hud.toastQueue.push({
+    kind: 'zone',
+    text: title,
+    priority: CONFIG.hud.toastPriorities.zone,
+    durationMs: CONFIG.hud.zoneToastDurationMs,
+  });
 }
 
 export function hideZoneToast(hud: HudHandle): void {
-  if (hud.zoneToastTimerId !== null) {
-    window.clearTimeout(hud.zoneToastTimerId);
-    hud.zoneToastTimerId = null;
-  }
-  hud.zoneToastEl.classList.add('sr-hud-hidden');
-  hud.zoneToastEl.classList.remove('sr-zone-toast-active');
+  hud.toastQueue.clearKind('zone');
 }
 
 export function showCountdownOverlay(hud: HudHandle, label: string, isGo: boolean): void {
@@ -939,6 +982,7 @@ export function hideCountdownOverlay(hud: HudHandle): void {
 
 export function showFinishScreen(hud: HudHandle, data: FinishScreenData): void {
   const { finish, records, courseName } = data;
+  hud.toastQueue.clear();
 
   hud.finishCourseNameEl.textContent = courseName;
   hud.finishBadgeEl.classList.toggle('sr-hud-hidden', !finish.isNewBest);
@@ -1088,6 +1132,10 @@ export function hideFinishScreen(hud: HudHandle): void {
 }
 
 export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
+  const nowMs = performance.now();
+  const dt = Math.min(0.1, Math.max(0, (nowMs - hud.lastToastTickMs) / 1000));
+  hud.lastToastTickMs = nowMs;
+
   if (viewModel.touchActive !== hud.lastTouchActive) {
     hud.lastTouchActive = viewModel.touchActive;
     hud.root.classList.toggle('hud--touch', viewModel.touchActive);
@@ -1103,11 +1151,17 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
   }
 
   if (viewModel.phase !== hud.lastPhase || viewModel.resultReady !== hud.lastResultReady) {
+    const prevPhase = hud.lastPhase;
     hud.lastPhase = viewModel.phase;
     hud.lastResultReady = viewModel.resultReady;
     const isTitle = viewModel.phase === 'TITLE';
     const isFinish = viewModel.phase === 'FINISH';
     const showResults = isFinish && viewModel.resultReady;
+
+    if (viewModel.phase === 'COUNTDOWN' && prevPhase !== 'COUNTDOWN') {
+      hud.hintManualExpanded = null;
+      hud.lastHintCollapsed = null;
+    }
 
     hud.root.classList.toggle('sr-hud--modal', isTitle || showResults);
     hud.titleScreenEl.classList.toggle('sr-hud-hidden', !isTitle);
@@ -1122,6 +1176,9 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     if (isTitle || isFinish) {
       hideCountdownOverlay(hud);
     }
+    if (isTitle || showResults) {
+      hud.toastQueue.clear();
+    }
     if (!isTitle) {
       hud.clearHoldCleanup();
     }
@@ -1130,11 +1187,38 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
   const showWrongWay = viewModel.phase === 'RACING' && viewModel.wrongWay;
   if (showWrongWay !== hud.lastWrongWay) {
     hud.lastWrongWay = showWrongWay;
-    hud.wrongWayEl.classList.toggle('sr-hud-hidden', !showWrongWay);
+    if (showWrongWay) {
+      hud.toastQueue.push({
+        kind: 'wrongWay',
+        text: 'ARAH SALAH',
+        priority: CONFIG.hud.toastPriorities.wrongWay,
+        durationMs: Number.POSITIVE_INFINITY,
+        sticky: true,
+      });
+    } else {
+      hud.toastQueue.clearKind('wrongWay');
+    }
   }
+
+  hud.toastQueue.update(dt);
 
   if (viewModel.phase === 'TITLE') {
     return;
+  }
+
+  hud.lastTimeSeconds = viewModel.timeSeconds;
+  if (CONFIG.hud.showControlsHint && !viewModel.touchActive) {
+    const autoExpanded =
+      viewModel.phase === 'COUNTDOWN' ||
+      (viewModel.phase === 'RACING' &&
+        viewModel.timeSeconds < CONFIG.hud.controlsHintFullSeconds);
+    const expanded =
+      hud.hintManualExpanded !== null ? hud.hintManualExpanded : autoExpanded;
+    const collapsed = !expanded;
+    if (collapsed !== hud.lastHintCollapsed) {
+      hud.lastHintCollapsed = collapsed;
+      hud.bottomLeftEl.classList.toggle('sr-hint--collapsed', collapsed);
+    }
   }
 
   const speedInt = Math.max(0, Math.round(viewModel.speedKmh));
@@ -1199,6 +1283,7 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     hud.timerBestEl.classList.toggle('sr-hud-hidden', bestText === '');
   }
 
+  hud.lastBestLapSeconds = viewModel.bestLapSeconds;
   const bestLapText =
     showLap && viewModel.bestLapSeconds !== null
       ? `BL ${formatRaceTime(viewModel.bestLapSeconds)}`
@@ -1234,10 +1319,7 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
 }
 
 export function disposeHud(hud: HudHandle): void {
-  hideAirtimePopup(hud);
-  hideSplitPopup(hud);
-  hideLapPopup(hud);
-  hideZoneToast(hud);
+  hud.toastQueue.dispose();
   hideCountdownOverlay(hud);
   hideFinishScreen(hud);
   hud.disposeEvents();
