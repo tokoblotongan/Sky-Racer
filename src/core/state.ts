@@ -17,6 +17,8 @@ export interface CarRaceSnapshot {
   s: number;
   sApprox: number;
   mode: 'grounded' | 'airborne' | 'falling';
+  routeId?: string;
+  routeLapOffset?: number;
   speedKmh?: number;
 }
 
@@ -40,6 +42,11 @@ export interface RaceState {
   finishDelayTimer: number;
   countdownTimer: number;
   countdownDisplayNumber: number;
+  countdownStartMs: number | null;
+  countdownPausedAtMs: number | null;
+  countdownPausedTotalMs: number;
+  countdownElapsedMs: number;
+  countdownWatchdogTriggered: boolean;
   goHoldTimer: number;
   timer: number;
   laps: number;
@@ -51,6 +58,7 @@ export interface RaceState {
   passedCheckpoints: number[];
   splits: Array<number | null>;
   lastCheckpointIndex: number | null;
+  routeId: string;
   bestTime: number | null;
   bestSplits: number[] | null;
   newBest: boolean;
@@ -62,6 +70,7 @@ export interface RaceState {
 
 export type RaceEvent =
   | { type: 'countdownTick'; n: number }
+  | { type: 'countdownWatchdog'; elapsedMs: number }
   | { type: 'go' }
   | {
       type: 'checkpoint';
@@ -112,11 +121,17 @@ function resetProgressFields(state: RaceState): void {
   state.passedCheckpoints = [];
   state.splits = Array<number | null>(state.totalCheckpoints * state.laps).fill(null);
   state.lastCheckpointIndex = null;
+  state.routeId = 'main';
   state.newBest = false;
   state.lastFinish = null;
   state.stats = createEmptyStats();
   state.countdownTimer = CONFIG.race.countdownSeconds;
   state.countdownDisplayNumber = Math.max(1, Math.ceil(CONFIG.race.countdownSeconds));
+  state.countdownStartMs = null;
+  state.countdownPausedAtMs = null;
+  state.countdownPausedTotalMs = 0;
+  state.countdownElapsedMs = 0;
+  state.countdownWatchdogTriggered = false;
   state.goHoldTimer = 0;
 }
 
@@ -135,6 +150,11 @@ export function createRaceState(course: Course, options?: CreateRaceStateOptions
     finishDelayTimer: 0,
     countdownTimer: 0,
     countdownDisplayNumber: 0,
+    countdownStartMs: null,
+    countdownPausedAtMs: null,
+    countdownPausedTotalMs: 0,
+    countdownElapsedMs: 0,
+    countdownWatchdogTriggered: false,
     goHoldTimer: 0,
     timer: 0,
     laps,
@@ -146,6 +166,7 @@ export function createRaceState(course: Course, options?: CreateRaceStateOptions
     passedCheckpoints: [],
     splits: Array<number | null>(totalSplitCount).fill(null),
     lastCheckpointIndex: null,
+    routeId: 'main',
     bestTime: records?.best ? records.best.time : null,
     bestSplits,
     newBest: false,
@@ -171,19 +192,41 @@ export function refreshRaceRecords(state: RaceState, course: Course): void {
     records.bestSplits.length === totalSplitCount ? [...records.bestSplits] : null;
 }
 
-export function startCountdown(state: RaceState): RaceEvent[] {
+export function startCountdown(state: RaceState, nowMs?: number): RaceEvent[] {
   resetProgressFields(state);
   state.phase = 'COUNTDOWN';
+  state.countdownStartMs = typeof nowMs === 'number' && Number.isFinite(nowMs) ? nowMs : null;
   return [{ type: 'countdownTick', n: state.countdownDisplayNumber }];
 }
 
-export function restartRace(state: RaceState): RaceEvent[] {
+export function restartRace(state: RaceState, nowMs?: number): RaceEvent[] {
   resetProgressFields(state);
   state.phase = 'COUNTDOWN';
+  state.countdownStartMs = typeof nowMs === 'number' && Number.isFinite(nowMs) ? nowMs : null;
   return [
     { type: 'restart' },
     { type: 'countdownTick', n: state.countdownDisplayNumber },
   ];
+}
+
+export function pauseRaceClock(state: RaceState, nowMs: number): void {
+  if (state.phase !== 'COUNTDOWN' || state.countdownStartMs === null) {
+    return;
+  }
+  if (state.countdownPausedAtMs === null) {
+    state.countdownPausedAtMs = nowMs;
+  }
+}
+
+export function resumeRaceClock(state: RaceState, nowMs: number): void {
+  if (state.phase !== 'COUNTDOWN' || state.countdownStartMs === null) {
+    state.countdownPausedAtMs = null;
+    return;
+  }
+  if (state.countdownPausedAtMs !== null) {
+    state.countdownPausedTotalMs += Math.max(0, nowMs - state.countdownPausedAtMs);
+    state.countdownPausedAtMs = null;
+  }
 }
 
 export function returnToTitle(state: RaceState, course: Course): RaceEvent[] {
@@ -198,17 +241,17 @@ export function returnToTitle(state: RaceState, course: Course): RaceEvent[] {
 export function getRespawnTarget(
   state: RaceState,
   course: Course,
-): { s: number; lateral: number } {
+): { routeId: string; s: number; lateral: number } {
   if (state.lastCheckpointIndex !== null) {
     const cpFrame = course.getCheckpointFrame(state.lastCheckpointIndex);
     const lapOffset = course.isClosed() ? (state.currentLap - 1) * course.getLength() : 0;
-    return { s: lapOffset + cpFrame.s, lateral: 0 };
+    return { routeId: 'main', s: lapOffset + cpFrame.s, lateral: 0 };
   }
   if (course.isClosed() && state.currentLap > 1) {
-    return { s: (state.currentLap - 1) * course.getLength(), lateral: 0 };
+    return { routeId: 'main', s: (state.currentLap - 1) * course.getLength(), lateral: 0 };
   }
   const slot0 = course.getGridSlots(1)[0];
-  return { s: slot0.s, lateral: slot0.lateral };
+  return { routeId: 'main', s: slot0.s, lateral: slot0.lateral };
 }
 
 export function applyManualResetPenalty(state: RaceState): void {
@@ -245,11 +288,62 @@ export function updateRace(
   course: Course,
   dt: number,
   physicsEvents?: readonly PhysicsEvent[],
+  nowMs?: number,
 ): RaceEvent[] {
   const events: RaceEvent[] = [];
 
   if (state.phase === 'COUNTDOWN') {
+    if (typeof nowMs === 'number' && Number.isFinite(nowMs)) {
+      if (state.countdownStartMs === null) {
+        state.countdownStartMs = nowMs;
+      }
+      if (state.countdownPausedAtMs !== null) {
+        return events;
+      }
+
+      const elapsedMs = Math.max(0, nowMs - state.countdownStartMs - state.countdownPausedTotalMs);
+      state.countdownElapsedMs = elapsedMs;
+
+      if (elapsedMs >= CONFIG.race.countdownWatchdogMs) {
+        state.phase = 'RACING';
+        state.countdownTimer = 0;
+        state.countdownDisplayNumber = 0;
+        state.countdownWatchdogTriggered = true;
+        state.goHoldTimer = CONFIG.race.goHoldSeconds;
+        state.timer = 0;
+        events.push({ type: 'countdownWatchdog', elapsedMs });
+        events.push({ type: 'go' });
+        return events;
+      }
+
+      const stepMs = Math.max(100, CONFIG.race.countdownStepMs);
+      const totalCountdownMs = CONFIG.race.countdownSeconds * stepMs;
+      const remainingMs = totalCountdownMs - elapsedMs;
+      if (remainingMs > 0) {
+        state.countdownTimer = remainingMs / 1000;
+        const displayNum = Math.max(
+          1,
+          Math.min(CONFIG.race.countdownSeconds, Math.ceil(remainingMs / stepMs)),
+        );
+        if (displayNum !== state.countdownDisplayNumber) {
+          state.countdownDisplayNumber = displayNum;
+          events.push({ type: 'countdownTick', n: displayNum });
+        }
+        return events;
+      }
+
+      const overflowDt = Math.max(0, -remainingMs / 1000);
+      state.phase = 'RACING';
+      state.countdownTimer = 0;
+      state.countdownDisplayNumber = 0;
+      state.goHoldTimer = CONFIG.race.goHoldSeconds;
+      state.timer = overflowDt;
+      events.push({ type: 'go' });
+      return events;
+    }
+
     state.countdownTimer -= dt;
+    state.countdownElapsedMs += Math.max(0, dt) * 1000;
     if (state.countdownTimer > 0) {
       const displayNum = Math.max(1, Math.ceil(state.countdownTimer));
       if (displayNum !== state.countdownDisplayNumber) {
@@ -300,7 +394,10 @@ export function updateRace(
     recordPhysicsStats(state, physicsEvents);
   }
 
-  const activeS = car.mode === 'grounded' ? car.s : car.sApprox;
+  const activeRouteId = car.routeId ?? 'main';
+  state.routeId = activeRouteId;
+  const rawActiveS = car.mode === 'grounded' ? car.s : car.sApprox;
+  const activeS = (car.routeLapOffset ?? 0) + course.getProgressS(activeRouteId, rawActiveS);
   const checkpoints = course.getCheckpoints();
   const lapLength = course.getLength();
   const isClosed = course.isClosed();
@@ -325,7 +422,10 @@ export function updateRace(
         state.splits[splitIdx] = splitTime;
         state.passedCheckpoints.push(splitIdx);
         state.stats.checkpointsHit = state.passedCheckpoints.length;
-        state.lastCheckpointIndex = idx;
+        // Keep respawn anchors strictly on main track so branch falls/resets get a clean run-up
+        if (activeRouteId === 'main') {
+          state.lastCheckpointIndex = idx;
+        }
         state.nextCheckpointIndex++;
 
         events.push({

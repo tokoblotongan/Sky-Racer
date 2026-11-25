@@ -62,14 +62,18 @@ export function createSound(): SoundSystem {
     if (!manager.isReady()) {
       return;
     }
-    if (!engine) {
-      engine = createEngine(manager);
-    }
-    if (!loops) {
-      loops = createLoops(manager);
-    }
-    if (!sfx) {
-      sfx = createSfx(manager);
+    try {
+      if (!engine) {
+        engine = createEngine(manager);
+      }
+      if (!loops) {
+        loops = createLoops(manager);
+      }
+      if (!sfx) {
+        sfx = createSfx(manager);
+      }
+    } catch {
+      // Audio module failure must never block gameplay
     }
   }
 
@@ -78,23 +82,35 @@ export function createSound(): SoundSystem {
     if (!engine) {
       return;
     }
-    if (phase === 'TITLE' || phase === 'FINISH') {
-      engine.fadeOut();
-    } else {
-      engine.fadeIn();
+    try {
+      if (phase === 'TITLE' || phase === 'FINISH') {
+        engine.fadeOut();
+      } else {
+        engine.fadeIn();
+      }
+    } catch {
+      // Ignore fade errors
     }
   }
 
   function init(): void {
-    manager.init();
-    ensureModules();
-    applyPhaseState(currentPhase);
+    try {
+      manager.init();
+      ensureModules();
+      applyPhaseState(currentPhase);
+    } catch {
+      // Ignore audio init errors
+    }
   }
 
   function unlock(): void {
-    manager.unlock();
-    ensureModules();
-    applyPhaseState(currentPhase);
+    try {
+      manager.unlock();
+      ensureModules();
+      applyPhaseState(currentPhase);
+    } catch {
+      // Ignore audio unlock errors
+    }
   }
 
   function setPhase(phase: RacePhase): void {
@@ -105,55 +121,67 @@ export function createSound(): SoundSystem {
   }
 
   function update(snapshot: SoundSnapshot, dt: number): void {
-    if (!manager.isReady()) {
+    if (!manager.isReady() || !manager.isUnlocked()) {
       return;
     }
-    ensureModules();
+    try {
+      ensureModules();
 
-    if (snapshot.phase !== currentPhase) {
-      applyPhaseState(snapshot.phase);
-    }
+      if (snapshot.phase !== currentPhase) {
+        applyPhaseState(snapshot.phase);
+      }
 
-    const isCountdown = snapshot.phase === 'COUNTDOWN';
-    const isRacing = snapshot.phase === 'RACING';
+      const isCountdown = snapshot.phase === 'COUNTDOWN';
+      const isRacing = snapshot.phase === 'RACING';
 
-    if (engine) {
-      engineParams.speedNorm = isCountdown ? 0 : snapshot.speedNorm;
-      engineParams.throttle = isCountdown ? 0 : snapshot.throttle;
-      engineParams.boostActive = isRacing && snapshot.boostActive;
-      engineParams.airborne = isRacing && snapshot.airborne;
-      engineParams.active = isCountdown || isRacing;
-      engine.update(engineParams, dt);
-    }
+      if (engine) {
+        engineParams.speedNorm = isCountdown ? 0 : snapshot.speedNorm;
+        engineParams.throttle = isCountdown ? 0 : snapshot.throttle;
+        engineParams.boostActive = isRacing && snapshot.boostActive;
+        engineParams.airborne = isRacing && snapshot.airborne;
+        engineParams.active = isCountdown || isRacing;
+        engine.update(engineParams, dt);
+      }
 
-    if (loops) {
-      loopsParams.speedNorm = snapshot.speedNorm;
-      loopsParams.slip = snapshot.slip;
-      loopsParams.grounded = snapshot.grounded;
-      loopsParams.airborne = snapshot.airborne;
-      loopsParams.falling = snapshot.falling;
-      loopsParams.railContact = snapshot.railContact;
-      loopsParams.active = isRacing;
-      loops.update(loopsParams, dt);
+      if (loops) {
+        loopsParams.speedNorm = snapshot.speedNorm;
+        loopsParams.slip = snapshot.slip;
+        loopsParams.grounded = snapshot.grounded;
+        loopsParams.airborne = snapshot.airborne;
+        loopsParams.falling = snapshot.falling;
+        loopsParams.railContact = snapshot.railContact;
+        loopsParams.active = isRacing;
+        loops.update(loopsParams, dt);
+      }
+    } catch {
+      // Never let audio update errors halt frame loop
     }
   }
 
   function handleEvents(events: readonly SoundEvent[]): void {
-    if (!manager.isReady() || events.length === 0) {
+    if (!manager.isReady() || !manager.isUnlocked() || events.length === 0) {
       return;
     }
-    ensureModules();
-    for (let i = 0; i < events.length; i++) {
-      const ev = events[i];
-      if (ev.type === 'railHit') {
-        loops?.notifyRailHit(ev.intensity);
+    try {
+      ensureModules();
+      for (let i = 0; i < events.length; i++) {
+        const ev = events[i];
+        if (ev.type === 'railHit') {
+          loops?.notifyRailHit(ev.intensity);
+        }
+        sfx?.play(ev);
       }
-      sfx?.play(ev);
+    } catch {
+      // Never let SFX errors halt countdown or race events
     }
   }
 
   function toggleMute(): boolean {
-    return manager.toggleMute();
+    try {
+      return manager.toggleMute();
+    } catch {
+      return manager.getMuted();
+    }
   }
 
   function getMuted(): boolean {
@@ -161,15 +189,23 @@ export function createSound(): SoundSystem {
   }
 
   function reset(): void {
-    engine?.reset();
-    loops?.reset();
-    sfx?.reset();
+    try {
+      engine?.reset();
+      loops?.reset();
+      sfx?.reset();
+    } catch {
+      // Ignore reset errors
+    }
   }
 
   function dispose(): void {
-    engine?.dispose();
-    loops?.dispose();
-    sfx?.dispose();
+    try {
+      engine?.dispose();
+      loops?.dispose();
+      sfx?.dispose();
+    } catch {
+      // Ignore dispose errors
+    }
     engine = null;
     loops = null;
     sfx = null;

@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { CONFIG } from '../config';
-import type { Course, TrackFrame } from '../core/course';
+import type { Route, TrackFrame } from '../core/routes';
 import type { CarPose, CarState } from '../core/physics';
 
 interface ScalarSpringState {
@@ -93,7 +93,7 @@ function smoothDampScalar(
 function computeCourseCameraTargets(
   pose: CarPose,
   carState: CarState,
-  course: Course,
+  course: Route,
 ): void {
   const cfg = CONFIG.camera;
   const totalLen = course.getLength();
@@ -215,7 +215,7 @@ export class ChaseCamera {
     _targetLook.copy(pose.position).addScaledVector(_worldUp, 0.85);
   }
 
-  snapTo(pose: CarPose, carState: CarState, course: Course): void {
+  snapTo(pose: CarPose, carState: CarState, course: Route): void {
     const cfg = CONFIG.camera;
     this.titleTransitionTimer = 0;
 
@@ -250,7 +250,7 @@ export class ChaseCamera {
     this.camera.lookAt(this.currentLook);
   }
 
-  update(pose: CarPose, carState: CarState, course: Course, realDt: number): void {
+  update(pose: CarPose, carState: CarState, course: Route, realDt: number): void {
     const cfg = CONFIG.camera;
     const dt = THREE.MathUtils.clamp(realDt, 1e-4, CONFIG.sim.maxFrameDt);
 

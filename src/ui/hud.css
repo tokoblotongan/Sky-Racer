@@ -326,6 +326,68 @@
   letter-spacing: 0.06em;
 }
 
+/* Full-screen WebGL context-lost recovery overlay */
+.sr-contextlost-overlay {
+  z-index: 55;
+  background: rgba(15, 23, 42, 0.94);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.sr-contextlost-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: min(88vw, 420px);
+  padding: 20px 24px;
+  text-align: center;
+  border-color: rgba(248, 113, 113, 0.78);
+  background: rgba(30, 41, 59, 0.96);
+  color: var(--sr-text-primary);
+  font-family: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.sr-contextlost-title {
+  font-size: clamp(16px, 2.5vw, 20px);
+  color: var(--sr-accent-yellow);
+}
+
+.sr-contextlost-sub {
+  font-size: clamp(12px, 1.8vw, 13px);
+  font-weight: 700;
+  color: var(--sr-text-muted);
+}
+
+/* Top-right ?debug metrics panel (desktop & mobile) */
+.sr-debug-metrics {
+  position: fixed;
+  top: calc(max(12px, env(safe-area-inset-top, 0px)) + 48px);
+  right: max(10px, env(safe-area-inset-right, 0px));
+  z-index: 38;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #e2e8f0;
+  opacity: var(--sr-debug-opacity, 0.6);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: pre;
+  text-align: right;
+  pointer-events: none;
+  user-select: none;
+}
+
+.sr-hud.hud--touch .sr-debug-metrics {
+  top: calc(max(10px, env(safe-area-inset-top, 0px)) + 108px);
+}
+
 /* Center overlay wrapper */
 .sr-overlay-center {
   position: absolute;
@@ -350,6 +412,8 @@
   max-height: calc(100dvh - 16px);
   overflow-x: hidden;
   overflow-y: auto;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -407,7 +471,7 @@
   font-family: inherit;
   cursor: pointer;
   pointer-events: auto;
-  touch-action: manipulation;
+  touch-action: none;
   box-sizing: border-box;
   transition:
     transform 0.14s ease,
@@ -677,7 +741,7 @@
   letter-spacing: 0.03em;
   cursor: pointer;
   pointer-events: auto;
-  touch-action: manipulation;
+  touch-action: none;
   transition:
     transform 0.12s ease,
     background-color 0.15s ease,
@@ -689,7 +753,8 @@
   transform: scale(0.97);
 }
 
-.sr-btn:disabled {
+.sr-btn:disabled,
+.sr-btn.sr-btn--loading {
   opacity: 0.45;
   cursor: default;
 }
@@ -810,6 +875,8 @@
   width: min(96vw, 840px);
   max-height: calc(100dvh - 16px);
   overflow-y: auto;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: clamp(12px, 2vw, 20px);

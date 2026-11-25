@@ -1,7 +1,7 @@
 {
   "courseId": "sky-circuit",
   "courseName": "Sky Circuit",
-  "buildMs": 76.44,
+  "buildMs": 60.54,
   "recommendedMedals": {
     "gold": 28.86,
     "silver": 34.1,
@@ -86,6 +86,7 @@
     }
   ],
   "zones": [],
+  "branches": [],
   "railHits": 0,
   "stuckEvents": 0,
   "falls": 0,

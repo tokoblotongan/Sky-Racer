@@ -134,13 +134,17 @@ export function createAudioManager(): AudioManager {
     if (!ctx || !buses) {
       return;
     }
-    const target = muted ? 0 : masterVolume;
-    const now = ctx.currentTime;
-    buses.master.gain.cancelScheduledValues(now);
-    if (immediate) {
-      buses.master.gain.setValueAtTime(target, now);
-    } else {
-      buses.master.gain.setTargetAtTime(target, now, 0.015);
+    try {
+      const target = muted ? 0 : masterVolume;
+      const now = ctx.currentTime;
+      buses.master.gain.cancelScheduledValues(now);
+      if (immediate) {
+        buses.master.gain.setValueAtTime(target, now);
+      } else {
+        buses.master.gain.setTargetAtTime(target, now, 0.015);
+      }
+    } catch {
+      // Ignore WebAudio scheduling errors
     }
   }
 
@@ -159,23 +163,29 @@ export function createAudioManager(): AudioManager {
     if (!ctx || disposed) {
       return;
     }
-    if (ctx.state === 'running') {
-      unlocked = true;
-      removeUnlockListeners();
-      return;
-    }
-    if (ctx.state === 'suspended' && !externalPaused && !document.hidden) {
-      ctx
-        .resume()
-        .then(() => {
-          if (ctx && ctx.state === 'running') {
-            unlocked = true;
-            removeUnlockListeners();
-          }
-        })
-        .catch(() => {
-          // Keep unlock listeners attached until a valid gesture succeeds
-        });
+    try {
+      if (ctx.state === 'running') {
+        unlocked = true;
+        removeUnlockListeners();
+        return;
+      }
+      if (ctx.state === 'suspended' && !externalPaused && !document.hidden) {
+        const res = ctx.resume();
+        if (res && typeof res.then === 'function') {
+          res
+            .then(() => {
+              if (ctx && ctx.state === 'running') {
+                unlocked = true;
+                removeUnlockListeners();
+              }
+            })
+            .catch(() => {
+              // Keep unlock listeners attached until a valid gesture succeeds
+            });
+        }
+      }
+    } catch {
+      // Never block or throw on resume attempts
     }
   }
 
@@ -194,12 +204,16 @@ export function createAudioManager(): AudioManager {
     if (!ctx || disposed) {
       return;
     }
-    if (document.hidden || externalPaused) {
-      if (ctx.state === 'running') {
-        ctx.suspend().catch(() => {});
+    try {
+      if (document.hidden || externalPaused) {
+        if (ctx.state === 'running') {
+          ctx.suspend().catch(() => {});
+        }
+      } else if (unlocked && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
       }
-    } else if (unlocked && ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
+    } catch {
+      // Ignore suspend/resume state errors
     }
   }
 
@@ -344,20 +358,24 @@ export function createAudioManager(): AudioManager {
     if (!ctx) {
       return null;
     }
-    if (type === 'white') {
-      if (!whiteNoiseBuffer) {
-        whiteNoiseBuffer = createNoiseBuffer(ctx, 'white');
+    try {
+      if (type === 'white') {
+        if (!whiteNoiseBuffer) {
+          whiteNoiseBuffer = createNoiseBuffer(ctx, 'white');
+        }
+        return whiteNoiseBuffer;
       }
-      return whiteNoiseBuffer;
+      if (!brownNoiseBuffer) {
+        brownNoiseBuffer = createNoiseBuffer(ctx, 'brown');
+      }
+      return brownNoiseBuffer;
+    } catch {
+      return null;
     }
-    if (!brownNoiseBuffer) {
-      brownNoiseBuffer = createNoiseBuffer(ctx, 'brown');
-    }
-    return brownNoiseBuffer;
   }
 
   function isUnlocked(): boolean {
-    return Boolean(ctx && !disposed && (unlocked || ctx.state === 'running'));
+    return Boolean(ctx && !disposed && ctx.state === 'running');
   }
 
   function isReady(): boolean {
@@ -373,22 +391,31 @@ export function createAudioManager(): AudioManager {
     removeUnlockListeners();
     document.removeEventListener('visibilitychange', handleVisibilityChange);
 
-    if (buses) {
-      buses.sfx.disconnect();
-      buses.engine.disconnect();
-      buses.ambience.disconnect();
-      buses.master.disconnect();
+    try {
+      if (buses) {
+        buses.sfx.disconnect();
+        buses.engine.disconnect();
+        buses.ambience.disconnect();
+        buses.master.disconnect();
+        buses = null;
+      }
+      if (limiter) {
+        limiter.disconnect();
+        limiter = null;
+      }
+    } catch {
       buses = null;
-    }
-    if (limiter) {
-      limiter.disconnect();
       limiter = null;
     }
     whiteNoiseBuffer = null;
     brownNoiseBuffer = null;
 
     if (ctx) {
-      ctx.close().catch(() => {});
+      try {
+        ctx.close().catch(() => {});
+      } catch {
+        // Ignore close error
+      }
       ctx = null;
     }
   }

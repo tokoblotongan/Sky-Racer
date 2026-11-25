@@ -99,7 +99,36 @@ function detectInitialCoarsePointer(): boolean {
   if (typeof window === 'undefined') {
     return false;
   }
-  return Boolean(window.matchMedia?.('(pointer: coarse)').matches);
+  if (window.matchMedia?.('(pointer: coarse)').matches) {
+    return true;
+  }
+  if (typeof navigator !== 'undefined') {
+    if (navigator.maxTouchPoints > 0) {
+      return true;
+    }
+    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function requestLandscapeOrientation(): void {
+  if (typeof screen === 'undefined') {
+    return;
+  }
+  try {
+    const orientation = screen.orientation as ScreenOrientation & {
+      lock?: (mode: string) => Promise<void>;
+    };
+    if (typeof orientation?.lock === 'function') {
+      void orientation.lock('landscape').catch(() => {
+        // Ignore unsupported orientation lock (e.g. non-fullscreen or iOS Safari)
+      });
+    }
+  } catch {
+    // Ignore unsupported orientation lock errors
+  }
 }
 
 function hasFullscreenSupport(target: HTMLElement): boolean {
@@ -750,16 +779,7 @@ export function createTouchControls(
         } else if (typeof el.webkitRequestFullscreen === 'function') {
           await el.webkitRequestFullscreen();
         }
-        try {
-          const orientation = screen.orientation as ScreenOrientation & {
-            lock?: (mode: string) => Promise<void>;
-          };
-          if (typeof orientation?.lock === 'function') {
-            await orientation.lock('landscape');
-          }
-        } catch {
-          // Ignore unsupported orientation lock (e.g. desktop / iOS Safari)
-        }
+        requestLandscapeOrientation();
       }
     } catch {
       // Ignore fullscreen denial errors
@@ -832,6 +852,33 @@ export function createTouchControls(
     e.preventDefault();
   }
 
+  function isInsideScrollableCard(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+    const scrollable = target.closest('.sr-title-card, .sr-finish-card, .sr-finish-splits');
+    if (!(scrollable instanceof HTMLElement)) {
+      return false;
+    }
+    return scrollable.scrollHeight > scrollable.clientHeight + 2;
+  }
+
+  function onDocumentTouchStart(e: TouchEvent): void {
+    if (e.touches.length > 1) {
+      e.preventDefault();
+    }
+  }
+
+  function onDocumentTouchMove(e: TouchEvent): void {
+    if (e.touches.length > 1) {
+      e.preventDefault();
+      return;
+    }
+    if (!isInsideScrollableCard(e.target)) {
+      e.preventDefault();
+    }
+  }
+
   const coarseQuery =
     typeof window !== 'undefined' ? window.matchMedia?.('(pointer: coarse)') : undefined;
   function onCoarseMediaChange(e: MediaQueryListEvent): void {
@@ -857,7 +904,9 @@ export function createTouchControls(
   coarseQuery?.addEventListener?.('change', onCoarseMediaChange);
   rootElement.addEventListener('contextmenu', onContextMenu);
   rootElement.addEventListener('selectstart', onSelectStart);
-  rootElement.addEventListener('gesturestart', onGestureStart);
+  document.addEventListener('gesturestart', onGestureStart, { passive: false });
+  document.addEventListener('touchstart', onDocumentTouchStart, { passive: false });
+  document.addEventListener('touchmove', onDocumentTouchMove, { passive: false });
   if (!enabled && config.enableMode === 'auto') {
     window.addEventListener('pointerdown', onFirstTouchActivate, true);
   }
@@ -1031,7 +1080,9 @@ export function createTouchControls(
     coarseQuery?.removeEventListener?.('change', onCoarseMediaChange);
     rootElement.removeEventListener('contextmenu', onContextMenu);
     rootElement.removeEventListener('selectstart', onSelectStart);
-    rootElement.removeEventListener('gesturestart', onGestureStart);
+    document.removeEventListener('gesturestart', onGestureStart);
+    document.removeEventListener('touchstart', onDocumentTouchStart);
+    document.removeEventListener('touchmove', onDocumentTouchMove);
 
     if (root.parentElement === rootElement) {
       rootElement.removeChild(root);

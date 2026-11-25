@@ -258,7 +258,10 @@ export const fantasyLandTheme: WorldTheme = {
     const bounds = course.getBounds();
     const cx = bounds.center.x;
     const cz = bounds.center.z;
-    const densityScale = CONFIG.quality.levels[quality].propsDensityScale;
+    const qualityPreset = CONFIG.quality.levels[quality];
+    const densityScale = qualityPreset.propsDensityScale;
+    const cloudDensityScale = qualityPreset.cloudDensityScale;
+    const shadowsEnabled = qualityPreset.shadowsEnabled;
 
     const spanX = bounds.max.x - bounds.min.x;
     const spanZ = bounds.max.z - bounds.min.z;
@@ -330,27 +333,31 @@ export const fantasyLandTheme: WorldTheme = {
     // ---------------------------------------------------------------------
     // 3. Spatial Track Clearance Grid (avoid touching track, rails & start view)
     // ---------------------------------------------------------------------
+    const allRoutes = course.getAllRoutes();
     const samples = course.getSamples();
     const clearanceCell = 12;
     const trackClearRadius = 18;
     const trackGrid = new Map<string, Array<{ x: number; y: number; z: number; hw: number }>>();
-    for (let i = 0; i < samples.length; i += 6) {
-      const f = samples[i];
-      if (f.isGap) continue;
-      const gx = Math.floor(f.position.x / clearanceCell);
-      const gz = Math.floor(f.position.z / clearanceCell);
-      const key = `${gx},${gz}`;
-      let list = trackGrid.get(key);
-      if (!list) {
-        list = [];
-        trackGrid.set(key, list);
+    for (const route of allRoutes) {
+      const routeSamples = route.getSamples();
+      for (let i = 0; i < routeSamples.length; i += 6) {
+        const f = routeSamples[i];
+        if (f.isGap) continue;
+        const gx = Math.floor(f.position.x / clearanceCell);
+        const gz = Math.floor(f.position.z / clearanceCell);
+        const key = `${gx},${gz}`;
+        let list = trackGrid.get(key);
+        if (!list) {
+          list = [];
+          trackGrid.set(key, list);
+        }
+        list.push({
+          x: f.position.x,
+          y: f.position.y,
+          z: f.position.z,
+          hw: f.width * 0.5,
+        });
       }
-      list.push({
-        x: f.position.x,
-        y: f.position.y,
-        z: f.position.z,
-        hw: f.width * 0.5,
-      });
     }
 
     const startSlot = course.getGridSlots(1)[0];
@@ -396,36 +403,41 @@ export const fantasyLandTheme: WorldTheme = {
     // 4. Rounded Track Support Stanchions (keep high fantasy spans grounded)
     // ---------------------------------------------------------------------
     const supportSpots: Array<{ x: number; z: number; topY: number }> = [];
-    const totalLen = course.getLength();
-    for (let s = 28; s < totalLen - 20; s += 38) {
-      if (course.isGapAt(s) || course.getStyleAt(s) === 'bridge') continue;
-      const frame = course.getFrameAt(s);
-      if (frame.position.y < 3.5 || frame.up.y < 0.55) continue;
+    for (const route of allRoutes) {
+      const routeLen = route.getLength();
+      for (let s = 28; s < routeLen - 20; s += 38) {
+        if (route.isGapAt(s) || route.getStyleAt(s) === 'bridge') continue;
+        if (route.routeId !== 'main' && (route.isRailGapAt(s, -1) || route.isRailGapAt(s, 1))) {
+          continue;
+        }
+        const frame = route.getFrameAt(s);
+        if (frame.position.y < 3.5 || frame.up.y < 0.55) continue;
 
-      let blockedByLower = false;
-      const gx = Math.floor(frame.position.x / clearanceCell);
-      const gz = Math.floor(frame.position.z / clearanceCell);
-      for (let dx = -2; dx <= 2 && !blockedByLower; dx++) {
-        for (let dz = -2; dz <= 2; dz++) {
-          const cell = trackGrid.get(`${gx + dx},${gz + dz}`);
-          if (!cell) continue;
-          for (const pt of cell) {
-            if (
-              pt.y < frame.position.y - 2 &&
-              Math.hypot(frame.position.x - pt.x, frame.position.z - pt.z) < pt.hw + 3.6
-            ) {
-              blockedByLower = true;
-              break;
+        let blockedByLower = false;
+        const gx = Math.floor(frame.position.x / clearanceCell);
+        const gz = Math.floor(frame.position.z / clearanceCell);
+        for (let dx = -2; dx <= 2 && !blockedByLower; dx++) {
+          for (let dz = -2; dz <= 2; dz++) {
+            const cell = trackGrid.get(`${gx + dx},${gz + dz}`);
+            if (!cell) continue;
+            for (const pt of cell) {
+              if (
+                pt.y < frame.position.y - 2 &&
+                Math.hypot(frame.position.x - pt.x, frame.position.z - pt.z) < pt.hw + 3.6
+              ) {
+                blockedByLower = true;
+                break;
+              }
             }
           }
         }
-      }
-      if (!blockedByLower) {
-        supportSpots.push({
-          x: frame.position.x,
-          z: frame.position.z,
-          topY: frame.position.y - 0.35,
-        });
+        if (!blockedByLower) {
+          supportSpots.push({
+            x: frame.position.x,
+            z: frame.position.z,
+            topY: frame.position.y - 0.35,
+          });
+        }
       }
     }
 
@@ -449,10 +461,10 @@ export const fantasyLandTheme: WorldTheme = {
 
       const colInst = new THREE.InstancedMesh(colGeom, colMat, supportSpots.length);
       const plinthInst = new THREE.InstancedMesh(plinthGeom, plinthMat, supportSpots.length);
-      colInst.castShadow = true;
-      colInst.receiveShadow = true;
-      plinthInst.castShadow = true;
-      plinthInst.receiveShadow = true;
+      colInst.castShadow = shadowsEnabled;
+      colInst.receiveShadow = shadowsEnabled;
+      plinthInst.castShadow = shadowsEnabled;
+      plinthInst.receiveShadow = shadowsEnabled;
 
       const mtx = new THREE.Matrix4();
       const pos = new THREE.Vector3();
@@ -487,7 +499,7 @@ export const fantasyLandTheme: WorldTheme = {
     const rand = mulberry32(7331);
     const hillPlacements: Array<{ x: number; z: number; sx: number; sy: number; sz: number; yaw: number; color: string }> = [];
     const hillColors = ['#22C55E', '#16A34A', '#34D399', '#10B981'];
-    const hillCount = Math.max(8, Math.round(16 * densityScale));
+    const hillCount = Math.max(4, Math.round(16 * densityScale));
 
     for (let i = 0; i < hillCount; i++) {
       const baseAngle = (i / hillCount) * Math.PI * 2 + (rand() - 0.5) * 0.28;
@@ -554,7 +566,7 @@ export const fantasyLandTheme: WorldTheme = {
     // ---------------------------------------------------------------------
     // 6. Simple Instanced Bright Trees & Colorful Flag Poles (Starter Set)
     // ---------------------------------------------------------------------
-    const treeCount = Math.max(14, Math.round(34 * densityScale));
+    const treeCount = Math.max(8, Math.round(34 * densityScale));
     const treeSpots: Array<{ x: number; z: number; scale: number; yaw: number; color: string }> = [];
     const canopyPalette = ['#22C55E', '#10B981', '#FF6BCE', '#FFD000', '#38BDF8'];
 
@@ -604,10 +616,10 @@ export const fantasyLandTheme: WorldTheme = {
 
       const trunkInst = new THREE.InstancedMesh(trunkGeom, trunkMat, treeSpots.length);
       const canopyInst = new THREE.InstancedMesh(canopyGeom, canopyMat, treeSpots.length);
-      trunkInst.castShadow = true;
-      trunkInst.receiveShadow = true;
-      canopyInst.castShadow = true;
-      canopyInst.receiveShadow = true;
+      trunkInst.castShadow = shadowsEnabled;
+      trunkInst.receiveShadow = shadowsEnabled;
+      canopyInst.castShadow = shadowsEnabled;
+      canopyInst.receiveShadow = shadowsEnabled;
 
       const mtx = new THREE.Matrix4();
       const pos = new THREE.Vector3();
@@ -637,7 +649,7 @@ export const fantasyLandTheme: WorldTheme = {
       group.add(trunkInst, canopyInst);
     }
 
-    const flagCount = Math.max(8, Math.round(18 * densityScale));
+    const flagCount = Math.max(4, Math.round(18 * densityScale));
     const flagSpots: Array<{ x: number; z: number; scale: number; yaw: number; color: string }> = [];
     const flagPalette = ['#FF2D3D', '#FFD000', '#00E5FF', '#0A5CFF', '#FF5A00'];
 
@@ -698,8 +710,8 @@ export const fantasyLandTheme: WorldTheme = {
 
       const poleInst = new THREE.InstancedMesh(poleGeom, poleMat, flagSpots.length);
       const bannerInst = new THREE.InstancedMesh(bannerGeom, bannerMat, flagSpots.length);
-      poleInst.castShadow = true;
-      bannerInst.castShadow = true;
+      poleInst.castShadow = shadowsEnabled;
+      bannerInst.castShadow = shadowsEnabled;
 
       const mtx = new THREE.Matrix4();
       const pos = new THREE.Vector3();
@@ -744,7 +756,7 @@ export const fantasyLandTheme: WorldTheme = {
       }),
     );
     const cloudGeom = trackGeom(new THREE.PlaneGeometry(54, 27));
-    const cloudCount = Math.max(8, Math.round(14 * densityScale));
+    const cloudCount = Math.max(4, Math.round(14 * cloudDensityScale));
     const clouds: CloudDriftItem[] = [];
     const cloudSpan = islandRadius * 1.45;
 

@@ -5,7 +5,7 @@ import type { CourseSegmentConfig } from '../courses/types';
 
 export interface ClosureAdjustment {
   readonly segmentIndex: number;
-  readonly type: 'straight' | 'curve' | 'slope';
+  readonly type: 'straight' | 'curve' | 'slope' | 'pitchTo';
   readonly field: 'length' | 'angleDeg' | 'pitchDeg';
   readonly originalValue: number;
   readonly solvedValue: number;
@@ -24,6 +24,38 @@ export interface ClosureReport {
   readonly adjustments: readonly ClosureAdjustment[];
   readonly blendApplied: boolean;
   readonly blendLengthM: number;
+}
+
+export interface SolverFrame {
+  readonly position: THREE.Vector3;
+  readonly tangent: THREE.Vector3;
+  readonly up: THREE.Vector3;
+  readonly right: THREE.Vector3;
+  readonly pitchRad?: number;
+}
+
+export interface SolveSegmentsOptions {
+  readonly startFrame: SolverFrame;
+  readonly targetFrame: SolverFrame;
+  readonly segments: readonly CourseSegmentConfig[];
+  readonly stepLength: number;
+  readonly bankBlendLength: number;
+  readonly slopeBlendLength: number;
+  readonly maxIterations?: number;
+  readonly posToleranceM?: number;
+  readonly yawToleranceDeg?: number;
+  readonly pitchToleranceDeg?: number;
+  readonly maxSlopeDeg?: number;
+  readonly minStraightLength?: number;
+  readonly maxStraightLength?: number;
+  readonly minCurveAngleDeg?: number;
+  readonly maxCurveAngleDeg?: number;
+  readonly errorLabel?: string;
+}
+
+export interface SolveSegmentsResult {
+  readonly segments: CourseSegmentConfig[];
+  readonly report: ClosureReport;
 }
 
 export interface SolveClosureOptions {
@@ -49,7 +81,7 @@ export interface SolveClosureResult {
 
 interface AdjustVar {
   readonly segmentIndex: number;
-  readonly type: 'straight' | 'curve' | 'slope';
+  readonly type: 'straight' | 'curve' | 'slope' | 'pitchTo';
   readonly field: 'length' | 'angleDeg' | 'pitchDeg';
   readonly originalValue: number;
   readonly minValue: number;
@@ -189,26 +221,29 @@ function solveLoopYawAmplitude(
   return sign * (low + high) * 0.5;
 }
 
-function simulateCourseEndpoint(
+function simulateSegmentsEndpoint(
   segments: readonly CourseSegmentConfig[],
-  options: SolveClosureOptions,
+  options: SolveSegmentsOptions,
 ): SimResult {
-  const headingRad = THREE.MathUtils.degToRad(options.startHeadingDeg);
-  const startT = new THREE.Vector3(Math.sin(headingRad), 0, -Math.cos(headingRad)).normalize();
-  const startU = new THREE.Vector3(0, 1, 0);
-  const startR = new THREE.Vector3().crossVectors(startT, startU).normalize();
-  const startPos = new THREE.Vector3(
-    options.startPosition.x,
-    options.startPosition.y,
-    options.startPosition.z,
-  );
+  const startT = options.startFrame.tangent.clone().normalize();
+  const startU = options.startFrame.up.clone();
+  const startR = options.startFrame.right.clone();
+  orthonormalize(startT, startU, startR);
 
-  const pos = startPos.clone();
+  const targetT = options.targetFrame.tangent.clone().normalize();
+  const targetU = options.targetFrame.up.clone();
+  const targetR = options.targetFrame.right.clone();
+  orthonormalize(targetT, targetU, targetR);
+
+  const pos = options.startFrame.position.clone();
   const tangent = startT.clone();
   const baseUp = startU.clone();
   const baseRight = startR.clone();
   let s = 0;
-  let pitchRad = 0;
+  let pitchRad =
+    options.startFrame.pitchRad ?? Math.asin(THREE.MathUtils.clamp(startT.y, -1, 1));
+  const targetPitchRad =
+    options.targetFrame.pitchRad ?? Math.asin(THREE.MathUtils.clamp(targetT.y, -1, 1));
 
   for (let segIdx = 0; segIdx < segments.length; segIdx++) {
     const seg = segments[segIdx];
@@ -325,11 +360,11 @@ function simulateCourseEndpoint(
     }
   }
 
-  const dx = pos.x - startPos.x;
-  const dy = pos.y - startPos.y;
-  const dz = pos.z - startPos.z;
-  const dYawRad = Math.atan2(tangent.dot(startR), tangent.dot(startT));
-  const dPitchRad = Math.asin(THREE.MathUtils.clamp(tangent.y, -1, 1));
+  const dx = pos.x - options.targetFrame.position.x;
+  const dy = pos.y - options.targetFrame.position.y;
+  const dz = pos.z - options.targetFrame.position.z;
+  const dYawRad = Math.atan2(tangent.dot(targetR), tangent.dot(targetT));
+  const dPitchRad = Math.asin(THREE.MathUtils.clamp(tangent.y, -1, 1)) - targetPitchRad;
 
   return {
     dx,
@@ -399,23 +434,25 @@ function cloneSegmentsWithVars(
       out[v.segmentIndex] = { ...seg, angleDeg: v.value };
     } else if (v.type === 'slope' && seg.type === 'slope') {
       out[v.segmentIndex] = { ...seg, pitchDeg: v.value };
+    } else if (v.type === 'pitchTo' && seg.type === 'pitchTo') {
+      out[v.segmentIndex] = { ...seg, pitchDeg: v.value };
     }
   }
   return out;
 }
 
-export function solveClosure(
-  baseSegments: readonly CourseSegmentConfig[],
-  options: SolveClosureOptions,
-): SolveClosureResult {
+export function solveSegments(options: SolveSegmentsOptions): SolveSegmentsResult {
+  const baseSegments = options.segments;
   const maxIterations = options.maxIterations ?? 200;
   const posToleranceM = options.posToleranceM ?? 0.02;
   const yawToleranceDeg = options.yawToleranceDeg ?? 0.05;
+  const pitchToleranceDeg = options.pitchToleranceDeg ?? Number.POSITIVE_INFINITY;
   const maxSlopeDeg = options.maxSlopeDeg ?? 22;
   const minStraight = options.minStraightLength ?? 20;
   const maxStraight = options.maxStraightLength ?? 600;
   const minCurveAngle = options.minCurveAngleDeg ?? 5;
   const maxCurveAngle = options.maxCurveAngleDeg ?? 175;
+  const errorLabel = options.errorLabel ?? 'Sirkuit tertutup';
 
   const vars: AdjustVar[] = [];
   for (let i = 0; i < baseSegments.length; i++) {
@@ -454,6 +491,17 @@ export function solveClosure(
         stepEpsilon: 1e-3,
         value: seg.pitchDeg,
       });
+    } else if (seg.type === 'pitchTo' && seg.adjust) {
+      vars.push({
+        segmentIndex: i,
+        type: 'pitchTo',
+        field: 'pitchDeg',
+        originalValue: seg.pitchDeg,
+        minValue: -maxSlopeDeg,
+        maxValue: maxSlopeDeg,
+        stepEpsilon: 1e-3,
+        value: seg.pitchDeg,
+      });
     }
   }
 
@@ -470,7 +518,7 @@ export function solveClosure(
     0.5 * (r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3] + r[4] * r[4]);
 
   let currentSegments = cloneSegmentsWithVars(baseSegments, vars);
-  let currentSim = simulateCourseEndpoint(currentSegments, options);
+  let currentSim = simulateSegmentsEndpoint(currentSegments, options);
   let currentR = residualVec(currentSim);
   let currentCost = costOf(currentR);
   let iterations = 0;
@@ -483,7 +531,8 @@ export function solveClosure(
     for (let iter = 0; iter < maxIterations; iter++) {
       const posErr = Math.hypot(currentSim.dx, currentSim.dy, currentSim.dz);
       const yawErrDeg = Math.abs(THREE.MathUtils.radToDeg(currentSim.dYawRad));
-      if (posErr <= 1e-4 && yawErrDeg <= 1e-4) {
+      const pitchErrDeg = Math.abs(THREE.MathUtils.radToDeg(currentSim.dPitchRad));
+      if (posErr <= 1e-4 && yawErrDeg <= 1e-4 && pitchErrDeg <= 1e-4) {
         break;
       }
 
@@ -508,7 +557,7 @@ export function solveClosure(
               })();
 
         const perturbedSegs = cloneSegmentsWithVars(baseSegments, vars);
-        const perturbedSim = simulateCourseEndpoint(perturbedSegs, options);
+        const perturbedSim = simulateSegmentsEndpoint(perturbedSegs, options);
         const perturbedR = residualVec(perturbedSim);
         vars[col].value = orig;
 
@@ -557,7 +606,7 @@ export function solveClosure(
         });
 
         const candSegs = cloneSegmentsWithVars(baseSegments, vars);
-        const candSim = simulateCourseEndpoint(candSegs, options);
+        const candSim = simulateSegmentsEndpoint(candSegs, options);
         const candR = residualVec(candSim);
         const candCost = costOf(candR);
 
@@ -586,7 +635,10 @@ export function solveClosure(
   const posErrorM = Math.hypot(currentSim.dx, currentSim.dy, currentSim.dz);
   const dYawDeg = THREE.MathUtils.radToDeg(currentSim.dYawRad);
   const dPitchDeg = THREE.MathUtils.radToDeg(currentSim.dPitchRad);
-  const converged = posErrorM <= posToleranceM && Math.abs(dYawDeg) <= yawToleranceDeg;
+  const converged =
+    posErrorM <= posToleranceM &&
+    Math.abs(dYawDeg) <= yawToleranceDeg &&
+    Math.abs(dPitchDeg) <= pitchToleranceDeg;
 
   const adjustments: ClosureAdjustment[] = vars.map((v) => ({
     segmentIndex: v.segmentIndex,
@@ -607,10 +659,11 @@ export function solveClosure(
             .join(', ')
         : 'tidak ada segmen dengan adjust: true';
     throw new Error(
-      `[CourseClosure] Sirkuit tertutup gagal konvergen setelah ${iterations} iterasi. ` +
+      `[CourseClosure] ${errorLabel} gagal konvergen setelah ${iterations} iterasi. ` +
         `Sisa posisi=(${currentSim.dx.toFixed(3)}, ${currentSim.dy.toFixed(3)}, ${currentSim.dz.toFixed(3)}) m ` +
         `(total ${posErrorM.toFixed(3)} m > toleransi ${posToleranceM} m), ` +
-        `dYaw=${dYawDeg.toFixed(3)}° (toleransi ±${yawToleranceDeg}°). ` +
+        `dYaw=${dYawDeg.toFixed(3)}° (toleransi ±${yawToleranceDeg}°), ` +
+        `dPitch=${dPitchDeg.toFixed(3)}°. ` +
         `Segmen adjust: ${adjSummary}.`,
     );
   }
@@ -632,4 +685,43 @@ export function solveClosure(
       blendLengthM: 0,
     },
   };
+}
+
+export function solveClosure(
+  baseSegments: readonly CourseSegmentConfig[],
+  options: SolveClosureOptions,
+): SolveClosureResult {
+  const headingRad = THREE.MathUtils.degToRad(options.startHeadingDeg);
+  const startT = new THREE.Vector3(Math.sin(headingRad), 0, -Math.cos(headingRad)).normalize();
+  const startU = new THREE.Vector3(0, 1, 0);
+  const startR = new THREE.Vector3().crossVectors(startT, startU).normalize();
+  const startFrame: SolverFrame = {
+    position: new THREE.Vector3(
+      options.startPosition.x,
+      options.startPosition.y,
+      options.startPosition.z,
+    ),
+    tangent: startT,
+    up: startU,
+    right: startR,
+    pitchRad: 0,
+  };
+
+  return solveSegments({
+    startFrame,
+    targetFrame: startFrame,
+    segments: baseSegments,
+    stepLength: options.stepLength,
+    bankBlendLength: options.bankBlendLength,
+    slopeBlendLength: options.slopeBlendLength,
+    maxIterations: options.maxIterations,
+    posToleranceM: options.posToleranceM,
+    yawToleranceDeg: options.yawToleranceDeg,
+    maxSlopeDeg: options.maxSlopeDeg,
+    minStraightLength: options.minStraightLength,
+    maxStraightLength: options.maxStraightLength,
+    minCurveAngleDeg: options.minCurveAngleDeg,
+    maxCurveAngleDeg: options.maxCurveAngleDeg,
+    errorLabel: 'Sirkuit tertutup',
+  });
 }

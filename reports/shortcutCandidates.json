@@ -1,0 +1,535 @@
+{
+  "courseId": "fantasy-land",
+  "mainLengthM": 2805.89,
+  "generatedAt": "2026-11-25T12:05:04.215Z",
+  "acceptedCount": 2,
+  "rejectedCount": 186,
+  "topAccepted": [
+    {
+      "fromAnchor": {
+        "segmentIndex": 15,
+        "at": 0.333
+      },
+      "toAnchor": {
+        "segmentIndex": 20,
+        "at": 0.96
+      },
+      "fromS": 1387.25,
+      "toS": 1852.45,
+      "mainArcM": 465.2,
+      "chordDistM": 189.87,
+      "chordRatio": 0.408,
+      "shortcutLengthM": 274.02,
+      "minCorridorDistM": 32.28,
+      "solverErrorM": 0,
+      "checkpointConflict": null,
+      "accepted": true,
+      "reasons": [],
+      "score": 139.49
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 15,
+        "at": 0.333
+      },
+      "toAnchor": {
+        "segmentIndex": 20,
+        "at": 0.9
+      },
+      "fromS": 1387.25,
+      "toS": 1846.45,
+      "mainArcM": 459.2,
+      "chordDistM": 189.61,
+      "chordRatio": 0.413,
+      "shortcutLengthM": 273.48,
+      "minCorridorDistM": 32.29,
+      "solverErrorM": 0,
+      "checkpointConflict": null,
+      "accepted": true,
+      "reasons": [],
+      "score": 137.07
+    }
+  ],
+  "sampleRejected": [
+    {
+      "fromAnchor": {
+        "segmentIndex": 14,
+        "at": 0
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.107
+      },
+      "fromS": 1287.27,
+      "toS": 2083.29,
+      "mainArcM": 796.02,
+      "chordDistM": 217.61,
+      "chordRatio": 0.273,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#8@2033.5m in mergeGap",
+      "accepted": false,
+      "reasons": [
+        "CP#8@2033.5m in mergeGap"
+      ],
+      "score": -1042.16
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 14,
+        "at": 0.25
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.15
+      },
+      "fromS": 1307.27,
+      "toS": 2103.32,
+      "mainArcM": 796.05,
+      "chordDistM": 229.98,
+      "chordRatio": 0.289,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": null,
+      "accepted": false,
+      "reasons": [
+        "solver-failed"
+      ],
+      "score": -1043.39
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 14,
+        "at": 0.25
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.107
+      },
+      "fromS": 1307.27,
+      "toS": 2083.29,
+      "mainArcM": 776.02,
+      "chordDistM": 225.92,
+      "chordRatio": 0.291,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#8@2033.5m in mergeGap",
+      "accepted": false,
+      "reasons": [
+        "CP#8@2033.5m in mergeGap"
+      ],
+      "score": -1044.99
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 14,
+        "at": 0.5
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.193
+      },
+      "fromS": 1327.27,
+      "toS": 2123.34,
+      "mainArcM": 796.07,
+      "chordDistM": 248.1,
+      "chordRatio": 0.312,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#5@1367.3m in entryGap",
+      "accepted": false,
+      "reasons": [
+        "CP#5@1367.3m in entryGap"
+      ],
+      "score": -1045.2
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 14,
+        "at": 0.5
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.15
+      },
+      "fromS": 1327.27,
+      "toS": 2103.32,
+      "mainArcM": 776.05,
+      "chordDistM": 241.12,
+      "chordRatio": 0.311,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#5@1367.3m in entryGap",
+      "accepted": false,
+      "reasons": [
+        "CP#5@1367.3m in entryGap"
+      ],
+      "score": -1046.51
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 14,
+        "at": 0.5
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.107
+      },
+      "fromS": 1327.27,
+      "toS": 2083.29,
+      "mainArcM": 756.02,
+      "chordDistM": 235.64,
+      "chordRatio": 0.312,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#8@2033.5m in mergeGap",
+      "accepted": false,
+      "reasons": [
+        "CP#8@2033.5m in mergeGap"
+      ],
+      "score": -1047.96
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 0,
+        "at": 0.111
+      },
+      "toAnchor": {
+        "segmentIndex": 5,
+        "at": 0.933
+      },
+      "fromS": 19.98,
+      "toS": 819.85,
+      "mainArcM": 799.87,
+      "chordDistM": 287.21,
+      "chordRatio": 0.359,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": null,
+      "accepted": false,
+      "reasons": [
+        "solver-failed"
+      ],
+      "score": -1048.73
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 0,
+        "at": 0.111
+      },
+      "toAnchor": {
+        "segmentIndex": 5,
+        "at": 0.833
+      },
+      "fromS": 19.98,
+      "toS": 813.85,
+      "mainArcM": 793.87,
+      "chordDistM": 283.84,
+      "chordRatio": 0.358,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#3@763.9m in mergeGap",
+      "accepted": false,
+      "reasons": [
+        "CP#3@763.9m in mergeGap"
+      ],
+      "score": -1049
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 15,
+        "at": 0
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.279
+      },
+      "fromS": 1367.27,
+      "toS": 2163.4,
+      "mainArcM": 796.12,
+      "chordDistM": 297.1,
+      "chordRatio": 0.373,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#5@1367.3m in entryGap",
+      "accepted": false,
+      "reasons": [
+        "CP#5@1367.3m in entryGap"
+      ],
+      "score": -1050.1
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 0,
+        "at": 0.222
+      },
+      "toAnchor": {
+        "segmentIndex": 5,
+        "at": 0.933
+      },
+      "fromS": 39.96,
+      "toS": 819.85,
+      "mainArcM": 779.89,
+      "chordDistM": 287.82,
+      "chordRatio": 0.369,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": null,
+      "accepted": false,
+      "reasons": [
+        "solver-failed"
+      ],
+      "score": -1050.79
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 15,
+        "at": 0
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.236
+      },
+      "fromS": 1367.27,
+      "toS": 2143.37,
+      "mainArcM": 776.1,
+      "chordDistM": 285.87,
+      "chordRatio": 0.368,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#5@1367.3m in entryGap",
+      "accepted": false,
+      "reasons": [
+        "CP#5@1367.3m in entryGap"
+      ],
+      "score": -1050.98
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 0,
+        "at": 0.222
+      },
+      "toAnchor": {
+        "segmentIndex": 5,
+        "at": 0.833
+      },
+      "fromS": 39.96,
+      "toS": 813.85,
+      "mainArcM": 773.89,
+      "chordDistM": 284.11,
+      "chordRatio": 0.367,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#3@763.9m in mergeGap",
+      "accepted": false,
+      "reasons": [
+        "CP#3@763.9m in mergeGap"
+      ],
+      "score": -1051.02
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 15,
+        "at": 0
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.193
+      },
+      "fromS": 1367.27,
+      "toS": 2123.34,
+      "mainArcM": 756.07,
+      "chordDistM": 275.64,
+      "chordRatio": 0.365,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#5@1367.3m in entryGap",
+      "accepted": false,
+      "reasons": [
+        "CP#5@1367.3m in entryGap"
+      ],
+      "score": -1051.96
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 0,
+        "at": 0.333
+      },
+      "toAnchor": {
+        "segmentIndex": 5,
+        "at": 0.933
+      },
+      "fromS": 59.94,
+      "toS": 819.85,
+      "mainArcM": 759.91,
+      "chordDistM": 289.81,
+      "chordRatio": 0.381,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": null,
+      "accepted": false,
+      "reasons": [
+        "solver-failed"
+      ],
+      "score": -1052.99
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 15,
+        "at": 0.333
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.322
+      },
+      "fromS": 1387.25,
+      "toS": 2183.42,
+      "mainArcM": 796.17,
+      "chordDistM": 326.05,
+      "chordRatio": 0.41,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": null,
+      "accepted": false,
+      "reasons": [
+        "solver-failed"
+      ],
+      "score": -1052.99
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 15,
+        "at": 0
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.15
+      },
+      "fromS": 1367.27,
+      "toS": 2103.32,
+      "mainArcM": 736.05,
+      "chordDistM": 266.52,
+      "chordRatio": 0.362,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#5@1367.3m in entryGap",
+      "accepted": false,
+      "reasons": [
+        "CP#5@1367.3m in entryGap"
+      ],
+      "score": -1053.05
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 0,
+        "at": 0.333
+      },
+      "toAnchor": {
+        "segmentIndex": 5,
+        "at": 0.833
+      },
+      "fromS": 59.94,
+      "toS": 813.85,
+      "mainArcM": 753.91,
+      "chordDistM": 285.78,
+      "chordRatio": 0.379,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#3@763.9m in mergeGap",
+      "accepted": false,
+      "reasons": [
+        "CP#3@763.9m in mergeGap"
+      ],
+      "score": -1053.19
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 15,
+        "at": 0.333
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.279
+      },
+      "fromS": 1387.25,
+      "toS": 2163.4,
+      "mainArcM": 776.14,
+      "chordDistM": 313.36,
+      "chordRatio": 0.404,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": null,
+      "accepted": false,
+      "reasons": [
+        "solver-failed"
+      ],
+      "score": -1053.72
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 15,
+        "at": 0
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.107
+      },
+      "fromS": 1367.27,
+      "toS": 2083.29,
+      "mainArcM": 716.02,
+      "chordDistM": 258.64,
+      "chordRatio": 0.361,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": "CP#8@2033.5m in mergeGap",
+      "accepted": false,
+      "reasons": [
+        "CP#8@2033.5m in mergeGap"
+      ],
+      "score": -1054.26
+    },
+    {
+      "fromAnchor": {
+        "segmentIndex": 15,
+        "at": 0.333
+      },
+      "toAnchor": {
+        "segmentIndex": 28,
+        "at": 0.236
+      },
+      "fromS": 1387.25,
+      "toS": 2143.37,
+      "mainArcM": 756.12,
+      "chordDistM": 301.47,
+      "chordRatio": 0.399,
+      "shortcutLengthM": null,
+      "minCorridorDistM": null,
+      "solverErrorM": null,
+      "checkpointConflict": null,
+      "accepted": false,
+      "reasons": [
+        "solver-failed"
+      ],
+      "score": -1054.54
+    }
+  ]
+}

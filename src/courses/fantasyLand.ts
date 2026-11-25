@@ -118,6 +118,42 @@ export const fantasyLandCourse: CourseDefinition = {
     // 18. Lurus penutup menuju garis start/finish (disesuaikan solver)
     { type: 'straight', length: 140, adjust: true },
   ],
+  routes: [
+    {
+      // Rute Pintas FantasyLand: bercabang di #15@0.333 (s=1387.25 m, 20 m setelah CP#5)
+      // memotong hairpin 165 deg + Lompatan Naga, lalu menyatu bersih di #20@0.90 (s=1846.45 m, 10 m sebelum CP#7).
+      id: 'shortcut',
+      name: 'Rute Pintas',
+      width: 8,
+      startOffset: 12,
+      endOffset: 4,
+      entryGapLength: 40,
+      mergeGapLength: 50,
+      fromAnchor: { segmentIndex: 15, at: 0.333 },
+      toAnchor: { segmentIndex: 20, at: 0.9 },
+      segments: [
+        { type: 'straight', length: 40 },
+        { type: 'curve', radius: 30, angleDeg: 80, bankDeg: -8, adjust: true },
+        { type: 'straight', length: 30, adjust: true, style: 'bridge', name: 'Jembatan Pintas' },
+        { type: 'slope', length: 22, pitchDeg: 0, adjust: true, style: 'bridge', name: 'Jembatan Pintas' },
+        {
+          type: 'pitchTo',
+          length: 10,
+          pitchDeg: 10,
+          boostPads: [
+            { at: 0.25, lateral: 0, width: 3.4 },
+            { at: 0.78, lateral: 0, width: 3.4 },
+          ],
+          name: 'Lompatan Pintas',
+        },
+        { type: 'gap', length: 22, exitPitchDeg: -10, name: 'Lompatan Pintas' },
+        { type: 'pitchTo', length: 30, pitchDeg: 0, adjust: true, name: 'Lompatan Pintas' },
+        { type: 'straight', length: 30, adjust: true },
+        { type: 'curve', radius: 30, angleDeg: 85, bankDeg: -8, adjust: true },
+        { type: 'straight', length: 28 },
+      ],
+    },
+  ],
   // Dikalibrasi dari simulasi autopilot (npm run validate:fantasy)
   referenceLapTime: 65.06,
   referenceTime: 195.18,

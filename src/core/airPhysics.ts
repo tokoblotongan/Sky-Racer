@@ -3,8 +3,8 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config';
 import type { CarInput } from '../input/controls';
-import type { Course, TrackFrame } from './course';
 import type { CarState } from './physics';
+import type { Route, TrackFrame } from './routes';
 
 export type PhysicsEvent =
   | { type: 'takeoff' }
@@ -41,7 +41,7 @@ const _relPos = new THREE.Vector3();
 
 export function startAir(
   state: CarState,
-  course: Course,
+  course: Route,
   events: PhysicsEvent[],
 ): void {
   const cfg = CONFIG.physics;
@@ -81,7 +81,9 @@ export function startAir(
   state.sApprox = state.s;
   state.lastGapEndS = gap ? lapOffset + gap.endS : state.s;
   const rawSafeS = (gap ? lapOffset + gap.startS : takeoffS) - cfg.respawnBackoff;
-  state.lastSafeS = course.isClosed() ? rawSafeS : Math.max(CONFIG.car.startS, rawSafeS);
+  state.lastSafeS = course.isClosed()
+    ? rawSafeS
+    : Math.max(course.routeId === 'main' ? CONFIG.car.startS : 0, rawSafeS);
   state.normalForce = 0;
 
   events.push({ type: 'takeoff' });
@@ -90,7 +92,7 @@ export function startAir(
 export function stepAir(
   state: CarState,
   input: CarInput,
-  course: Course,
+  course: Route,
   dt: number,
   events: PhysicsEvent[],
 ): void {
@@ -164,13 +166,17 @@ export function stepAir(
     const lateral = _relPos.dot(_frame.right);
     const velDotUp = state.worldVel.dot(_frame.up);
     const inGap = course.isGapAt(state.sApprox);
+    const limits = course.getRailLimits(state.sApprox);
+    const insideDeckWidth =
+      lateral >= limits.left - cfg.landingLateralTolerance &&
+      lateral <= limits.right + cfg.landingLateralTolerance;
 
     // Landing detection
     if (
       !inGap &&
       state.airtime > 0.05 &&
       heightAbove <= cfg.rideHeight &&
-      Math.abs(lateral) <= _frame.width * 0.5 + cfg.landingLateralTolerance &&
+      insideDeckWidth &&
       velDotUp <= 0
     ) {
       const airtime = state.airtime;
@@ -194,9 +200,13 @@ export function stepAir(
       state.vForward = vtScaled * cosY + vrScaled * sinY;
       state.vLateral = -vtScaled * sinY + vrScaled * cosY;
 
-      const maxLateral = Math.max(0.2, _frame.width * 0.5 - cfg.railMargin);
+      const minLat = limits.left + cfg.railMargin;
+      const maxLat = limits.right - cfg.railMargin;
       state.s = state.sApprox;
-      state.lateral = THREE.MathUtils.clamp(lateral, -maxLateral, maxLateral);
+      state.lateral =
+        minLat <= maxLat
+          ? THREE.MathUtils.clamp(lateral, minLat, maxLat)
+          : (minLat + maxLat) * 0.5;
 
       state.landingStartQuat.copy(state.worldQuat);
       state.landingAlignTimer = cfg.landingAlignTime;
@@ -220,7 +230,7 @@ export function stepAir(
     const missedDeckAfterGap =
       !inGap &&
       state.sApprox >= state.lastGapEndS &&
-      Math.abs(lateral) > _frame.width * 0.5 + cfg.landingLateralTolerance &&
+      !insideDeckWidth &&
       heightAbove <= cfg.rideHeight + 0.2;
 
     if (belowTrack || missedDeckAfterGap) {

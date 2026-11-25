@@ -10,7 +10,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "validate:course": "tsx tools/validateCourse.ts",
-    "validate:fantasy": "tsx tools/validateCourse.ts --course=fantasy-land"
+    "validate:fantasy": "tsx tools/validateCourse.ts --course=fantasy-land",
+    "find:shortcut": "tsx tools/findShortcutCandidates.ts --course=fantasy-land"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

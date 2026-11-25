@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
-import type { Course, CourseChunkRange, TrackFrame } from '../core/course';
+import type { Course, CourseChunkRange, Route, TrackFrame } from '../core/course';
 
 interface ProfilePoint {
   xNorm: number;
@@ -279,6 +279,28 @@ function createStartGridCanvasTexture(maxAnisotropy: number): THREE.CanvasTextur
   return texture;
 }
 
+function createShortcutEdgeStripTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const w = 64;
+  const h = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+
+  if (ctx) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = CONFIG.shortcut.edgeStrip.color;
+    ctx.fillRect(w * 0.14, h * 0.08, w * 0.72, h * 0.54);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = maxAnisotropy;
+  return texture;
+}
+
 function buildTrackCrossSectionProfile(): ProfilePoint[] {
   const cfg = CONFIG.course;
   const thickness = cfg.trackThickness;
@@ -406,12 +428,16 @@ function splitSolidSpans(samples: readonly TrackFrame[]): TrackFrame[][] {
   return spans;
 }
 
-function splitRailSpans(course: Course, solidSpans: readonly TrackFrame[][]): TrackFrame[][] {
+function splitRailSideSpans(
+  route: Route,
+  solidSpans: readonly TrackFrame[][],
+  side: -1 | 1,
+): TrackFrame[][] {
   const railSpans: TrackFrame[][] = [];
   for (const span of solidSpans) {
     let current: TrackFrame[] = [];
     for (const sample of span) {
-      if (course.getStyleAt(sample.s) === 'bridge') {
+      if (route.getStyleAt(sample.s) === 'bridge' || route.isRailGapAt(sample.s, side)) {
         if (current.length >= 2) {
           railSpans.push(current);
         }
@@ -428,20 +454,20 @@ function splitRailSpans(course: Course, solidSpans: readonly TrackFrame[][]): Tr
 }
 
 function sliceSpanFramesForRange(
-  course: Course,
+  route: Route,
   spanFrames: readonly TrackFrame[],
   startS: number,
   endS: number,
 ): TrackFrame[] {
   const out: TrackFrame[] = [];
-  out.push(course.getFrameAt(startS));
+  out.push(route.getFrameAt(startS));
   for (let i = 0; i < spanFrames.length; i++) {
     const f = spanFrames[i];
     if (f.s > startS + 1e-4 && f.s < endS - 1e-4) {
       out.push(f);
     }
   }
-  out.push(course.getFrameAt(endS));
+  out.push(route.getFrameAt(endS));
   return out;
 }
 
@@ -641,7 +667,7 @@ function buildSweptGeometry(
 }
 
 function createSurfaceRibbonMesh(
-  course: Course,
+  route: Route,
   startS: number,
   endS: number,
   lateralCenter: number,
@@ -650,10 +676,11 @@ function createSurfaceRibbonMesh(
   uScale: number,
   flipV: boolean,
   material: THREE.Material,
+  vTileMeters?: number,
 ): THREE.Mesh | null {
   const cfg = CONFIG.course;
-  const totalLen = course.getLength();
-  const isClosed = course.isClosed();
+  const totalLen = route.getLength();
+  const isClosed = route.isClosed();
   const clampedStart = isClosed ? startS : Math.max(0, startS);
   const clampedEnd = isClosed ? endS : Math.min(totalLen, endS);
   const spanLen = clampedEnd - clampedStart;
@@ -684,7 +711,7 @@ function createSurfaceRibbonMesh(
   for (let r = 0; r < rows; r++) {
     const vFrac = r / lengthSteps;
     const s = THREE.MathUtils.lerp(clampedStart, clampedEnd, vFrac);
-    course.getFrameAt(s, frame);
+    route.getFrameAt(s, frame);
 
     for (let c = 0; c < cols; c++) {
       const uFrac = c / latSubdivs;
@@ -699,7 +726,8 @@ function createSurfaceRibbonMesh(
       positions[idx * 3 + 1] = vPos.y;
       positions[idx * 3 + 2] = vPos.z;
       uvs[idx * 2] = uFrac * uScale;
-      uvs[idx * 2 + 1] = flipV ? (1 - vFrac) * 2 : vFrac;
+      const vRepeat = vTileMeters ? spanLen / Math.max(0.2, vTileMeters) : 1;
+      uvs[idx * 2 + 1] = flipV ? (1 - vFrac) * 2 : vFrac * vRepeat;
     }
   }
 
@@ -727,15 +755,20 @@ function createSurfaceRibbonMesh(
   return mesh;
 }
 
+interface RailPostEntry {
+  s: number;
+  side: -1 | 1;
+}
+
 function addChunkRailPosts(
   chunkGroup: THREE.Group,
-  course: Course,
+  route: Route,
   railMaterial: THREE.Material,
   postGeometry: THREE.BufferGeometry,
   endBodyGeom: THREE.BufferGeometry,
   endDomeGeom: THREE.BufferGeometry,
-  postLocations: readonly number[],
-  endLocations: readonly number[],
+  postEntries: readonly RailPostEntry[],
+  endEntries: readonly RailPostEntry[],
 ): void {
   const cfg = CONFIG.course;
   const frame: TrackFrame = {
@@ -751,32 +784,26 @@ function addChunkRailPosts(
   const pos = new THREE.Vector3();
   const negForward = new THREE.Vector3();
 
-  if (postLocations.length > 0) {
-    const instanced = new THREE.InstancedMesh(
-      postGeometry,
-      railMaterial,
-      postLocations.length * 2,
-    );
+  if (postEntries.length > 0) {
+    const instanced = new THREE.InstancedMesh(postGeometry, railMaterial, postEntries.length);
     instanced.castShadow = true;
     instanced.receiveShadow = true;
     instanced.frustumCulled = true;
 
-    let instanceIdx = 0;
-    for (const s of postLocations) {
-      course.getFrameAt(s, frame);
+    for (let idx = 0; idx < postEntries.length; idx++) {
+      const entry = postEntries[idx];
+      route.getFrameAt(entry.s, frame);
       const railEdgeOffset =
         frame.width * 0.5 + CONFIG.physics.railInnerOffset + cfg.railWidth * 0.5;
       negForward.copy(frame.tangent).negate();
       basisMatrix.makeBasis(frame.right, frame.up, negForward);
 
-      for (const side of [-1, 1]) {
-        pos
-          .copy(frame.position)
-          .addScaledVector(frame.right, side * railEdgeOffset)
-          .addScaledVector(frame.up, cfg.railVerticalOffset * 0.35);
-        basisMatrix.setPosition(pos);
-        instanced.setMatrixAt(instanceIdx++, basisMatrix);
-      }
+      pos
+        .copy(frame.position)
+        .addScaledVector(frame.right, entry.side * railEdgeOffset)
+        .addScaledVector(frame.up, cfg.railVerticalOffset * 0.35);
+      basisMatrix.setPosition(pos);
+      instanced.setMatrixAt(idx, basisMatrix);
     }
 
     instanced.instanceMatrix.needsUpdate = true;
@@ -784,8 +811,8 @@ function addChunkRailPosts(
     chunkGroup.add(instanced);
   }
 
-  if (endLocations.length > 0) {
-    const totalEndPosts = endLocations.length * 2;
+  if (endEntries.length > 0) {
+    const totalEndPosts = endEntries.length;
     const endBodies = new THREE.InstancedMesh(endBodyGeom, railMaterial, totalEndPosts);
     const endDomes = new THREE.InstancedMesh(endDomeGeom, railMaterial, totalEndPosts);
     endBodies.castShadow = true;
@@ -795,34 +822,30 @@ function addChunkRailPosts(
     endDomes.receiveShadow = true;
     endDomes.frustumCulled = true;
 
-    let endIdx = 0;
     const postCenterHeight = cfg.railVerticalOffset * 0.5 + cfg.railEndPostHeight * 0.35;
     const domeHeight = postCenterHeight + cfg.railEndPostHeight * 0.5;
 
-    for (const s of endLocations) {
-      course.getFrameAt(s, frame);
+    for (let endIdx = 0; endIdx < endEntries.length; endIdx++) {
+      const entry = endEntries[endIdx];
+      route.getFrameAt(entry.s, frame);
       const railCenterOffset =
         frame.width * 0.5 + CONFIG.physics.railInnerOffset + cfg.railWidth * 0.5;
       negForward.copy(frame.tangent).negate();
       basisMatrix.makeBasis(frame.right, frame.up, negForward);
 
-      for (const side of [-1, 1]) {
-        pos
-          .copy(frame.position)
-          .addScaledVector(frame.right, side * railCenterOffset)
-          .addScaledVector(frame.up, postCenterHeight);
-        basisMatrix.setPosition(pos);
-        endBodies.setMatrixAt(endIdx, basisMatrix);
+      pos
+        .copy(frame.position)
+        .addScaledVector(frame.right, entry.side * railCenterOffset)
+        .addScaledVector(frame.up, postCenterHeight);
+      basisMatrix.setPosition(pos);
+      endBodies.setMatrixAt(endIdx, basisMatrix);
 
-        pos
-          .copy(frame.position)
-          .addScaledVector(frame.right, side * railCenterOffset)
-          .addScaledVector(frame.up, domeHeight);
-        basisMatrix.setPosition(pos);
-        endDomes.setMatrixAt(endIdx, basisMatrix);
-
-        endIdx++;
-      }
+      pos
+        .copy(frame.position)
+        .addScaledVector(frame.right, entry.side * railCenterOffset)
+        .addScaledVector(frame.up, domeHeight);
+      basisMatrix.setPosition(pos);
+      endDomes.setMatrixAt(endIdx, basisMatrix);
     }
 
     endBodies.instanceMatrix.needsUpdate = true;
@@ -898,26 +921,14 @@ export function buildTrackMesh(
 ): TrackVisual {
   const cfg = CONFIG.course;
   const activePreset = VISUAL_PRESETS[initialPreset];
-  const isClosed = course.isClosed();
-  const totalLen = course.getLength();
-  const isWideTrack = course.getTrackWidth() >= 12;
-  const trackTileMeters = isClosed
-    ? totalLen / Math.max(1, Math.round(totalLen / cfg.trackTileMeters))
-    : cfg.trackTileMeters;
-  const railTileMeters = isClosed
-    ? totalLen / Math.max(1, Math.round(totalLen / cfg.railTileMeters))
-    : cfg.railTileMeters;
-
-  const spans = splitSolidSpans(course.getSamples());
-  const railSpans = splitRailSpans(course, spans);
-  const chunks: CourseChunkRange[] = course.getChunks(CONFIG.render.trackChunkLength);
+  const mainIsWideTrack = course.getTrackWidth() >= 12;
   const group = new THREE.Group();
   group.name = 'TrackGroup';
 
   const trackProfile = buildTrackCrossSectionProfile();
-  let trackTexture = createTrackCanvasTexture(maxAnisotropy, activePreset, isWideTrack);
-  const trackMaterial = new THREE.MeshPhysicalMaterial({
-    map: trackTexture,
+  let mainTrackTexture = createTrackCanvasTexture(maxAnisotropy, activePreset, mainIsWideTrack);
+  const mainTrackMaterial = new THREE.MeshPhysicalMaterial({
+    map: mainTrackTexture,
     clearcoat: cfg.trackClearcoat,
     clearcoatRoughness: activePreset.trackClearcoatRoughness,
     envMapIntensity: activePreset.trackEnvIntensity,
@@ -925,6 +936,27 @@ export function buildTrackMesh(
     metalness: cfg.trackMetalness,
     ior: cfg.trackIor,
   });
+
+  const branches = course.getBranchRoutes();
+  const hasBranches = branches.length > 0;
+  let branchTrackTexture: THREE.CanvasTexture | null = null;
+  let branchTrackMaterial: THREE.MeshPhysicalMaterial | null = null;
+  if (hasBranches) {
+    const branchIsWide = branches[0].getTrackWidth() >= 12;
+    branchTrackTexture = createTrackCanvasTexture(maxAnisotropy, activePreset, branchIsWide);
+    branchTrackMaterial = new THREE.MeshPhysicalMaterial({
+      map: branchTrackTexture,
+      clearcoat: cfg.trackClearcoat,
+      clearcoatRoughness: activePreset.trackClearcoatRoughness,
+      envMapIntensity: activePreset.trackEnvIntensity,
+      roughness: cfg.trackRoughness,
+      metalness: cfg.trackMetalness,
+      ior: cfg.trackIor,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+  }
 
   const railProfile = buildRoundedRailProfile(
     cfg.railWidth,
@@ -983,6 +1015,27 @@ export function buildTrackMesh(
     polygonOffsetUnits: -2,
   });
 
+  let edgeStripTexture: THREE.CanvasTexture | null = null;
+  let edgeStripMaterial: THREE.MeshStandardMaterial | null = null;
+  if (hasBranches) {
+    const stripCfg = CONFIG.shortcut.edgeStrip;
+    edgeStripTexture = createShortcutEdgeStripTexture(maxAnisotropy);
+    edgeStripMaterial = new THREE.MeshStandardMaterial({
+      map: edgeStripTexture,
+      color: new THREE.Color(stripCfg.color),
+      emissive: new THREE.Color(stripCfg.color),
+      emissiveMap: edgeStripTexture,
+      emissiveIntensity: stripCfg.emissiveIntensity,
+      transparent: true,
+      alphaTest: 0.1,
+      roughness: 0.22,
+      metalness: 0.05,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+  }
+
   const postGeometry = new THREE.CylinderGeometry(
     cfg.railPostRadius,
     cfg.railPostRadius,
@@ -997,242 +1050,327 @@ export function buildTrackMesh(
   );
   const endDomeGeom = new THREE.SphereGeometry(cfg.railEndPostRadius, 14, 10);
 
-  // Collect global rail post & end-post S coordinates once (skipping bridge segments), then assign to chunks
-  const allPostS: number[] = [];
-  const allEndPostS: number[] = [];
-  for (const span of railSpans) {
-    const spanStart = span[0].s;
-    const spanEnd = span[span.length - 1].s;
-    if (!isClosed || spanStart > 1e-4) {
-      allEndPostS.push(spanStart);
-    }
-    if (!isClosed || spanEnd < totalLen - 1e-4) {
-      allEndPostS.push(spanEnd);
+  for (const route of course.getAllRoutes()) {
+    const isMainRoute = route.routeId === 'main';
+    const isClosed = route.isClosed();
+    const totalLen = route.getLength();
+    const isWideTrack = route.getTrackWidth() >= 12;
+    const trackTileMeters = isClosed
+      ? totalLen / Math.max(1, Math.round(totalLen / cfg.trackTileMeters))
+      : cfg.trackTileMeters;
+    const railTileMeters = isClosed
+      ? totalLen / Math.max(1, Math.round(totalLen / cfg.railTileMeters))
+      : cfg.railTileMeters;
+
+    const spans = splitSolidSpans(route.getSamples());
+    const railSpansLeft = splitRailSideSpans(route, spans, -1);
+    const railSpansRight = splitRailSideSpans(route, spans, 1);
+    const chunks: CourseChunkRange[] = route.getChunks(CONFIG.render.trackChunkLength);
+    const activeTrackMaterial =
+      isMainRoute || !branchTrackMaterial ? mainTrackMaterial : branchTrackMaterial;
+
+    // Collect per-side rail post & end-post S coordinates once (skipping bridge & railGap spans)
+    const allPostEntries: RailPostEntry[] = [];
+    const allEndPostEntries: RailPostEntry[] = [];
+
+    for (const [side, sideRailSpans] of [
+      [-1, railSpansLeft],
+      [1, railSpansRight],
+    ] as const) {
+      for (const span of sideRailSpans) {
+        const spanStart = span[0].s;
+        const spanEnd = span[span.length - 1].s;
+        if (!isClosed || spanStart > 1e-4) {
+          allEndPostEntries.push({ s: spanStart, side });
+        }
+        if (!isClosed || spanEnd < totalLen - 1e-4) {
+          allEndPostEntries.push({ s: spanEnd, side });
+        }
+
+        const margin = isClosed && spanStart <= 1e-4 && spanEnd >= totalLen - 1e-4 ? 0 : 1.25;
+        const usableLen = spanEnd - spanStart - margin * 2;
+        if (usableLen > 0.5) {
+          const count = Math.max(1, Math.floor(usableLen / cfg.railPostSpacingMeters) + 1);
+          for (let i = 0; i < count; i++) {
+            if (isClosed && margin === 0 && i === count - 1) {
+              continue;
+            }
+            const frac = count === 1 ? 0.5 : i / (count - 1);
+            allPostEntries.push({ s: spanStart + margin + frac * usableLen, side });
+          }
+        }
+      }
     }
 
-    const margin = isClosed && spanStart <= 1e-4 && spanEnd >= totalLen - 1e-4 ? 0 : 1.25;
-    const usableLen = spanEnd - spanStart - margin * 2;
-    if (usableLen > 0.5) {
-      const count = Math.max(1, Math.floor(usableLen / cfg.railPostSpacingMeters) + 1);
-      for (let i = 0; i < count; i++) {
-        if (isClosed && margin === 0 && i === count - 1) {
+    const gaps = route.getGapRanges();
+    const boostPads = route.getBoostPads();
+    const lastChunkIdx = chunks.length - 1;
+    const startStripS = isClosed ? 0 : CONFIG.car.startS;
+
+    for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+      const chunk = chunks[cIdx];
+      const chunkGroup = new THREE.Group();
+      chunkGroup.name = isMainRoute
+        ? `TrackChunk_${chunk.index}`
+        : `TrackChunk_${route.routeId}_${chunk.index}`;
+
+      const isLastChunk = cIdx === lastChunkIdx;
+      const inChunk = (s: number): boolean =>
+        s >= chunk.startS && (isLastChunk ? s <= chunk.endS + 1e-4 : s < chunk.endS);
+
+      // 1. Track deck sliced cleanly across chunk boundaries without inner bevels/gaps
+      for (const spanFrames of spans) {
+        const spanStart = spanFrames[0].s;
+        const spanEnd = spanFrames[spanFrames.length - 1].s;
+        const subStart = Math.max(spanStart, chunk.startS);
+        const subEnd = Math.min(spanEnd, chunk.endS);
+        if (subEnd - subStart < 0.05) {
           continue;
         }
-        const frac = count === 1 ? 0.5 : i / (count - 1);
-        allPostS.push(spanStart + margin + frac * usableLen);
-      }
-    }
-  }
 
-  const gaps = course.getGapRanges();
-  const boostPads = course.getBoostPads();
-  const lastChunkIdx = chunks.length - 1;
-  const startStripS = isClosed ? 0 : CONFIG.car.startS;
+        const chunkFrames = sliceSpanFramesForRange(route, spanFrames, subStart, subEnd);
+        const closedSeamStart = isClosed && subStart <= 1e-4;
+        const closedSeamEnd = isClosed && subEnd >= totalLen - 1e-4;
+        const startBevel =
+          closedSeamStart || subStart > spanStart + 1e-4 ? 0 : cfg.endCapBevelLength;
+        const endBevel = closedSeamEnd || subEnd < spanEnd - 1e-4 ? 0 : cfg.endCapBevelLength;
 
-  for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
-    const chunk = chunks[cIdx];
-    const chunkGroup = new THREE.Group();
-    chunkGroup.name = `TrackChunk_${chunk.index}`;
-
-    const isLastChunk = cIdx === lastChunkIdx;
-    const inChunk = (s: number): boolean =>
-      s >= chunk.startS && (isLastChunk ? s <= chunk.endS + 1e-4 : s < chunk.endS);
-
-    // 1. Track deck sliced cleanly across chunk boundaries without inner bevels/gaps
-    for (const spanFrames of spans) {
-      const spanStart = spanFrames[0].s;
-      const spanEnd = spanFrames[spanFrames.length - 1].s;
-      const subStart = Math.max(spanStart, chunk.startS);
-      const subEnd = Math.min(spanEnd, chunk.endS);
-      if (subEnd - subStart < 0.05) {
-        continue;
-      }
-
-      const chunkFrames = sliceSpanFramesForRange(course, spanFrames, subStart, subEnd);
-      const closedSeamStart = isClosed && subStart <= 1e-4;
-      const closedSeamEnd = isClosed && subEnd >= totalLen - 1e-4;
-      const startBevel =
-        closedSeamStart || subStart > spanStart + 1e-4 ? 0 : cfg.endCapBevelLength;
-      const endBevel = closedSeamEnd || subEnd < spanEnd - 1e-4 ? 0 : cfg.endCapBevelLength;
-
-      const { geometry: trackGeometry } = buildSweptGeometry(
-        chunkFrames,
-        trackProfile,
-        trackTileMeters,
-        (frame, pt, scale) => {
-          const halfLat = frame.width * 0.5;
-          const innerTuck = (1 - scale) * 0.06;
-          return pt.xNorm * (halfLat - innerTuck) + pt.xOffset * scale;
-        },
-        0,
-        startBevel,
-        endBevel,
-        cfg.endCapBevelSegments,
-        -cfg.trackThickness * 0.5,
-      );
-
-      const trackMesh = new THREE.Mesh(trackGeometry, trackMaterial);
-      trackMesh.castShadow = true;
-      trackMesh.receiveShadow = true;
-      trackMesh.frustumCulled = true;
-      chunkGroup.add(trackMesh);
-    }
-
-    // 2. Solid blue guardrails on non-bridge spans
-    for (const railSpanFrames of railSpans) {
-      const spanStart = railSpanFrames[0].s;
-      const spanEnd = railSpanFrames[railSpanFrames.length - 1].s;
-      const subStart = Math.max(spanStart, chunk.startS);
-      const subEnd = Math.min(spanEnd, chunk.endS);
-      if (subEnd - subStart < 0.05) {
-        continue;
-      }
-
-      const chunkFrames = sliceSpanFramesForRange(course, railSpanFrames, subStart, subEnd);
-      const closedSeamStart = isClosed && subStart <= 1e-4;
-      const closedSeamEnd = isClosed && subEnd >= totalLen - 1e-4;
-      const startBevel =
-        closedSeamStart || subStart > spanStart + 1e-4 ? 0 : cfg.endCapBevelLength;
-      const endBevel = closedSeamEnd || subEnd < spanEnd - 1e-4 ? 0 : cfg.endCapBevelLength;
-      const railStartBevel = startBevel > 0 ? startBevel * 0.75 : 0;
-      const railEndBevel = endBevel > 0 ? endBevel * 0.75 : 0;
-
-      for (const side of [-1, 1]) {
-        const { geometry: railGeometry } = buildSweptGeometry(
+        const { geometry: trackGeometry } = buildSweptGeometry(
           chunkFrames,
-          railProfile,
-          railTileMeters,
-          (frame, pt, scale) =>
-            side * (frame.width * 0.5 + CONFIG.physics.railInnerOffset + cfg.railWidth * 0.5) +
-            pt.xOffset * scale,
-          cfg.railVerticalOffset,
-          railStartBevel,
-          railEndBevel,
+          trackProfile,
+          trackTileMeters,
+          (frame, pt, scale) => {
+            const halfLat = frame.width * 0.5;
+            const innerTuck = (1 - scale) * 0.06;
+            return pt.xNorm * (halfLat - innerTuck) + pt.xOffset * scale;
+          },
+          0,
+          startBevel,
+          endBevel,
           cfg.endCapBevelSegments,
-          0,
+          -cfg.trackThickness * 0.5,
         );
 
-        const railMesh = new THREE.Mesh(railGeometry, railMaterial);
-        railMesh.castShadow = true;
-        railMesh.receiveShadow = true;
-        railMesh.frustumCulled = true;
-        chunkGroup.add(railMesh);
+        const trackMesh = new THREE.Mesh(trackGeometry, activeTrackMaterial);
+        trackMesh.castShadow = true;
+        trackMesh.receiveShadow = true;
+        trackMesh.frustumCulled = true;
+        chunkGroup.add(trackMesh);
       }
-    }
 
-    // 3. Yellow diagonal jump strips (#FFD23F) placed into matching chunk
-    for (const gap of gaps) {
-      const takeoffMid = gap.startS - cfg.jumpStripLength * 0.5;
-      if (inChunk(takeoffMid)) {
-        const takeoffFrame = course.getFrameAt(takeoffMid);
-        const stripW = Math.max(1.0, takeoffFrame.width - cfg.jumpStripInset * 2);
+      // 2. Solid blue guardrails per side (honoring bridge & route rail gaps)
+      for (const [side, sideRailSpans] of [
+        [-1, railSpansLeft],
+        [1, railSpansRight],
+      ] as const) {
+        for (const railSpanFrames of sideRailSpans) {
+          const spanStart = railSpanFrames[0].s;
+          const spanEnd = railSpanFrames[railSpanFrames.length - 1].s;
+          const subStart = Math.max(spanStart, chunk.startS);
+          const subEnd = Math.min(spanEnd, chunk.endS);
+          if (subEnd - subStart < 0.05) {
+            continue;
+          }
+
+          const chunkFrames = sliceSpanFramesForRange(route, railSpanFrames, subStart, subEnd);
+          const closedSeamStart = isClosed && subStart <= 1e-4;
+          const closedSeamEnd = isClosed && subEnd >= totalLen - 1e-4;
+          const startBevel =
+            closedSeamStart || subStart > spanStart + 1e-4 ? 0 : cfg.endCapBevelLength;
+          const endBevel = closedSeamEnd || subEnd < spanEnd - 1e-4 ? 0 : cfg.endCapBevelLength;
+          const railStartBevel = startBevel > 0 ? startBevel * 0.75 : 0;
+          const railEndBevel = endBevel > 0 ? endBevel * 0.75 : 0;
+
+          const { geometry: railGeometry } = buildSweptGeometry(
+            chunkFrames,
+            railProfile,
+            railTileMeters,
+            (frame, pt, scale) =>
+              side * (frame.width * 0.5 + CONFIG.physics.railInnerOffset + cfg.railWidth * 0.5) +
+              pt.xOffset * scale,
+            cfg.railVerticalOffset,
+            railStartBevel,
+            railEndBevel,
+            cfg.endCapBevelSegments,
+            0,
+          );
+
+          const railMesh = new THREE.Mesh(railGeometry, railMaterial);
+          railMesh.castShadow = true;
+          railMesh.receiveShadow = true;
+          railMesh.frustumCulled = true;
+          chunkGroup.add(railMesh);
+        }
+      }
+
+      // 2b. Dashed cyan shortcut edge strips along non-gap branch borders
+      if (!isMainRoute && edgeStripMaterial) {
+        const stripCfg = CONFIG.shortcut.edgeStrip;
+        const sideLeftSpans = splitRailSideSpans(route, spans, -1);
+        const sideRightSpans = splitRailSideSpans(route, spans, 1);
+        for (const [side, sideSpans] of [
+          [-1, sideLeftSpans],
+          [1, sideRightSpans],
+        ] as const) {
+          for (const edgeSpan of sideSpans) {
+            const spanStart = edgeSpan[0].s;
+            const spanEnd = edgeSpan[edgeSpan.length - 1].s;
+            const subStart = Math.max(spanStart, chunk.startS);
+            const subEnd = Math.min(spanEnd, chunk.endS);
+            if (subEnd - subStart < 0.25) continue;
+            const stripMesh = createSurfaceRibbonMesh(
+              route,
+              subStart,
+              subEnd,
+              side * (route.getTrackWidth() * 0.5 - 0.36),
+              stripCfg.width,
+              stripCfg.lift,
+              1,
+              false,
+              edgeStripMaterial,
+              stripCfg.dashPeriodMeters,
+            );
+            if (stripMesh) {
+              chunkGroup.add(stripMesh);
+            }
+          }
+        }
+      }
+
+      // 3. Yellow diagonal jump strips (#FFD23F) placed into matching chunk
+      for (const gap of gaps) {
+        const takeoffMid = gap.startS - cfg.jumpStripLength * 0.5;
+        if (inChunk(takeoffMid)) {
+          const takeoffFrame = route.getFrameAt(takeoffMid);
+          const stripW = Math.max(1.0, takeoffFrame.width - cfg.jumpStripInset * 2);
+          const m = createSurfaceRibbonMesh(
+            route,
+            gap.startS - cfg.jumpStripLength,
+            gap.startS,
+            0,
+            stripW,
+            cfg.jumpStripLift,
+            2,
+            false,
+            jumpStripMaterial,
+          );
+          if (m) chunkGroup.add(m);
+        }
+
+        const landingMid = gap.endS + cfg.jumpStripLength * 0.5;
+        if (inChunk(landingMid)) {
+          const landingFrame = route.getFrameAt(landingMid);
+          const stripW = Math.max(1.0, landingFrame.width - cfg.jumpStripInset * 2);
+          const m = createSurfaceRibbonMesh(
+            route,
+            gap.endS,
+            gap.endS + cfg.jumpStripLength,
+            0,
+            stripW,
+            cfg.jumpStripLift,
+            2,
+            false,
+            jumpStripMaterial,
+          );
+          if (m) chunkGroup.add(m);
+        }
+      }
+
+      // 4. Boost pads placed into matching chunk
+      for (const pad of boostPads) {
+        if (!inChunk(pad.s)) continue;
         const m = createSurfaceRibbonMesh(
-          course,
-          gap.startS - cfg.jumpStripLength,
-          gap.startS,
-          0,
-          stripW,
-          cfg.jumpStripLift,
-          2,
-          false,
-          jumpStripMaterial,
+          route,
+          pad.s - pad.length * 0.5,
+          pad.s + pad.length * 0.5,
+          pad.lateral,
+          pad.width,
+          CONFIG.boost.lift,
+          1,
+          true,
+          boostMaterial,
         );
         if (m) chunkGroup.add(m);
       }
 
-      const landingMid = gap.endS + cfg.jumpStripLength * 0.5;
-      if (inChunk(landingMid)) {
-        const landingFrame = course.getFrameAt(landingMid);
-        const stripW = Math.max(1.0, landingFrame.width - cfg.jumpStripInset * 2);
-        const m = createSurfaceRibbonMesh(
-          course,
-          gap.endS,
-          gap.endS + cfg.jumpStripLength,
+      // 5. Thin checkered start/finish strip across deck (main route only)
+      if (isMainRoute && inChunk(startStripS)) {
+        const startFrame = route.getFrameAt(startStripS);
+        const startStripW = Math.max(1.2, startFrame.width - 0.55);
+        const halfStripLen = isClosed ? 0.9 : 0.65;
+        const startStrip = createSurfaceRibbonMesh(
+          route,
+          startStripS - halfStripLen,
+          startStripS + halfStripLen,
           0,
-          stripW,
-          cfg.jumpStripLift,
-          2,
+          startStripW,
+          0.012,
+          isWideTrack ? 2 : 1,
           false,
-          jumpStripMaterial,
+          startGridMaterial,
         );
-        if (m) chunkGroup.add(m);
+        if (startStrip) {
+          startStrip.name = 'StartGridStrip';
+          chunkGroup.add(startStrip);
+        }
       }
-    }
 
-    // 4. Boost pads placed into matching chunk
-    for (const pad of boostPads) {
-      if (!inChunk(pad.s)) continue;
-      const m = createSurfaceRibbonMesh(
-        course,
-        pad.s - pad.length * 0.5,
-        pad.s + pad.length * 0.5,
-        pad.lateral,
-        pad.width,
-        CONFIG.boost.lift,
-        1,
-        true,
-        boostMaterial,
+      // 6. Support posts & end posts inside this chunk
+      const chunkPosts = allPostEntries.filter((entry) => inChunk(entry.s));
+      const chunkEndPosts = allEndPostEntries.filter((entry) => inChunk(entry.s));
+      addChunkRailPosts(
+        chunkGroup,
+        route,
+        railMaterial,
+        postGeometry,
+        endBodyGeom,
+        endDomeGeom,
+        chunkPosts,
+        chunkEndPosts,
       );
-      if (m) chunkGroup.add(m);
+
+      group.add(chunkGroup);
     }
-
-    // 5. Thin checkered start/finish strip across deck
-    if (inChunk(startStripS)) {
-      const startFrame = course.getFrameAt(startStripS);
-      const startStripW = Math.max(1.2, startFrame.width - 0.55);
-      const halfStripLen = isClosed ? 0.9 : 0.65;
-      const startStrip = createSurfaceRibbonMesh(
-        course,
-        startStripS - halfStripLen,
-        startStripS + halfStripLen,
-        0,
-        startStripW,
-        0.012,
-        isWideTrack ? 2 : 1,
-        false,
-        startGridMaterial,
-      );
-      if (startStrip) {
-        startStrip.name = 'StartGridStrip';
-        chunkGroup.add(startStrip);
-      }
-    }
-
-    // 6. Support posts & end posts inside this chunk
-    const chunkPosts = allPostS.filter(inChunk);
-    const chunkEndPosts = allEndPostS.filter(inChunk);
-    addChunkRailPosts(
-      chunkGroup,
-      course,
-      railMaterial,
-      postGeometry,
-      endBodyGeom,
-      endDomeGeom,
-      chunkPosts,
-      chunkEndPosts,
-    );
-
-    group.add(chunkGroup);
   }
 
   if (CONFIG.debug.showCourseFrames) {
     group.add(buildDebugCourseFrames(course));
   }
 
+  let pulseClock = 0;
+
   function update(dt: number): void {
     boostTexture.offset.y = (boostTexture.offset.y - dt * CONFIG.boost.uvScrollSpeed) % 1;
+    if (edgeStripMaterial && edgeStripTexture) {
+      pulseClock += dt;
+      edgeStripTexture.offset.y = (edgeStripTexture.offset.y - dt * 0.9) % 1;
+      const pulse =
+        0.85 + 0.25 * Math.sin(pulseClock * CONFIG.shortcut.edgeStrip.pulseSpeed * Math.PI * 2);
+      edgeStripMaterial.emissiveIntensity = CONFIG.shortcut.edgeStrip.emissiveIntensity * pulse;
+    }
   }
 
   function applyPalette(name: VisualPresetName): void {
     const preset = VISUAL_PRESETS[name];
 
-    const prevTrackTex = trackTexture;
-    trackTexture = createTrackCanvasTexture(maxAnisotropy, preset, isWideTrack);
-    trackMaterial.map = trackTexture;
-    trackMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
-    trackMaterial.envMapIntensity = preset.trackEnvIntensity;
-    trackMaterial.needsUpdate = true;
-    prevTrackTex.dispose();
+    const prevMainTex = mainTrackTexture;
+    mainTrackTexture = createTrackCanvasTexture(maxAnisotropy, preset, mainIsWideTrack);
+    mainTrackMaterial.map = mainTrackTexture;
+    mainTrackMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
+    mainTrackMaterial.envMapIntensity = preset.trackEnvIntensity;
+    mainTrackMaterial.needsUpdate = true;
+    prevMainTex.dispose();
+
+    if (branchTrackMaterial && branchTrackTexture && branches.length > 0) {
+      const prevBranchTex = branchTrackTexture;
+      const branchIsWide = branches[0].getTrackWidth() >= 12;
+      branchTrackTexture = createTrackCanvasTexture(maxAnisotropy, preset, branchIsWide);
+      branchTrackMaterial.map = branchTrackTexture;
+      branchTrackMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
+      branchTrackMaterial.envMapIntensity = preset.trackEnvIntensity;
+      branchTrackMaterial.needsUpdate = true;
+      prevBranchTex.dispose();
+    }
 
     const prevRailTex = railTexture;
     railTexture = createRailCanvasTexture(maxAnisotropy, preset);
@@ -1265,19 +1403,24 @@ export function buildTrackMesh(
   function dispose(): void {
     const geoms = new Set<THREE.BufferGeometry>([postGeometry, endBodyGeom, endDomeGeom]);
     const mats = new Set<THREE.Material>([
-      trackMaterial,
+      mainTrackMaterial,
       railMaterial,
       jumpStripMaterial,
       boostMaterial,
       startGridMaterial,
     ]);
+    if (branchTrackMaterial) mats.add(branchTrackMaterial);
+    if (edgeStripMaterial) mats.add(edgeStripMaterial);
+
     const texs = new Set<THREE.Texture>([
-      trackTexture,
+      mainTrackTexture,
       railTexture,
       jumpStripTexture,
       boostTexture,
       startGridTexture,
     ]);
+    if (branchTrackTexture) texs.add(branchTrackTexture);
+    if (edgeStripTexture) texs.add(edgeStripTexture);
 
     group.traverse((obj) => {
       if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {

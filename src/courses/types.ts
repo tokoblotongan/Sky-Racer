@@ -49,6 +49,7 @@ export type CourseSegmentConfig =
       readonly width?: number;
       readonly checkpoint?: boolean;
       readonly boostPads?: readonly BoostPadSegmentConfig[];
+      readonly adjust?: boolean;
       readonly name?: string;
       readonly style?: TrackStyle;
     }
@@ -81,6 +82,24 @@ export interface CourseMedals {
   readonly bronze: number;
 }
 
+export interface RouteAnchor {
+  readonly segmentIndex: number;
+  readonly at: number; // pecahan 0..1 di dalam segmen lurus lintasan utama
+}
+
+export interface RouteDefinition {
+  readonly id: string;
+  readonly name: string;
+  readonly width: number;
+  readonly startOffset: number;
+  readonly endOffset: number;
+  readonly entryGapLength: number;
+  readonly mergeGapLength: number;
+  readonly fromAnchor: RouteAnchor;
+  readonly toAnchor: RouteAnchor;
+  readonly segments: readonly CourseSegmentConfig[];
+}
+
 export interface CourseDefinition {
   readonly id: string;
   readonly name: string;
@@ -95,6 +114,7 @@ export interface CourseDefinition {
   readonly startPosition?: { readonly x: number; readonly y: number; readonly z: number };
   readonly startHeadingDeg?: number;
   readonly segments: readonly CourseSegmentConfig[];
+  readonly routes?: readonly RouteDefinition[];
   readonly referenceTime: number;
   readonly referenceLapTime?: number;
   readonly medals: CourseMedals;

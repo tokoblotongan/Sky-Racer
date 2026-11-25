@@ -2,7 +2,7 @@
 
 import { CONFIG } from '../config';
 
-export type QualityLevel = 'low' | 'medium' | 'high';
+export type QualityLevel = 'mobile' | 'low' | 'medium' | 'high';
 export type QualityConfig = typeof CONFIG.quality;
 export type QualityPreset = Omit<QualityConfig['levels'][QualityLevel], 'pixelRatioMax'> & {
   readonly pixelRatioMax: number;
@@ -14,10 +14,11 @@ export interface QualityManager {
   setLevel: (level: QualityLevel) => void;
   getPreset: () => QualityPreset;
   getAverageFps: () => number;
+  getAverageFrameMs: () => number;
   dispose: () => void;
 }
 
-const QUALITY_ORDER: readonly QualityLevel[] = ['low', 'medium', 'high'];
+const QUALITY_ORDER: readonly QualityLevel[] = ['mobile', 'low', 'medium', 'high'];
 
 function isCoarsePointerDevice(): boolean {
   if (typeof window === 'undefined') {
@@ -29,7 +30,39 @@ function isCoarsePointerDevice(): boolean {
   return typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0 && window.innerWidth <= 1024;
 }
 
-function detectInitialQuality(config: QualityConfig, isCoarse: boolean): QualityLevel {
+export function isMobileQualityTarget(
+  config: QualityConfig = CONFIG.quality,
+  isCoarse = isCoarsePointerDevice(),
+): boolean {
+  if (isCoarse) {
+    return true;
+  }
+  if (typeof navigator === 'undefined') {
+    return false;
+  }
+  if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    return true;
+  }
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  if (
+    typeof nav.deviceMemory === 'number' &&
+    nav.deviceMemory <= config.mobileDetect.maxDeviceMemoryGb
+  ) {
+    return true;
+  }
+  if (
+    typeof nav.hardwareConcurrency === 'number' &&
+    nav.hardwareConcurrency <= config.mobileDetect.maxHardwareConcurrency
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function detectInitialQuality(
+  config: QualityConfig = CONFIG.quality,
+  isCoarse = isCoarsePointerDevice(),
+): QualityLevel {
   if (config.initialOverride) {
     if (isCoarse && config.initialOverride === 'high') {
       return 'medium';
@@ -37,36 +70,12 @@ function detectInitialQuality(config: QualityConfig, isCoarse: boolean): Quality
     return config.initialOverride;
   }
 
+  if (isMobileQualityTarget(config, isCoarse)) {
+    return 'mobile';
+  }
+
   const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-  const nav =
-    typeof navigator !== 'undefined'
-      ? (navigator as Navigator & { deviceMemory?: number })
-      : undefined;
-  const cores = typeof nav?.hardwareConcurrency === 'number' ? nav.hardwareConcurrency : 4;
-  const deviceMemory = typeof nav?.deviceMemory === 'number' ? nav.deviceMemory : undefined;
-
-  if (isCoarse) {
-    const minScreenDim =
-      typeof window !== 'undefined'
-        ? Math.min(
-            window.screen?.width || window.innerWidth,
-            window.screen?.height || window.innerHeight,
-          )
-        : 720;
-    if (
-      cores <= 4 ||
-      (deviceMemory !== undefined && deviceMemory <= 3) ||
-      minScreenDim <= 375
-    ) {
-      return 'low';
-    }
-    return 'medium';
-  }
-
-  if (cores <= 2 || (cores <= 4 && dpr >= 2.5)) {
-    return 'low';
-  }
-  if (cores <= 6 || dpr >= 2.0) {
+  if (dpr >= 2.0) {
     return 'medium';
   }
   return 'high';
@@ -95,8 +104,9 @@ export function createQualityManager(
   let warmupRemaining: number = config.warmupSec;
   let sampleTime = 0;
   let sampleFrames = 0;
-  let lowFpsAccum = 0;
+  let slowAccum = 0;
   let lastAvgFps = 60;
+  let lastAvgFrameMs = 16.67;
 
   let debugEl: HTMLElement | null = null;
   if (config.showQualityDebug && typeof document !== 'undefined') {
@@ -122,7 +132,7 @@ export function createQualityManager(
     if (!debugEl) {
       return;
     }
-    debugEl.textContent = `QUALITY: ${currentLevel.toUpperCase()} [F2] | FPS: ${Math.round(lastAvgFps)}`;
+    debugEl.textContent = `QUALITY: ${currentLevel.toUpperCase()} [F2] | FPS: ${Math.round(lastAvgFps)} (${lastAvgFrameMs.toFixed(1)}ms)`;
   }
 
   function applyLevel(nextLevel: QualityLevel, isAutoDowngrade: boolean): void {
@@ -140,7 +150,7 @@ export function createQualityManager(
     }
     sampleTime = 0;
     sampleFrames = 0;
-    lowFpsAccum = 0;
+    slowAccum = 0;
     warmupRemaining = 1.5;
     refreshDebugBadge();
     onChange?.(currentLevel, getEffectivePreset(config, currentLevel, isCoarse));
@@ -162,6 +172,10 @@ export function createQualityManager(
     return lastAvgFps;
   }
 
+  function getAverageFrameMs(): number {
+    return lastAvgFrameMs;
+  }
+
   function update(dt: number): void {
     if (dt <= 0) {
       return;
@@ -178,13 +192,17 @@ export function createQualityManager(
     const bucketWindow = 0.5;
     if (sampleTime >= bucketWindow) {
       lastAvgFps = sampleFrames / sampleTime;
+      lastAvgFrameMs = (sampleTime / sampleFrames) * 1000;
       const bucketDt = sampleTime;
       sampleTime = 0;
       sampleFrames = 0;
 
-      if (lastAvgFps < config.fpsDowngradeThreshold) {
-        lowFpsAccum += bucketDt;
-        if (lowFpsAccum >= config.fpsDowngradeWindowSec) {
+      if (
+        lastAvgFrameMs > config.frameTimeDowngradeMs ||
+        lastAvgFps < config.fpsDowngradeThreshold
+      ) {
+        slowAccum += bucketDt;
+        if (slowAccum >= config.fpsDowngradeWindowSec) {
           const currentIdx = QUALITY_ORDER.indexOf(currentLevel);
           if (currentIdx > 0) {
             const nextLevel = QUALITY_ORDER[currentIdx - 1];
@@ -193,11 +211,11 @@ export function createQualityManager(
               applyLevel(nextLevel, true);
             }
           } else {
-            lowFpsAccum = 0;
+            slowAccum = 0;
           }
         }
       } else {
-        lowFpsAccum = 0;
+        slowAccum = 0;
       }
 
       refreshDebugBadge();
@@ -238,6 +256,7 @@ export function createQualityManager(
     setLevel,
     getPreset,
     getAverageFps,
+    getAverageFrameMs,
     dispose,
   };
 }

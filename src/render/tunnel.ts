@@ -2,7 +2,8 @@
 
 import * as THREE from 'three';
 import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
-import type { Course, TrackFrame } from '../core/course';
+import type { Course, Route, StyleRun, TrackFrame } from '../core/course';
+import type { QualityLevel } from './quality';
 
 export interface TunnelVisual {
   group: THREE.Group;
@@ -398,12 +399,20 @@ export function buildTunnelMesh(
   course: Course,
   maxAnisotropy = 8,
   initialPreset: VisualPresetName = CONFIG.visual.activePreset,
+  quality: QualityLevel = 'high',
 ): TunnelVisual {
   const group = new THREE.Group();
   group.name = 'TunnelGroup';
 
-  const tunnelRuns = course.getStyleRuns().filter((r) => r.style === 'tunnel');
-  if (tunnelRuns.length === 0) {
+  const routeTunnelRuns: Array<{ route: Route; run: StyleRun }> = [];
+  for (const route of course.getAllRoutes()) {
+    for (const run of route.getStyleRuns()) {
+      if (run.style === 'tunnel') {
+        routeTunnelRuns.push({ route, run });
+      }
+    }
+  }
+  if (routeTunnelRuns.length === 0) {
     return {
       group,
       update: () => {},
@@ -477,7 +486,7 @@ export function buildTunnelMesh(
   };
   const negFwd = new THREE.Vector3();
 
-  for (const run of tunnelRuns) {
+  for (const { route, run } of routeTunnelRuns) {
     const runLen = run.endS - run.startS;
     if (runLen < 2) {
       continue;
@@ -488,7 +497,7 @@ export function buildTunnelMesh(
     const runFrames: TrackFrame[] = [];
     for (let i = 0; i < count; i++) {
       const s = THREE.MathUtils.lerp(run.startS, run.endS, i / (count - 1));
-      runFrames.push(course.getFrameAt(s));
+      runFrames.push(route.getFrameAt(s));
     }
 
     const { interiorMesh, exteriorMesh } = buildSweptVaultMesh(
@@ -502,8 +511,10 @@ export function buildTunnelMesh(
     geomsToDispose.push(interiorMesh.geometry, exteriorMesh.geometry);
     group.add(interiorMesh, exteriorMesh);
 
-    // Two ceiling emissive chase light strips
-    for (const latOff of [-3.1, 3.1]) {
+    // Ceiling emissive chase light strips (reduced to 1 centered strip on mobile preset)
+    const stripCount = CONFIG.quality.levels[quality].tunnelLightStrips;
+    const stripOffsets = stripCount <= 1 ? [0] : [-3.1, 3.1];
+    for (const latOff of stripOffsets) {
       const stripMesh = buildCeilingLightRibbon(
         runFrames,
         latOff,
@@ -519,7 +530,7 @@ export function buildTunnelMesh(
     const ribCount = Math.max(2, Math.floor(runLen / tunnelCfg.ribSpacing));
     for (let i = 1; i < ribCount; i++) {
       const s = THREE.MathUtils.lerp(run.startS, run.endS, i / ribCount);
-      course.getFrameAt(s, tmpFrame);
+      route.getFrameAt(s, tmpFrame);
       negFwd.copy(tmpFrame.tangent).negate();
       const mat = new THREE.Matrix4().makeBasis(tmpFrame.right, tmpFrame.up, negFwd);
       mat.setPosition(tmpFrame.position);

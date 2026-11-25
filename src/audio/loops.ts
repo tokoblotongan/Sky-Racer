@@ -48,85 +48,93 @@ export function createLoops(manager: AudioManager): LoopsAudio {
   let disposed = false;
 
   if (ctx && buses) {
-    const now = ctx.currentTime;
+    try {
+      const now = ctx.currentTime;
 
-    if (whiteBuffer) {
-      whiteSource = ctx.createBufferSource();
-      whiteSource.buffer = whiteBuffer;
-      whiteSource.loop = true;
+      if (whiteBuffer) {
+        whiteSource = ctx.createBufferSource();
+        whiteSource.buffer = whiteBuffer;
+        whiteSource.loop = true;
 
-      // 1. Tire skid / drift squeal
-      skidFilter = ctx.createBiquadFilter();
-      skidFilter.type = 'bandpass';
-      skidFilter.frequency.setValueAtTime(cfg.skid.filterFreq, now);
-      skidFilter.Q.setValueAtTime(cfg.skid.filterQ, now);
+        // 1. Tire skid / drift squeal
+        skidFilter = ctx.createBiquadFilter();
+        skidFilter.type = 'bandpass';
+        skidFilter.frequency.setValueAtTime(cfg.skid.filterFreq, now);
+        skidFilter.Q.setValueAtTime(cfg.skid.filterQ, now);
 
-      skidGain = ctx.createGain();
-      skidGain.gain.setValueAtTime(0, now);
+        skidGain = ctx.createGain();
+        skidGain.gain.setValueAtTime(0, now);
 
-      whiteSource.connect(skidFilter);
-      skidFilter.connect(skidGain);
-      skidGain.connect(buses.sfx);
+        whiteSource.connect(skidFilter);
+        skidFilter.connect(skidGain);
+        skidGain.connect(buses.sfx);
 
-      // 2. Speed & airborne wind
-      windFilter = ctx.createBiquadFilter();
-      windFilter.type = 'lowpass';
-      windFilter.frequency.setValueAtTime(cfg.wind.filterBase, now);
-      windFilter.Q.setValueAtTime(0.7, now);
+        // 2. Speed & airborne wind
+        windFilter = ctx.createBiquadFilter();
+        windFilter.type = 'lowpass';
+        windFilter.frequency.setValueAtTime(cfg.wind.filterBase, now);
+        windFilter.Q.setValueAtTime(0.7, now);
 
-      windGain = ctx.createGain();
-      windGain.gain.setValueAtTime(0, now);
+        windGain = ctx.createGain();
+        windGain.gain.setValueAtTime(0, now);
 
-      whiteSource.connect(windFilter);
-      windFilter.connect(windGain);
-      windGain.connect(buses.sfx);
+        whiteSource.connect(windFilter);
+        windFilter.connect(windGain);
+        windGain.connect(buses.sfx);
 
-      // 3. Guardrail scrape hiss
-      railFilter = ctx.createBiquadFilter();
-      railFilter.type = 'bandpass';
-      railFilter.frequency.setValueAtTime(cfg.railScrape.filterFreq, now);
-      railFilter.Q.setValueAtTime(cfg.railScrape.filterQ, now);
+        // 3. Guardrail scrape hiss
+        railFilter = ctx.createBiquadFilter();
+        railFilter.type = 'bandpass';
+        railFilter.frequency.setValueAtTime(cfg.railScrape.filterFreq, now);
+        railFilter.Q.setValueAtTime(cfg.railScrape.filterQ, now);
 
-      railGain = ctx.createGain();
-      railGain.gain.setValueAtTime(0, now);
+        railGain = ctx.createGain();
+        railGain.gain.setValueAtTime(0, now);
 
-      whiteSource.connect(railFilter);
-      railFilter.connect(railGain);
-      railGain.connect(buses.sfx);
+        whiteSource.connect(railFilter);
+        railFilter.connect(railGain);
+        railGain.connect(buses.sfx);
 
-      whiteSource.start(now);
-    }
+        whiteSource.start(now);
+      }
 
-    // 4. Subtle room brown-noise ambience
-    if (brownBuffer) {
-      brownSource = ctx.createBufferSource();
-      brownSource.buffer = brownBuffer;
-      brownSource.loop = true;
+      // 4. Subtle room brown-noise ambience
+      if (brownBuffer) {
+        brownSource = ctx.createBufferSource();
+        brownSource.buffer = brownBuffer;
+        brownSource.loop = true;
 
-      ambienceFilter = ctx.createBiquadFilter();
-      ambienceFilter.type = 'lowpass';
-      ambienceFilter.frequency.setValueAtTime(cfg.ambience.filterFreq, now);
-      ambienceFilter.Q.setValueAtTime(0.6, now);
+        ambienceFilter = ctx.createBiquadFilter();
+        ambienceFilter.type = 'lowpass';
+        ambienceFilter.frequency.setValueAtTime(cfg.ambience.filterFreq, now);
+        ambienceFilter.Q.setValueAtTime(0.6, now);
 
-      ambienceGain = ctx.createGain();
-      ambienceGain.gain.setValueAtTime(cfg.ambience.level, now);
+        ambienceGain = ctx.createGain();
+        ambienceGain.gain.setValueAtTime(cfg.ambience.level, now);
 
-      brownSource.connect(ambienceFilter);
-      ambienceFilter.connect(ambienceGain);
-      ambienceGain.connect(buses.ambience);
+        brownSource.connect(ambienceFilter);
+        ambienceFilter.connect(ambienceGain);
+        ambienceGain.connect(buses.ambience);
 
-      brownSource.start(now);
+        brownSource.start(now);
+      }
+    } catch {
+      dispose();
     }
   }
 
   function silenceGameplayLoops(): void {
-    if (!ctx) {
+    if (!ctx || ctx.state !== 'running') {
       return;
     }
-    const now = ctx.currentTime;
-    if (skidGain) skidGain.gain.setTargetAtTime(0, now, 0.04);
-    if (windGain) windGain.gain.setTargetAtTime(0, now, 0.06);
-    if (railGain) railGain.gain.setTargetAtTime(0, now, 0.04);
+    try {
+      const now = ctx.currentTime;
+      if (skidGain) skidGain.gain.setTargetAtTime(0, now, 0.04);
+      if (windGain) windGain.gain.setTargetAtTime(0, now, 0.06);
+      if (railGain) railGain.gain.setTargetAtTime(0, now, 0.04);
+    } catch {
+      // Ignore loop silence errors
+    }
   }
 
   function notifyRailHit(intensity: number): void {
@@ -134,7 +142,7 @@ export function createLoops(manager: AudioManager): LoopsAudio {
   }
 
   function update(params: LoopsUpdateParams, dt: number): void {
-    if (disposed || !ctx) {
+    if (disposed || !ctx || ctx.state !== 'running') {
       return;
     }
 
@@ -148,10 +156,11 @@ export function createLoops(manager: AudioManager): LoopsAudio {
     }
     updateAccumulator = 0;
 
-    if (!params.active) {
-      silenceGameplayLoops();
-      return;
-    }
+    try {
+      if (!params.active) {
+        silenceGameplayLoops();
+        return;
+      }
 
     const now = ctx.currentTime;
     const speedClamped = Math.max(0, Math.min(1.4, params.speedNorm));
@@ -203,6 +212,9 @@ export function createLoops(manager: AudioManager): LoopsAudio {
         now,
         0.045,
       );
+      }
+    } catch {
+      // Ignore loop audio scheduling errors
     }
   }
 

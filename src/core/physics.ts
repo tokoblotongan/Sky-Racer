@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { CONFIG } from '../config';
 import type { CarInput } from '../input/controls';
 import { startAir, stepAir, type PhysicsEvent as AirPhysicsEvent } from './airPhysics';
-import type { Course, TrackFrame } from './course';
+import type { Route, TrackFrame } from './routes';
 import type { RacePhase } from './state';
 
 export type PhysicsEvent =
@@ -15,6 +15,8 @@ export type CarMode = 'grounded' | 'airborne' | 'falling';
 
 export interface CarState {
   mode: CarMode;
+  routeId: string;
+  routeLapOffset: number;
   s: number;
   lateral: number;
   vForward: number;
@@ -54,6 +56,7 @@ export interface CarPose {
 export interface StepCarOptions {
   phase: RacePhase;
   respawnTarget: { readonly s: number; readonly lateral: number };
+  respawnRoute?: Route;
 }
 
 const _frame: TrackFrame = {
@@ -109,6 +112,7 @@ const LOCKED_FINISH_INPUT: CarInput = {
 export interface CreateCarStateOptions {
   s?: number;
   lateral?: number;
+  routeId?: string;
 }
 
 export function createCarState(options?: CreateCarStateOptions): CarState {
@@ -116,6 +120,8 @@ export function createCarState(options?: CreateCarStateOptions): CarState {
   const startLat = options?.lateral ?? CONFIG.car.startLateral;
   return {
     mode: 'grounded',
+    routeId: options?.routeId ?? 'main',
+    routeLapOffset: 0,
     s: startS,
     lateral: startLat,
     vForward: 0,
@@ -147,6 +153,8 @@ export function createCarState(options?: CreateCarStateOptions): CarState {
 
 export function copyCarState(src: CarState, dst: CarState): void {
   dst.mode = src.mode;
+  dst.routeId = src.routeId;
+  dst.routeLapOffset = src.routeLapOffset;
   dst.s = src.s;
   dst.lateral = src.lateral;
   dst.vForward = src.vForward;
@@ -181,13 +189,15 @@ export function interpolateCarState(
   alpha: number,
   out: CarState,
 ): void {
-  // Avoid bogus interpolation across mode switches (e.g. respawn or takeoff)
-  if (prev.mode !== curr.mode) {
+  // Avoid bogus interpolation across mode or route switches (e.g. respawn, branch merge, or takeoff)
+  if (prev.mode !== curr.mode || prev.routeId !== curr.routeId) {
     copyCarState(curr, out);
     return;
   }
 
   out.mode = curr.mode;
+  out.routeId = curr.routeId;
+  out.routeLapOffset = curr.routeLapOffset;
   out.s = THREE.MathUtils.lerp(prev.s, curr.s, alpha);
   out.lateral = THREE.MathUtils.lerp(prev.lateral, curr.lateral, alpha);
   out.vForward = THREE.MathUtils.lerp(prev.vForward, curr.vForward, alpha);
@@ -233,22 +243,26 @@ export function triggerBoost(state: CarState): void {
 
 export function respawnAt(
   state: CarState,
-  course: Course,
+  route: Route,
   s: number,
   lateral: number,
   speedFactor: number,
+  routeLapOffset = 0,
 ): void {
-  const clampedS = course.clampDistance(s);
-  course.getFrameAt(clampedS, _frame);
-  const maxLateral = Math.max(
-    0.25,
-    _frame.width * 0.5 - CONFIG.physics.railInnerOffset - CONFIG.car.carHalfWidth,
-  );
-  const clampedLat = THREE.MathUtils.clamp(lateral, -maxLateral, maxLateral);
+  const clampedS = route.clampDistance(s);
+  route.getFrameAt(clampedS, _frame);
+  const limits = route.getRailLimits(clampedS);
+  const margin = CONFIG.physics.railInnerOffset + CONFIG.car.carHalfWidth;
+  const minLat = limits.left + margin;
+  const maxLat = limits.right - margin;
+  const clampedLat =
+    minLat <= maxLat ? THREE.MathUtils.clamp(lateral, minLat, maxLat) : (minLat + maxLat) * 0.5;
 
   const forwardSpeed = Math.max(0, state.vForward) * speedFactor;
 
   state.mode = 'grounded';
+  state.routeId = route.routeId;
+  state.routeLapOffset = route.routeId === 'main' ? 0 : routeLapOffset;
   state.s = clampedS;
   state.sApprox = clampedS;
   state.lastSafeS = clampedS;
@@ -284,7 +298,7 @@ export function respawnAt(
 function stepGroundedCar(
   state: CarState,
   input: CarInput,
-  course: Course,
+  course: Route,
   dt: number,
   phase: RacePhase,
   events: PhysicsEvent[],
@@ -484,23 +498,27 @@ function stepGroundedCar(
   state.s += vTrackTangent * dt;
   state.lateral += vTrackRight * dt;
 
-  // 6. Guardrail bounds (yaw-aware footprint), smooth depenetration, one-time impact penalty & anti-stuck
+  // 6. Guardrail bounds (yaw-aware footprint & asymmetric railGaps), smooth depenetration, one-time impact penalty & anti-stuck
   const halfExtentLateral =
     CONFIG.car.carHalfWidth * Math.abs(cosY) + CONFIG.car.carHalfLength * Math.abs(sinY);
-  const maxLateral = Math.max(0.25, _frame.width * 0.5 - cfg.railInnerOffset - halfExtentLateral);
+  const railLimits = course.getRailLimits(state.s);
+  const rawMinLat = railLimits.left + cfg.railInnerOffset + halfExtentLateral;
+  const rawMaxLat = railLimits.right - cfg.railInnerOffset - halfExtentLateral;
+  const midLat = (rawMinLat + rawMaxLat) * 0.5;
+  const minLateral = rawMinLat <= rawMaxLat ? rawMinLat : midLat - 0.1;
+  const maxLateral = rawMinLat <= rawMaxLat ? rawMaxLat : midLat + 0.1;
 
   const contactSide: -1 | 0 | 1 =
-    state.lateral >= maxLateral - 0.01 ? 1 : state.lateral <= -maxLateral + 0.01 ? -1 : 0;
+    state.lateral >= maxLateral - 0.01 ? 1 : state.lateral <= minLateral + 0.01 ? -1 : 0;
 
   if (contactSide !== 0) {
     state.railContactTimer += dt;
 
-    const penetration = contactSide * state.lateral - maxLateral;
+    const penetration = contactSide === 1 ? state.lateral - maxLateral : minLateral - state.lateral;
     if (penetration > 0) {
       const pushOut = Math.min(penetration, cfg.railPushOutSpeed * dt);
       state.lateral -= contactSide * pushOut;
-      const hardLimit = maxLateral + 0.35;
-      state.lateral = THREE.MathUtils.clamp(state.lateral, -hardLimit, hardLimit);
+      state.lateral = THREE.MathUtils.clamp(state.lateral, minLateral - 0.35, maxLateral + 0.35);
     }
 
     const vIntoWall = contactSide * vTrackRight;
@@ -633,7 +651,7 @@ function stepGroundedCar(
 export function stepCar(
   state: CarState,
   input: CarInput,
-  course: Course,
+  route: Route,
   dt: number,
   options: StepCarOptions,
 ): PhysicsEvent[] {
@@ -642,23 +660,23 @@ export function stepCar(
   if (options.phase === 'TITLE' || options.phase === 'COUNTDOWN') {
     state.boostTimeLeft = 0;
     state.boostCooldown = 0;
-    stepGroundedCar(state, LOCKED_PARK_INPUT, course, dt, options.phase, events);
+    stepGroundedCar(state, LOCKED_PARK_INPUT, route, dt, options.phase, events);
     return events;
   }
 
   const effectiveInput = options.phase === 'FINISH' ? LOCKED_FINISH_INPUT : input;
 
   if (state.mode === 'grounded') {
-    stepGroundedCar(state, effectiveInput, course, dt, options.phase, events);
+    stepGroundedCar(state, effectiveInput, route, dt, options.phase, events);
   } else {
     state.slip = 0;
     const airEvents: AirPhysicsEvent[] = [];
-    stepAir(state, effectiveInput, course, dt, airEvents);
+    stepAir(state, effectiveInput, route, dt, airEvents);
     for (const ev of airEvents) events.push(ev);
     if (events.some((ev) => ev.type === 'respawn')) {
       respawnAt(
         state,
-        course,
+        options.respawnRoute ?? route,
         options.respawnTarget.s,
         options.respawnTarget.lateral,
         CONFIG.physics.respawnSpeedFactor,
@@ -669,7 +687,7 @@ export function stepCar(
   return events;
 }
 
-export function getCarPose(state: CarState, course: Course, out?: CarPose): CarPose {
+export function getCarPose(state: CarState, course: Route, out?: CarPose): CarPose {
   const pose: CarPose = out ?? {
     position: new THREE.Vector3(),
     tangent: new THREE.Vector3(),

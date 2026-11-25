@@ -112,6 +112,9 @@ function getOrBuildMinimap(def: CourseDefinition): CachedCourseMinimap {
     let minZ = Infinity;
     let maxZ = -Infinity;
 
+    const branches = course.getBranchRoutes();
+    const branchPointLists: Array<Array<{ x: number; z: number; isGap: boolean }>> = [];
+
     for (let i = 0; i <= sampleCount; i++) {
       const s = (i / sampleCount) * totalLength;
       course.getFrameAt(s, frame);
@@ -122,6 +125,24 @@ function getOrBuildMinimap(def: CourseDefinition): CachedCourseMinimap {
       if (px > maxX) maxX = px;
       if (pz < minZ) minZ = pz;
       if (pz > maxZ) maxZ = pz;
+    }
+
+    for (const branch of branches) {
+      const bLen = branch.getLength();
+      const bCount = Math.max(24, Math.round((bLen / Math.max(1, totalLength)) * sampleCount));
+      const bPts: Array<{ x: number; z: number; isGap: boolean }> = [];
+      for (let i = 0; i <= bCount; i++) {
+        const s = (i / bCount) * bLen;
+        branch.getFrameAt(s, frame);
+        const px = frame.position.x;
+        const pz = frame.position.z;
+        bPts.push({ x: px, z: pz, isGap: frame.isGap });
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (pz < minZ) minZ = pz;
+        if (pz > maxZ) maxZ = pz;
+      }
+      branchPointLists.push(bPts);
     }
 
     const spanX = Math.max(10, maxX - minX);
@@ -193,6 +214,35 @@ function getOrBuildMinimap(def: CourseDefinition): CachedCourseMinimap {
     ctx.lineWidth = 1.4;
     tracePath();
     ctx.stroke();
+
+    // Branch shortcut dashed #00E5FF path(s)
+    if (branchPointLists.length > 0) {
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = '#00E5FF';
+      ctx.lineWidth = 2.2;
+      for (const bPts of branchPointLists) {
+        ctx.beginPath();
+        let penDown = false;
+        for (let i = 0; i < bPts.length; i++) {
+          const pt = bPts[i];
+          const cx = toCanvasX(pt.x);
+          const cy = toCanvasY(pt.z);
+          if (pt.isGap) {
+            penDown = false;
+            continue;
+          }
+          if (!penDown) {
+            ctx.moveTo(cx, cy);
+            penDown = true;
+          } else {
+            ctx.lineTo(cx, cy);
+          }
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
 
     // Checkpoints
     const checkpoints = course.getCheckpoints();
@@ -335,9 +385,7 @@ export function createCourseSelect(
     const onCardClick = (e: MouseEvent): void => {
       e.stopPropagation();
       card.blur();
-      if (def.id === currentSelectedId) {
-        onSelect(def.id);
-      } else {
+      if (def.id !== currentSelectedId) {
         setSelected(def.id);
         onSelect(def.id);
       }
@@ -345,6 +393,12 @@ export function createCourseSelect(
 
     const onCardDblClick = (e: MouseEvent): void => {
       e.stopPropagation();
+      const isTouchDevice =
+        (typeof window !== 'undefined' && Boolean(window.matchMedia?.('(pointer: coarse)').matches)) ||
+        (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0);
+      if (isTouchDevice) {
+        return;
+      }
       if (def.id !== currentSelectedId) {
         setSelected(def.id);
         onSelect(def.id);

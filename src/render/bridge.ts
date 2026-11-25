@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
-import type { Course, TrackFrame } from '../core/course';
+import type { Course, Route, StyleRun, TrackFrame } from '../core/course';
 
 export interface BridgeVisual {
   group: THREE.Group;
@@ -182,8 +182,15 @@ export function buildBridgeMesh(
   const group = new THREE.Group();
   group.name = 'BridgeGroup';
 
-  const bridgeRuns = course.getStyleRuns().filter((r) => r.style === 'bridge');
-  if (bridgeRuns.length === 0) {
+  const routeBridgeRuns: Array<{ route: Route; run: StyleRun }> = [];
+  for (const route of course.getAllRoutes()) {
+    for (const run of route.getStyleRuns()) {
+      if (run.style === 'bridge') {
+        routeBridgeRuns.push({ route, run });
+      }
+    }
+  }
+  if (routeBridgeRuns.length === 0) {
     return {
       group,
       applyPalette: () => {},
@@ -252,7 +259,7 @@ export function buildBridgeMesh(
   const negFwd = new THREE.Vector3();
   const tmpPos = new THREE.Vector3();
 
-  for (const run of bridgeRuns) {
+  for (const { route, run } of routeBridgeRuns) {
     const runLen = run.endS - run.startS;
     if (runLen < 1) {
       continue;
@@ -264,7 +271,7 @@ export function buildBridgeMesh(
     const runFrames: TrackFrame[] = [];
     for (let i = 0; i < sampleCount; i++) {
       const s = THREE.MathUtils.lerp(run.startS, run.endS, i / (sampleCount - 1));
-      runFrames.push(course.getFrameAt(s));
+      runFrames.push(route.getFrameAt(s));
     }
 
     const cableCount = Math.max(2, bridgeCfg.cableCount);
@@ -278,14 +285,31 @@ export function buildBridgeMesh(
       const rad = isTopAccent ? 0.068 : 0.044;
 
       for (const side of [-1, 1] as const) {
-        const cableGeom = buildSweptCableGeometry(runFrames, side, cableY, rad);
-        geomsToDispose.push(cableGeom);
-        const cableMesh = new THREE.Mesh(cableGeom, mat);
-        cableMesh.castShadow = true;
-        cableMesh.receiveShadow = true;
-        cableMesh.updateMatrix();
-        cableMesh.matrixAutoUpdate = false;
-        group.add(cableMesh);
+        let sideSpan: TrackFrame[] = [];
+        const flushCableSpan = (): void => {
+          if (sideSpan.length < 2) {
+            sideSpan = [];
+            return;
+          }
+          const cableGeom = buildSweptCableGeometry(sideSpan, side, cableY, rad);
+          geomsToDispose.push(cableGeom);
+          const cableMesh = new THREE.Mesh(cableGeom, mat);
+          cableMesh.castShadow = true;
+          cableMesh.receiveShadow = true;
+          cableMesh.updateMatrix();
+          cableMesh.matrixAutoUpdate = false;
+          group.add(cableMesh);
+          sideSpan = [];
+        };
+
+        for (const f of runFrames) {
+          if (route.isRailGapAt(f.s, side)) {
+            flushCableSpan();
+          } else {
+            sideSpan.push(f);
+          }
+        }
+        flushCableSpan();
       }
     }
 
@@ -293,12 +317,13 @@ export function buildBridgeMesh(
     const postCount = Math.max(2, Math.floor(runLen / bridgeCfg.postSpacing) + 1);
     for (let i = 0; i < postCount; i++) {
       const s = THREE.MathUtils.lerp(run.startS + 0.5, run.endS - 0.5, i / (postCount - 1));
-      course.getFrameAt(s, tmpFrame);
+      route.getFrameAt(s, tmpFrame);
       negFwd.copy(tmpFrame.tangent).negate();
       basisMat.makeBasis(tmpFrame.right, tmpFrame.up, negFwd);
 
       const edgeOffset = tmpFrame.width * 0.5 + CONFIG.physics.railInnerOffset + 0.14;
       for (const side of [-1, 1] as const) {
+        if (route.isRailGapAt(s, side)) continue;
         tmpPos
           .copy(tmpFrame.position)
           .addScaledVector(tmpFrame.right, side * edgeOffset)
@@ -333,7 +358,7 @@ export function buildBridgeMesh(
         pylonSpan > 1
           ? THREE.MathUtils.lerp(run.startS + pylonMargin, run.endS - pylonMargin, i / pylonIntervals)
           : (run.startS + run.endS) * 0.5;
-      const frame = course.getFrameAt(s);
+      const frame = route.getFrameAt(s);
       const latOffset = frame.width * 0.42;
       const deckUnderOffset = CONFIG.course.trackThickness + 0.15;
 
@@ -413,7 +438,7 @@ export function buildBridgeMesh(
         for (let k = 0; k <= spanSteps; k++) {
           const t = k / spanSteps;
           const s = THREE.MathUtils.lerp(a.s, b.s, t);
-          course.getFrameAt(s, tmpFrame);
+          route.getFrameAt(s, tmpFrame);
           const lat = side * (tmpFrame.width * 0.42);
           const deckPt = tmpFrame.position
             .clone()

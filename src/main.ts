@@ -17,12 +17,15 @@ import {
   type CarPose,
   type CarState,
 } from './core/physics';
+import { updateRouteTransitions } from './core/routeTransitions';
 import {
   applyManualResetPenalty,
   createRaceState,
   getRespawnTarget,
+  pauseRaceClock,
   refreshRaceRecords,
   restartRace,
+  resumeRaceClock,
   returnToTitle,
   startCountdown,
   updateRace,
@@ -31,7 +34,7 @@ import {
   type RaceState,
 } from './core/state';
 import { createKeyboardControls } from './input/controls';
-import { createTouchControls } from './input/touch';
+import { createTouchControls, requestLandscapeOrientation } from './input/touch';
 import { buildBridgeMesh, type BridgeVisual } from './render/bridge';
 import { buildCarMesh, type CarVisual } from './render/car';
 import type { CarDesignId } from './render/carDesigns';
@@ -39,8 +42,9 @@ import { ChaseCamera } from './render/chaseCamera';
 import { buildGates, type GatesVisual } from './render/gates';
 import { createParticles } from './render/particles';
 import { createPostFx } from './render/postfx';
-import { createQualityManager, type QualityLevel } from './render/quality';
+import { createQualityManager, detectInitialQuality, type QualityLevel } from './render/quality';
 import { createSceneContext } from './render/scene';
+import { buildShortcutGates, type ShortcutGateVisual } from './render/shortcutGate';
 import { buildTrackMesh, type TrackVisual } from './render/track';
 import { buildTrackAccents, type TrackAccentsVisual } from './render/trackAccents';
 import { buildTunnelMesh, type TunnelVisual } from './render/tunnel';
@@ -52,6 +56,11 @@ import {
 } from './services/records';
 import { createCourseSelect, type CourseSelectHandle } from './ui/courseCard';
 import {
+  disposeErrorOverlay,
+  isDebugUrlEnabled,
+  logErrorOverlay,
+} from './ui/errorOverlay';
+import {
   createHud,
   disposeHud,
   hideAirtimePopup,
@@ -62,13 +71,17 @@ import {
   hideSplitPopup,
   hideZoneToast,
   setHudProgressCheckpoints,
+  setStartButtonLoading,
   showAirtimePopup,
+  showContextLostOverlay,
   showCountdownOverlay,
   showFinishScreen,
   showLapPopup,
   showLoadingOverlay,
+  showShortcutToast,
   showSplitPopup,
   showZoneToast,
+  updateDebugMetricsOverlay,
   updateHud,
   updateTitleScreen,
   type HudViewModel,
@@ -144,9 +157,10 @@ function createDebugOverlay(container: HTMLElement): DebugOverlay | null {
         lastSampleMs = nowMs;
       }
 
+      const debugRoute = course.getRoute(carState.routeId);
       const activeS = carState.mode === 'grounded' ? carState.s : carState.sApprox;
-      course.getFrameAt(activeS, tmpFrame);
-      const seg = course.getSegmentAt(activeS);
+      debugRoute.getFrameAt(activeS, tmpFrame);
+      const seg = debugRoute.getSegmentAt(activeS);
       const speedMs =
         carState.mode === 'grounded' ? Math.abs(carState.vForward) : carState.worldVel.length();
       const speedKmh = Math.round(speedMs * 3.6);
@@ -158,7 +172,7 @@ function createDebugOverlay(container: HTMLElement): DebugOverlay | null {
 
       const lapInfo = raceState.laps > 1 ? ` | LAP: ${raceState.currentLap}/${raceState.laps}` : '';
       panel.textContent =
-        `FPS: ${displayedFps} | DESIGN: ${carDesignId.toUpperCase()} | PRESET: ${presetName.toUpperCase()} | QUAL: ${qualityLevel.toUpperCase()} | PHASE: ${raceState.phase} | MODE: ${carState.mode.toUpperCase()} | SPD: ${speedKmh} km/h\n` +
+        `FPS: ${displayedFps} | DESIGN: ${carDesignId.toUpperCase()} | PRESET: ${presetName.toUpperCase()} | QUAL: ${qualityLevel.toUpperCase()} | PHASE: ${raceState.phase} | ROUTE: ${carState.routeId.toUpperCase()} | MODE: ${carState.mode.toUpperCase()} | SPD: ${speedKmh} km/h\n` +
         `POS: s=${carState.s.toFixed(1)}m sApprox=${carState.sApprox.toFixed(1)}m lat=${carState.lateral.toFixed(2)}m | yaw=${yawDeg.toFixed(1)}° vLat=${carState.vLateral.toFixed(2)}m/s steer=${carState.steer.toFixed(2)} rail=${carState.railContactTimer.toFixed(2)}s\n` +
         `CP: next=${raceState.nextCheckpointIndex}/${raceState.totalCheckpoints}${lapInfo} | BOOST: ${carState.boostTimeLeft.toFixed(2)}s | AIR: ${carState.airtime.toFixed(2)}s\n` +
         `SEG: #${seg.index} ${seg.type} (${Math.round(seg.progress * 100)}%) | PITCH: ${pitchDeg}° BANK: ${bankDeg}°`;
@@ -201,7 +215,25 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
-function bootstrap(): void {
+function extractErrorInfo(err: unknown): { message: string; file?: string; line?: number } {
+  if (err instanceof Error) {
+    const stackLines = (err.stack || '').split('\n');
+    for (const raw of stackLines) {
+      const match = raw.match(/(https?:\/\/[^\s)]+|\/[^\s)]+\.[tj]sx?):(\d+)(?::\d+)?/);
+      if (match) {
+        return {
+          message: err.message || 'runtime error',
+          file: match[1],
+          line: Number.parseInt(match[2], 10),
+        };
+      }
+    }
+    return { message: err.message || 'runtime error' };
+  }
+  return { message: String(err ?? 'runtime error') };
+}
+
+export async function bootstrap(): Promise<void> {
   const container = document.getElementById('app');
   if (!container) {
     throw new Error('Root container #app not found.');
@@ -210,7 +242,8 @@ function bootstrap(): void {
   let activePreset: VisualPresetName = CONFIG.visual.activePreset;
   let activeCarDesign: CarDesignId = CONFIG.car.visual.designId;
 
-  const sceneCtx = createSceneContext(container);
+  const detectedQuality = detectInitialQuality(CONFIG.quality);
+  const sceneCtx = createSceneContext(container, detectedQuality);
   const debugOverlay = createDebugOverlay(container);
   const sound = createSound();
   sound.init();
@@ -301,6 +334,9 @@ function bootstrap(): void {
   let gates: GatesVisual = buildGates(course, sceneCtx.maxAnisotropy);
   sceneCtx.scene.add(gates.group);
 
+  let shortcutGateVisual: ShortcutGateVisual = buildShortcutGates(course, sceneCtx.maxAnisotropy);
+  sceneCtx.scene.add(shortcutGateVisual.group);
+
   let orbitRadius = Math.max(
     CONFIG.camera.orbitMinRadius,
     bounds.radius * CONFIG.camera.orbitRadiusScale,
@@ -338,7 +374,12 @@ function bootstrap(): void {
   );
   sceneCtx.scene.add(bridgeVisual.group);
 
-  let tunnelVisual: TunnelVisual = buildTunnelMesh(course, sceneCtx.maxAnisotropy, activePreset);
+  let tunnelVisual: TunnelVisual = buildTunnelMesh(
+    course,
+    sceneCtx.maxAnisotropy,
+    activePreset,
+    initialQuality,
+  );
   sceneCtx.scene.add(tunnelVisual.group);
 
   let trackAccentsVisual: TrackAccentsVisual = buildTrackAccents(
@@ -377,6 +418,7 @@ function bootstrap(): void {
     bridgeVisual.applyPalette(name);
     tunnelVisual.applyPalette(name);
     trackAccentsVisual.applyPalette(name);
+    shortcutGateVisual.applyPalette(name);
     carVisual.applyPalette(name);
     postfx.applyPalette(name);
     syncHudPalette(name);
@@ -553,8 +595,37 @@ function bootstrap(): void {
   let switchDebounceTimer = 0;
   let switchRafId = 0;
   let disposed = false;
+  let contextLost = false;
+  let isLoadingCourse = false;
+  let pendingStartAfterLoad = false;
+  let lastConfirmAtMs = 0;
 
   let courseSelect: CourseSelectHandle;
+
+  function emitDebugMetrics(nowMs: number): void {
+    if (!isDebugUrlEnabled()) {
+      return;
+    }
+    const status = isLoadingCourse ? 'LOADING' : raceState.phase;
+    updateDebugMetricsOverlay(
+      hud,
+      {
+        fps: qualityManager.getAverageFps(),
+        avgFrameMs: qualityManager.getAverageFrameMs(),
+        drawCalls: sceneCtx.renderer.info.render.calls,
+        triangles: sceneCtx.renderer.info.render.triangles,
+        geometries: sceneCtx.renderer.info.memory.geometries,
+        textures: sceneCtx.renderer.info.memory.textures,
+        status,
+        countdownSec: raceState.countdownDisplayNumber,
+        countdownWallMs: raceState.countdownElapsedMs,
+        courseId: course.getId(),
+        routeId: currState.routeId,
+        quality: qualityManager.getLevel(),
+      },
+      nowMs,
+    );
+  }
 
   function syncTitleUi(): void {
     const previewDef = getCourse(selectedCourseId);
@@ -567,7 +638,7 @@ function bootstrap(): void {
     courseSelect?.refreshRecords();
   }
 
-  function clearPendingCourseSwitch(): void {
+  function clearPendingCourseSwitch(hideOverlay = true): void {
     if (switchDebounceTimer !== 0) {
       window.clearTimeout(switchDebounceTimer);
       switchDebounceTimer = 0;
@@ -576,7 +647,56 @@ function bootstrap(): void {
       window.cancelAnimationFrame(switchRafId);
       switchRafId = 0;
     }
+    if (hideOverlay && !isLoadingCourse) {
+      hideLoadingOverlay(hud);
+    }
+  }
+
+  const handleCanvasContextLost = (event: Event): void => {
+    event.preventDefault();
+    if (contextLost) {
+      return;
+    }
+    contextLost = true;
+    pendingStartAfterLoad = false;
+    isLoadingCourse = false;
+    clearPendingCourseSwitch(false);
+    window.cancelAnimationFrame(frameHandle);
+    window.clearTimeout(frameHandle);
+    try {
+      setAudioPaused(true);
+    } catch {
+      // Ignore audio pause errors during context loss
+    }
+    logErrorOverlay('webgl context lost');
     hideLoadingOverlay(hud);
+    setStartButtonLoading(hud, false, false);
+    showContextLostOverlay(hud);
+  };
+  sceneCtx.renderer.domElement.addEventListener('webglcontextlost', handleCanvasContextLost);
+
+  async function precompileShaders(label = 'Memuat arena...'): Promise<void> {
+    if (disposed || contextLost) {
+      return;
+    }
+    showLoadingOverlay(hud, label, 85);
+    emitDebugMetrics(performance.now());
+    const renderer = sceneCtx.renderer as THREE.WebGLRenderer & {
+      compileAsync?: (scene: THREE.Scene, camera: THREE.Camera) => Promise<void>;
+    };
+    try {
+      if (typeof renderer.compileAsync === 'function') {
+        await renderer.compileAsync(sceneCtx.scene, sceneCtx.camera);
+      } else {
+        renderer.compile(sceneCtx.scene, sceneCtx.camera);
+      }
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      logErrorOverlay(info.message, info.file, info.line);
+    }
+    if (!disposed && !contextLost) {
+      showLoadingOverlay(hud, label, 100);
+    }
   }
 
   let zoneStarts = course.getZoneStarts();
@@ -589,13 +709,7 @@ function bootstrap(): void {
     hideZoneToast(hud);
   }
 
-  function loadCourse(id: string): void {
-    clearPendingCourseSwitch();
-    const nextDef = getCourse(id);
-    selectedCourseId = nextDef.id;
-    loadedCourseId = nextDef.id;
-    activeCourseDef = nextDef;
-
+  function disposeCurrentCourseVisuals(): void {
     sceneCtx.scene.remove(trackVisual.group);
     trackVisual.dispose();
     sceneCtx.scene.remove(bridgeVisual.group);
@@ -606,8 +720,18 @@ function bootstrap(): void {
     trackAccentsVisual.dispose();
     sceneCtx.scene.remove(gates.group);
     gates.dispose();
+    sceneCtx.scene.remove(shortcutGateVisual.group);
+    shortcutGateVisual.dispose();
+  }
 
-    course = new Course(buildCourseConfigFromDefinition(activeCourseDef));
+  function buildCourseObjects(
+    targetDef: ReturnType<typeof getCourse>,
+    showProgress: boolean,
+  ): void {
+    if (showProgress) {
+      showLoadingOverlay(hud, 'Memuat arena...', 30);
+    }
+    course = new Course(buildCourseConfigFromDefinition(targetDef));
     raceState = createRaceState(course);
     zoneStarts = course.getZoneStarts();
     resetZoneTracking();
@@ -625,6 +749,10 @@ function bootstrap(): void {
     sceneCtx.setRoomBounds(bounds);
     sceneCtx.setTheme(course, qualityManager.getLevel());
 
+    if (showProgress) {
+      showLoadingOverlay(hud, 'Memuat arena...', 55);
+    }
+
     trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy);
     trackVisual.applyPalette(activePreset);
     sceneCtx.scene.add(trackVisual.group);
@@ -637,14 +765,27 @@ function bootstrap(): void {
     );
     sceneCtx.scene.add(bridgeVisual.group);
 
-    tunnelVisual = buildTunnelMesh(course, sceneCtx.maxAnisotropy, activePreset);
+    tunnelVisual = buildTunnelMesh(
+      course,
+      sceneCtx.maxAnisotropy,
+      activePreset,
+      qualityManager.getLevel(),
+    );
     sceneCtx.scene.add(tunnelVisual.group);
+
+    if (showProgress) {
+      showLoadingOverlay(hud, 'Memuat arena...', 75);
+    }
 
     trackAccentsVisual = buildTrackAccents(course, sceneCtx.maxAnisotropy, activePreset);
     sceneCtx.scene.add(trackAccentsVisual.group);
 
     gates = buildGates(course, sceneCtx.maxAnisotropy);
     sceneCtx.scene.add(gates.group);
+
+    shortcutGateVisual = buildShortcutGates(course, sceneCtx.maxAnisotropy);
+    shortcutGateVisual.applyPalette(activePreset);
+    sceneCtx.scene.add(shortcutGateVisual.group);
 
     orbitRadius = Math.max(
       CONFIG.camera.orbitMinRadius,
@@ -687,13 +828,65 @@ function bootstrap(): void {
 
     touchControls.setPhase(raceState.phase);
     sound.setPhase(raceState.phase);
-    syncTitleUi();
     lastFrameMs = performance.now();
     accumulator = 0;
   }
 
+  async function loadCourse(id: string): Promise<void> {
+    if (isLoadingCourse || disposed || contextLost) {
+      return;
+    }
+    clearPendingCourseSwitch(false);
+    const prevCourseId = loadedCourseId;
+    const nextDef = getCourse(id);
+
+    isLoadingCourse = true;
+    setStartButtonLoading(hud, true, pendingStartAfterLoad);
+    showLoadingOverlay(hud, 'Memuat arena...', 10);
+    emitDebugMetrics(performance.now());
+
+    try {
+      selectedCourseId = nextDef.id;
+      activeCourseDef = nextDef;
+
+      disposeCurrentCourseVisuals();
+      buildCourseObjects(nextDef, true);
+      loadedCourseId = nextDef.id;
+      await precompileShaders('Memuat arena...');
+      syncTitleUi();
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      logErrorOverlay(info.message, info.file, info.line);
+      pendingStartAfterLoad = false;
+
+      const prevDef = getCourse(prevCourseId);
+      selectedCourseId = prevDef.id;
+      loadedCourseId = prevDef.id;
+      activeCourseDef = prevDef;
+      setLastCourseId(prevDef.id);
+      try {
+        disposeCurrentCourseVisuals();
+        buildCourseObjects(prevDef, false);
+        await precompileShaders('Memuat arena...');
+      } catch (rollbackErr) {
+        const rbInfo = extractErrorInfo(rollbackErr);
+        logErrorOverlay(rbInfo.message, rbInfo.file, rbInfo.line);
+      }
+      syncTitleUi();
+    } finally {
+      isLoadingCourse = false;
+      setStartButtonLoading(hud, false, false);
+      hideLoadingOverlay(hud);
+      emitDebugMetrics(performance.now());
+      if (pendingStartAfterLoad && !disposed && !contextLost && raceState.phase === 'TITLE') {
+        pendingStartAfterLoad = false;
+        handleConfirmAction();
+      }
+    }
+  }
+
   function selectArena(id: string): void {
-    if (raceState.phase !== 'TITLE') {
+    if (raceState.phase !== 'TITLE' || isLoadingCourse || contextLost) {
       return;
     }
     const nextDef = getCourse(id);
@@ -713,19 +906,26 @@ function bootstrap(): void {
 
     switchDebounceTimer = window.setTimeout(() => {
       switchDebounceTimer = 0;
-      if (disposed || raceState.phase !== 'TITLE' || selectedCourseId === loadedCourseId) {
+      if (
+        disposed ||
+        contextLost ||
+        isLoadingCourse ||
+        raceState.phase !== 'TITLE' ||
+        selectedCourseId === loadedCourseId
+      ) {
         return;
       }
-      showLoadingOverlay(hud);
+      showLoadingOverlay(hud, 'Memuat arena...', 5);
       switchRafId = window.requestAnimationFrame(() => {
         switchRafId = 0;
-        if (disposed) {
+        if (disposed || contextLost) {
           return;
         }
         if (raceState.phase === 'TITLE' && selectedCourseId !== loadedCourseId) {
-          loadCourse(selectedCourseId);
+          void loadCourse(selectedCourseId);
+        } else {
+          hideLoadingOverlay(hud);
         }
-        hideLoadingOverlay(hud);
       });
     }, CONFIG.courseSelect.debounceMs);
   }
@@ -753,10 +953,18 @@ function bootstrap(): void {
     if (resolved === paused) {
       return;
     }
+    const nowMs = performance.now();
     paused = resolved;
-    setAudioPaused(paused);
-    if (!paused) {
-      lastFrameMs = performance.now();
+    try {
+      setAudioPaused(paused);
+    } catch {
+      // Ignore audio pause failures
+    }
+    if (paused) {
+      pauseRaceClock(raceState, nowMs);
+    } else {
+      resumeRaceClock(raceState, nowMs);
+      lastFrameMs = nowMs;
       accumulator = 0;
     }
   }
@@ -776,6 +984,8 @@ function bootstrap(): void {
     for (const ev of events) {
       if (ev.type === 'countdownTick') {
         showCountdownOverlay(hud, String(ev.n), false);
+      } else if (ev.type === 'countdownWatchdog') {
+        logErrorOverlay(`countdown watchdog forced start (${Math.round(ev.elapsedMs)}ms)`);
       } else if (ev.type === 'go') {
         showCountdownOverlay(hud, 'GO!', true);
       } else if (ev.type === 'checkpoint') {
@@ -803,27 +1013,57 @@ function bootstrap(): void {
   }
 
   function handleConfirmAction(): void {
+    if (disposed || contextLost) {
+      return;
+    }
+    const nowMs = performance.now();
+    if (nowMs - lastConfirmAtMs < 250) {
+      return;
+    }
     sound.unlock();
+
+    if (raceState.phase === 'TITLE') {
+      if (isLoadingCourse) {
+        pendingStartAfterLoad = true;
+        setStartButtonLoading(hud, true, true);
+        return;
+      }
+      if (selectedCourseId !== loadedCourseId) {
+        pendingStartAfterLoad = true;
+        clearPendingCourseSwitch(false);
+        void loadCourse(selectedCourseId);
+        return;
+      }
+
+      lastConfirmAtMs = nowMs;
+      touchControls.consumePresses();
+      lastFinishData = null;
+      lastFinishRecords = null;
+      hideFinishScreen(hud);
+      wrongWayDetector.reset();
+      wrongWayActive = false;
+
+      if (touchControls.isEnabled()) {
+        requestLandscapeOrientation();
+      }
+
+      resetZoneTracking();
+      sound.handleEvents([{ type: 'uiConfirm' }]);
+      particles.reset();
+      postfx.setSpeedIntensity(0);
+      const events = startCountdown(raceState, nowMs);
+      chaseCamera.setMode('chase');
+      handleRaceEvents(events);
+      return;
+    }
+
+    lastConfirmAtMs = nowMs;
+    touchControls.consumePresses();
     lastFinishData = null;
     lastFinishRecords = null;
     hideFinishScreen(hud);
     wrongWayDetector.reset();
     wrongWayActive = false;
-
-    if (raceState.phase === 'TITLE') {
-      clearPendingCourseSwitch();
-      if (selectedCourseId !== loadedCourseId) {
-        loadCourse(selectedCourseId);
-      }
-      resetZoneTracking();
-      sound.handleEvents([{ type: 'uiConfirm' }]);
-      particles.reset();
-      postfx.setSpeedIntensity(0);
-      const events = startCountdown(raceState);
-      chaseCamera.setMode('chase');
-      handleRaceEvents(events);
-      return;
-    }
 
     prevState = createStartCarState();
     currState = createStartCarState();
@@ -836,7 +1076,7 @@ function bootstrap(): void {
     hideCountdownOverlay(hud);
 
     sound.reset();
-    const events = restartRace(raceState);
+    const events = restartRace(raceState, nowMs);
     resetZoneTracking();
     chaseCamera.setMode('chase');
 
@@ -851,6 +1091,7 @@ function bootstrap(): void {
   function handleReturnToTitle(): void {
     sound.unlock();
     clearPendingCourseSwitch();
+    pendingStartAfterLoad = false;
     lastFinishData = null;
     lastFinishRecords = null;
     lastThrottle = 0;
@@ -898,7 +1139,8 @@ function bootstrap(): void {
 
   function handleCheckpointReset(): void {
     const target = getRespawnTarget(raceState, course);
-    respawnAt(currState, course, target.s, target.lateral, CONFIG.race.resetSpeedFactor);
+    const targetRoute = course.getRoute(target.routeId);
+    respawnAt(currState, targetRoute, target.s, target.lateral, CONFIG.race.resetSpeedFactor);
     applyManualResetPenalty(raceState);
     copyCarState(currState, prevState);
     wrongWayDetector.reset();
@@ -908,12 +1150,12 @@ function bootstrap(): void {
     sound.handleEvents([{ type: 'respawn' }]);
 
     if (CONFIG.camera.snapOnReset && !CONFIG.camera.debugOrbitMode) {
-      getCarPose(currState, course, renderPose);
-      chaseCamera.snapTo(renderPose, currState, course);
+      getCarPose(currState, targetRoute, renderPose);
+      chaseCamera.snapTo(renderPose, currState, targetRoute);
     }
   }
 
-  function update(step: number): void {
+  function update(step: number, nowMs: number): void {
     const input = controls.sample(step);
 
     if (input.mutePressed) {
@@ -938,7 +1180,9 @@ function bootstrap(): void {
       return;
     }
 
-    if (input.confirmPressed || (input.restartPressed && raceState.phase !== 'TITLE')) {
+    const canConfirmNow =
+      raceState.phase === 'TITLE' || (raceState.phase === 'FINISH' && raceState.resultReady);
+    if ((input.confirmPressed && canConfirmNow) || (input.restartPressed && raceState.phase !== 'TITLE')) {
       lastThrottle = 0;
       handleConfirmAction();
       return;
@@ -953,11 +1197,22 @@ function bootstrap(): void {
     lastThrottle = raceState.phase === 'RACING' ? input.throttle : 0;
 
     copyCarState(currState, prevState);
+    let activeRoute = course.getRoute(currState.routeId);
     const respawnTarget = getRespawnTarget(raceState, course);
-    const physicsEvents = stepCar(currState, input, course, step, {
+    const respawnRoute = course.getRoute(respawnTarget.routeId);
+    const physicsEvents = stepCar(currState, input, activeRoute, step, {
       phase: raceState.phase,
       respawnTarget,
+      respawnRoute,
     });
+
+    const routeTransition = updateRouteTransitions(currState, course);
+    if (routeTransition) {
+      activeRoute = course.getRoute(currState.routeId);
+      if (routeTransition.kind === 'enter' && raceState.phase === 'RACING') {
+        showShortcutToast(hud, routeTransition.routeName);
+      }
+    }
 
     for (const ev of physicsEvents) {
       touchControls.onHaptic(ev);
@@ -973,7 +1228,7 @@ function bootstrap(): void {
       } else if (ev.type === 'railHit') {
         particles.emit(ev);
       } else if (ev.type === 'boost') {
-        getCarPose(currState, course, eventPose);
+        getCarPose(currState, activeRoute, eventPose);
         particles.emit({
           type: 'boost',
           position: eventPose.position,
@@ -982,11 +1237,13 @@ function bootstrap(): void {
           up: eventPose.up,
         });
       } else if (ev.type === 'respawn') {
+        const currentRoute = course.getRoute(currState.routeId);
+        activeRoute = currentRoute;
         copyCarState(currState, prevState);
         hideAirtimePopup(hud);
         if (!CONFIG.camera.debugOrbitMode) {
-          getCarPose(currState, course, renderPose);
-          chaseCamera.snapTo(renderPose, currState, course);
+          getCarPose(currState, currentRoute, renderPose);
+          chaseCamera.snapTo(renderPose, currState, currentRoute);
         }
       }
     }
@@ -1003,17 +1260,20 @@ function bootstrap(): void {
         s: currState.s,
         sApprox: currState.sApprox,
         mode: currState.mode,
+        routeId: currState.routeId,
+        routeLapOffset: currState.routeLapOffset,
         speedKmh: carSpeedKmh,
       },
       course,
       step,
       physicsEvents,
+      nowMs,
     );
     handleRaceEvents(raceEvents);
 
     const activeWrongWayS = currState.mode === 'grounded' ? currState.s : currState.sApprox;
-    course.getFrameAt(activeWrongWayS, wrongWayFrame);
-    getCarPose(currState, course, eventPose);
+    activeRoute.getFrameAt(activeWrongWayS, wrongWayFrame);
+    getCarPose(currState, activeRoute, eventPose);
     wrongWayActive = wrongWayDetector.update(
       {
         carState: currState,
@@ -1026,7 +1286,12 @@ function bootstrap(): void {
     );
 
     const activeZoneS = currState.mode === 'grounded' ? currState.s : currState.sApprox;
-    if (raceState.phase === 'RACING' && zoneStarts.length > 0 && !wrongWayActive) {
+    if (
+      raceState.phase === 'RACING' &&
+      currState.routeId === 'main' &&
+      zoneStarts.length > 0 &&
+      !wrongWayActive
+    ) {
       if (raceState.currentLap !== lastZoneLap) {
         enteredZonesInLap.clear();
         lastZoneLap = raceState.currentLap;
@@ -1052,9 +1317,11 @@ function bootstrap(): void {
     trackVisual.update(realDt);
     tunnelVisual.update(realDt);
     trackAccentsVisual.update(realDt);
+    shortcutGateVisual.update(realDt);
 
     interpolateCarState(prevState, currState, alpha, renderState);
-    getCarPose(renderState, course, renderPose);
+    const renderRoute = course.getRoute(renderState.routeId);
+    getCarPose(renderState, renderRoute, renderPose);
 
     carVisual.group.position.copy(renderPose.position);
     carVisual.group.quaternion.copy(renderPose.quaternion);
@@ -1068,7 +1335,7 @@ function bootstrap(): void {
       sceneCtx.setCameraOrbitAngle(interpolatedAngle);
       sceneCtx.updateSunShadowTarget(bounds.center);
     } else {
-      chaseCamera.update(renderPose, renderState, course, realDt);
+      chaseCamera.update(renderPose, renderState, renderRoute, realDt);
       sceneCtx.updateSunShadowTarget(renderPose.position);
     }
 
@@ -1107,8 +1374,10 @@ function bootstrap(): void {
     soundSnapshot.railContact = renderState.railContactTimer > 0;
     sound.update(soundSnapshot, realDt);
 
+    const rawProgressS = renderState.mode === 'grounded' ? renderState.s : renderState.sApprox;
     const activeProgressS =
-      renderState.mode === 'grounded' ? renderState.s : renderState.sApprox;
+      (renderState.routeId !== 'main' ? (renderState.routeLapOffset ?? 0) : 0) +
+      course.getProgressS(renderState.routeId, rawProgressS);
     const lapStartS = Math.max(0, raceState.currentLap - 1) * progressSpanS;
     const progress01 = isClosedCourse
       ? activeProgressS < lapStartS
@@ -1149,7 +1418,7 @@ function bootstrap(): void {
       const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
       gl.flush();
       const poll = (): void => {
-        if (disposed) {
+        if (disposed || contextLost) {
           return;
         }
         const status = sync ? gl.getSyncParameter(sync, gl.SYNC_STATUS) : gl.SIGNALED;
@@ -1169,57 +1438,96 @@ function bootstrap(): void {
   }
 
   function tick(nowMs: number): void {
-    if (disposed) {
+    if (disposed || contextLost) {
       return;
     }
 
-    const rawDt = (nowMs - lastFrameMs) / 1000;
-    lastFrameMs = nowMs;
+    try {
+      const rawDt = (nowMs - lastFrameMs) / 1000;
+      lastFrameMs = nowMs;
 
-    if (!paused) {
-      const frameDt = Math.min(Math.max(rawDt, 0), maxFrameDt);
-      accumulator += frameDt;
+      if (!paused) {
+        const frameDt = Math.min(Math.max(rawDt, 0), maxFrameDt);
+        accumulator += frameDt;
 
-      while (accumulator >= fixedStep) {
-        update(fixedStep);
-        accumulator -= fixedStep;
+        let subSteps = 0;
+        while (accumulator >= fixedStep && subSteps < CONFIG.sim.maxSubSteps) {
+          update(fixedStep, nowMs);
+          accumulator -= fixedStep;
+          subSteps++;
+        }
+        if (accumulator >= fixedStep) {
+          accumulator = 0;
+        }
+
+        const alpha = accumulator / fixedStep;
+        render(alpha, frameDt);
+        qualityManager.update(frameDt);
+        debugOverlay?.update(
+          nowMs,
+          currState,
+          raceState,
+          course,
+          qualityManager.getLevel(),
+          activePreset,
+          activeCarDesign,
+        );
       }
 
-      const alpha = accumulator / fixedStep;
-      render(alpha, frameDt);
-      qualityManager.update(frameDt);
-      debugOverlay?.update(
-        nowMs,
-        currState,
-        raceState,
-        course,
-        qualityManager.getLevel(),
-        activePreset,
-        activeCarDesign,
-      );
+      emitDebugMetrics(nowMs);
+    } catch (err) {
+      const info = extractErrorInfo(err);
+      logErrorOverlay(info.message, info.file, info.line);
+    } finally {
+      if (!disposed && !contextLost) {
+        if (sceneCtx.isSoftwareGl) {
+          scheduleAfterSoftwareDraw(() => tick(performance.now()));
+        } else {
+          frameHandle = window.requestAnimationFrame(tick);
+        }
+      }
+    }
+  }
+
+  // Initial shader pre-compilation before gameplay countdown can begin
+  isLoadingCourse = true;
+  setStartButtonLoading(hud, true, false);
+  showLoadingOverlay(hud, 'Memuat arena...', 50);
+  emitDebugMetrics(performance.now());
+  try {
+    await precompileShaders('Memuat arena...');
+  } finally {
+    isLoadingCourse = false;
+    setStartButtonLoading(hud, false, false);
+    hideLoadingOverlay(hud);
+    emitDebugMetrics(performance.now());
+  }
+
+  if (!disposed && !contextLost) {
+    lastFrameMs = performance.now();
+    accumulator = 0;
+
+    if (paused) {
+      updateHud(hud, hudViewModel);
+      postfx.render(0);
+    }
+
+    if (pendingStartAfterLoad && raceState.phase === 'TITLE') {
+      pendingStartAfterLoad = false;
+      handleConfirmAction();
     }
 
     if (sceneCtx.isSoftwareGl) {
-      scheduleAfterSoftwareDraw(() => tick(performance.now()));
+      tick(performance.now());
     } else {
       frameHandle = window.requestAnimationFrame(tick);
     }
   }
 
-  if (paused) {
-    updateHud(hud, hudViewModel);
-    postfx.render(0);
-  }
-
-  if (sceneCtx.isSoftwareGl) {
-    tick(performance.now());
-  } else {
-    frameHandle = window.requestAnimationFrame(tick);
-  }
-
   window.addEventListener('beforeunload', () => {
     disposed = true;
-    clearPendingCourseSwitch();
+    clearPendingCourseSwitch(false);
+    sceneCtx.renderer.domElement.removeEventListener('webglcontextlost', handleCanvasContextLost);
     window.cancelAnimationFrame(frameHandle);
     window.clearTimeout(frameHandle);
     window.clearTimeout(debugToastTimeout);
@@ -1238,6 +1546,7 @@ function bootstrap(): void {
     touchControls.dispose();
     sound.dispose();
     disposeHud(hud);
+    disposeErrorOverlay();
     debugOverlay?.dispose();
     qualityManager.dispose();
     particles.dispose();
@@ -1247,9 +1556,8 @@ function bootstrap(): void {
     tunnelVisual.dispose();
     trackAccentsVisual.dispose();
     gates.dispose();
+    shortcutGateVisual.dispose();
     carVisual.dispose();
     sceneCtx.dispose();
   });
 }
-
-bootstrap();

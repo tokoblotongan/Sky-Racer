@@ -298,7 +298,8 @@ function buildPropsAssembly(
   const qualityPreset = CONFIG.quality.levels[qualityLevel];
   const densityScale = cfg.density * qualityPreset.propsDensityScale;
   const propsChunkSize = Math.max(40, CONFIG.render.propsChunkLength);
-  const viewDistance = CONFIG.render.viewDistance;
+  const viewDistance = qualityPreset.viewDistance;
+  const shadowsEnabled = qualityPreset.shadowsEnabled;
   const fadeMargin = Math.max(1, CONFIG.render.cullFadeMargin);
 
   const group = new THREE.Group();
@@ -668,12 +669,12 @@ function buildPropsAssembly(
       const colInst = new THREE.InstancedMesh(colGeom, pillarPastelMat, list.length);
       const capInst = new THREE.InstancedMesh(capGeom, woodDarkMat, list.length);
 
-      baseInst.castShadow = true;
-      baseInst.receiveShadow = true;
-      colInst.castShadow = true;
-      colInst.receiveShadow = true;
-      capInst.castShadow = true;
-      capInst.receiveShadow = true;
+      baseInst.castShadow = shadowsEnabled;
+      baseInst.receiveShadow = shadowsEnabled;
+      colInst.castShadow = shadowsEnabled;
+      colInst.receiveShadow = shadowsEnabled;
+      capInst.castShadow = shadowsEnabled;
+      capInst.receiveShadow = shadowsEnabled;
 
       list.forEach((spot, i) => {
         const capH = 0.45;
@@ -800,11 +801,12 @@ function buildPropsAssembly(
       Math.atan2(roomCenterX - lampSpot.x, roomCenterZ - lampSpot.z) - Math.PI * 0.5;
 
     const castLampShadow =
+      shadowsEnabled &&
       Math.hypot(lampSpot.x - roomCenterX, lampSpot.z - roomCenterZ) <= cfg.shadowDistance + 30;
     lampMetalMesh.castShadow = castLampShadow;
-    lampMetalMesh.receiveShadow = true;
+    lampMetalMesh.receiveShadow = shadowsEnabled;
     shadeMesh.castShadow = castLampShadow;
-    shadeMesh.receiveShadow = true;
+    shadeMesh.receiveShadow = shadowsEnabled;
     freezeStatic(lampMetalMesh);
     freezeStatic(shadeMesh);
     freezeStatic(bulbMesh);
@@ -960,10 +962,10 @@ function buildPropsAssembly(
     for (const { chunkGroup, list } of chunkBuckets.values()) {
       const coverInst = new THREE.InstancedMesh(coverGeom, coverMat, list.length);
       const pageInst = new THREE.InstancedMesh(pageGeom, pageMat, list.length);
-      coverInst.castShadow = true;
-      coverInst.receiveShadow = true;
+      coverInst.castShadow = shadowsEnabled;
+      coverInst.receiveShadow = shadowsEnabled;
       pageInst.castShadow = false;
-      pageInst.receiveShadow = true;
+      pageInst.receiveShadow = shadowsEnabled;
 
       list.forEach((p, idx) => {
         instPos.set(p.x, 0, p.z);
@@ -1030,10 +1032,10 @@ function buildPropsAssembly(
     for (const { chunkGroup, list } of chunkBuckets.values()) {
       const bodyInst = new THREE.InstancedMesh(bodyGeom, canBodyMat, list.length);
       const rimInst = new THREE.InstancedMesh(rimGeom, canRimMat, list.length);
-      bodyInst.castShadow = true;
-      bodyInst.receiveShadow = true;
+      bodyInst.castShadow = shadowsEnabled;
+      bodyInst.receiveShadow = shadowsEnabled;
       rimInst.castShadow = false;
-      rimInst.receiveShadow = true;
+      rimInst.receiveShadow = shadowsEnabled;
 
       list.forEach((p, idx) => {
         instPos.set(p.x, 0, p.z);
@@ -1107,10 +1109,10 @@ function buildPropsAssembly(
       const pencilInst = new THREE.InstancedMesh(pencilWoodGeom, woodLightMat, list.length);
       const tipInst = new THREE.InstancedMesh(pencilTipGeom, tipMat, list.length);
 
-      cupInst.castShadow = true;
-      cupInst.receiveShadow = true;
-      pencilInst.castShadow = true;
-      pencilInst.receiveShadow = true;
+      cupInst.castShadow = shadowsEnabled;
+      cupInst.receiveShadow = shadowsEnabled;
+      pencilInst.castShadow = shadowsEnabled;
+      pencilInst.receiveShadow = shadowsEnabled;
       tipInst.castShadow = false;
 
       list.forEach((p, idx) => {
@@ -1209,8 +1211,8 @@ function buildPropsAssembly(
     const chunkBuckets = bucketByChunk(ballPlacements);
     for (const { chunkGroup, list } of chunkBuckets.values()) {
       const ballInst = new THREE.InstancedMesh(ballGeom, ballMat, list.length);
-      ballInst.castShadow = true;
-      ballInst.receiveShadow = true;
+      ballInst.castShadow = shadowsEnabled;
+      ballInst.receiveShadow = shadowsEnabled;
 
       list.forEach((p, idx) => {
         instPos.set(p.x, 0, p.z);

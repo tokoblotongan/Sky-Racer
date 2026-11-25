@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
-import type { Course, TrackFrame } from '../core/course';
+import type { Course, Route, TrackFrame } from '../core/course';
 
 export interface TrackAccentsVisual {
   group: THREE.Group;
@@ -148,7 +148,7 @@ function createLandingTargetTexture(
 }
 
 function buildSurfaceRibbonGeometry(
-  course: Course,
+  route: Route,
   startS: number,
   endS: number,
   lateralCenter: number | ((frame: TrackFrame) => number),
@@ -156,8 +156,8 @@ function buildSurfaceRibbonGeometry(
   lift: number,
   uvRepeatY: number,
 ): THREE.BufferGeometry | null {
-  const totalLen = course.getLength();
-  const isClosed = course.isClosed();
+  const totalLen = route.getLength();
+  const isClosed = route.isClosed();
   const clampedStart = isClosed ? startS : Math.max(0, startS);
   const clampedEnd = isClosed ? endS : Math.min(totalLen, endS);
   const spanLen = clampedEnd - clampedStart;
@@ -179,7 +179,7 @@ function buildSurfaceRibbonGeometry(
     tangent: new THREE.Vector3(),
     up: new THREE.Vector3(),
     right: new THREE.Vector3(),
-    width: course.getTrackWidth(),
+    width: route.getTrackWidth(),
     bank: 0,
   };
   const vPos = new THREE.Vector3();
@@ -188,7 +188,7 @@ function buildSurfaceRibbonGeometry(
   for (let r = 0; r < rows; r++) {
     const vFrac = r / lengthSteps;
     const s = THREE.MathUtils.lerp(clampedStart, clampedEnd, vFrac);
-    course.getFrameAt(s, frame);
+    route.getFrameAt(s, frame);
     const centerLat = typeof lateralCenter === 'function' ? lateralCenter(frame) : lateralCenter;
 
     for (let c = 0; c < cols; c++) {
@@ -280,49 +280,24 @@ export function buildTrackAccents(
   const geomsToDispose: THREE.BufferGeometry[] = [];
   const matsToDispose: THREE.Material[] = [pulseMat, hazardMat, targetMat];
 
-  const segments = course.getSegmentList();
-  const gaps = course.getGapRanges();
+  for (const route of course.getAllRoutes()) {
+    const segments = route.getSegmentList();
+    const gaps = route.getGapRanges();
+    const routeLen = route.getLength();
 
-  // 1. Pulsing edge guide strips along every loop segment
-  for (const seg of segments) {
-    if (seg.type !== 'loop') continue;
-    const repeatY = Math.max(4, Math.round(seg.length / 8));
-    for (const side of [-1, 1] as const) {
-      const geom = buildSurfaceRibbonGeometry(
-        course,
-        seg.startS,
-        seg.endS,
-        (frame) => side * (frame.width * 0.5 - 0.55),
-        cfg.loopStripWidth,
-        cfg.loopStripLift,
-        repeatY,
-      );
-      if (geom) {
-        geomsToDispose.push(geom);
-        const mesh = new THREE.Mesh(geom, pulseMat);
-        mesh.receiveShadow = true;
-        mesh.updateMatrix();
-        mesh.matrixAutoUpdate = false;
-        group.add(mesh);
-      }
-    }
-  }
-
-  // 2. Jump ramp pulsing guide strips, diagonal hazard edge stripes, and landing zone target decals
-  for (const gap of gaps) {
-    // Pulsing guide strips over the 18m run-up before the jump threshold
-    const pulseStart = Math.max(0, gap.startS - 18);
-    const pulseEnd = Math.max(pulseStart, gap.startS - 2.9);
-    if (pulseEnd - pulseStart > 1.0) {
+    // 1. Pulsing edge guide strips along every loop segment
+    for (const seg of segments) {
+      if (seg.type !== 'loop') continue;
+      const repeatY = Math.max(4, Math.round(seg.length / 8));
       for (const side of [-1, 1] as const) {
         const geom = buildSurfaceRibbonGeometry(
-          course,
-          pulseStart,
-          pulseEnd,
+          route,
+          seg.startS,
+          seg.endS,
           (frame) => side * (frame.width * 0.5 - 0.55),
           cfg.loopStripWidth,
           cfg.loopStripLift,
-          Math.max(2, Math.round((pulseEnd - pulseStart) / 4)),
+          repeatY,
         );
         if (geom) {
           geomsToDispose.push(geom);
@@ -335,24 +310,25 @@ export function buildTrackAccents(
       }
     }
 
-    // Diagonal hazard ramp stripes along both edges of the takeoff ramp
-    if (cfg.hazardStripe) {
-      const hazStart = Math.max(0, gap.startS - 11);
-      const hazEnd = Math.max(hazStart, gap.startS - 2.9);
-      if (hazEnd - hazStart > 0.8) {
+    // 2. Jump ramp pulsing guide strips, diagonal hazard edge stripes, and landing zone target decals
+    for (const gap of gaps) {
+      // Pulsing guide strips over the 18m run-up before the jump threshold
+      const pulseStart = Math.max(0, gap.startS - 18);
+      const pulseEnd = Math.max(pulseStart, gap.startS - 2.9);
+      if (pulseEnd - pulseStart > 1.0) {
         for (const side of [-1, 1] as const) {
           const geom = buildSurfaceRibbonGeometry(
-            course,
-            hazStart,
-            hazEnd,
-            (frame) => side * (frame.width * 0.5 - 1.25),
-            0.55,
-            0.016,
-            Math.max(2, Math.round((hazEnd - hazStart) / 2.2)),
+            route,
+            pulseStart,
+            pulseEnd,
+            (frame) => side * (frame.width * 0.5 - 0.55),
+            cfg.loopStripWidth,
+            cfg.loopStripLift,
+            Math.max(2, Math.round((pulseEnd - pulseStart) / 4)),
           );
           if (geom) {
             geomsToDispose.push(geom);
-            const mesh = new THREE.Mesh(geom, hazardMat);
+            const mesh = new THREE.Mesh(geom, pulseMat);
             mesh.receiveShadow = true;
             mesh.updateMatrix();
             mesh.matrixAutoUpdate = false;
@@ -360,30 +336,82 @@ export function buildTrackAccents(
           }
         }
       }
-    }
 
-    // Landing target decal on landing deck shortly past the gap's yellow warning strip
-    const landStart = gap.endS + 3.4;
-    const landEnd = gap.endS + 17.4;
-    const nextGap = gaps.find((g) => g.startS > gap.endS);
-    const maxAllowedEnd = nextGap ? nextGap.startS - 4.0 : course.getLength();
-    const clampedEnd = Math.min(landEnd, maxAllowedEnd);
-    if (clampedEnd - landStart >= 6) {
-      const midFrame = course.getFrameAt((landStart + clampedEnd) * 0.5);
-      const targetSize = Math.min(clampedEnd - landStart, midFrame.width * 0.62, 10.5);
-      const centerS = (landStart + clampedEnd) * 0.5;
+      // Diagonal hazard ramp stripes along both edges of the takeoff ramp
+      if (cfg.hazardStripe) {
+        const hazStart = Math.max(0, gap.startS - 11);
+        const hazEnd = Math.max(hazStart, gap.startS - 2.9);
+        if (hazEnd - hazStart > 0.8) {
+          for (const side of [-1, 1] as const) {
+            const geom = buildSurfaceRibbonGeometry(
+              route,
+              hazStart,
+              hazEnd,
+              (frame) => side * (frame.width * 0.5 - 1.25),
+              0.55,
+              0.016,
+              Math.max(2, Math.round((hazEnd - hazStart) / 2.2)),
+            );
+            if (geom) {
+              geomsToDispose.push(geom);
+              const mesh = new THREE.Mesh(geom, hazardMat);
+              mesh.receiveShadow = true;
+              mesh.updateMatrix();
+              mesh.matrixAutoUpdate = false;
+              group.add(mesh);
+            }
+          }
+        }
+      }
+
+      // Landing target decal on landing deck shortly past the gap's yellow warning strip
+      const landStart = gap.endS + 3.4;
+      const landEnd = gap.endS + 17.4;
+      const nextGap = gaps.find((g) => g.startS > gap.endS);
+      const maxAllowedEnd = nextGap ? nextGap.startS - 4.0 : routeLen;
+      const clampedEnd = Math.min(landEnd, maxAllowedEnd);
+      if (clampedEnd - landStart >= 6) {
+        const midFrame = route.getFrameAt((landStart + clampedEnd) * 0.5);
+        const targetSize = Math.min(clampedEnd - landStart, midFrame.width * 0.62, 10.5);
+        const centerS = (landStart + clampedEnd) * 0.5;
+        const geom = buildSurfaceRibbonGeometry(
+          route,
+          centerS - targetSize * 0.5,
+          centerS + targetSize * 0.5,
+          0,
+          targetSize,
+          0.014,
+          1,
+        );
+        if (geom) {
+          geomsToDispose.push(geom);
+          const mesh = new THREE.Mesh(geom, targetMat);
+          mesh.receiveShadow = true;
+          mesh.updateMatrix();
+          mesh.matrixAutoUpdate = false;
+          group.add(mesh);
+        }
+      }
+    }
+  }
+
+  // 3. Pulsing right-edge entry seam guide cue for shortcut branches on main track
+  for (const branch of course.getBranchRoutes()) {
+    const guideStart = Math.max(0, branch.fromS - 18);
+    const guideEnd = Math.min(course.getLength(), branch.fromS + branch.entryGapLength);
+    if (guideEnd - guideStart > 1.0) {
       const geom = buildSurfaceRibbonGeometry(
         course,
-        centerS - targetSize * 0.5,
-        centerS + targetSize * 0.5,
-        0,
-        targetSize,
-        0.014,
-        1,
+        guideStart,
+        guideEnd,
+        (frame) => frame.width * 0.5 - 0.55,
+        cfg.loopStripWidth,
+        cfg.loopStripLift,
+        Math.max(4, Math.round((guideEnd - guideStart) / 4)),
       );
       if (geom) {
         geomsToDispose.push(geom);
-        const mesh = new THREE.Mesh(geom, targetMat);
+        const mesh = new THREE.Mesh(geom, pulseMat);
         mesh.receiveShadow = true;
         mesh.updateMatrix();
         mesh.matrixAutoUpdate = false;

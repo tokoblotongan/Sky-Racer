@@ -9,6 +9,8 @@ import {
   type MedalType,
 } from '../services/records';
 import { createToastQueue, type ToastQueue } from './toastQueue';
+import { isDebugUrlEnabled } from './errorOverlay';
+import type { QualityLevel } from '../render/quality';
 import './hud.css';
 
 export interface HudViewModel {
@@ -64,6 +66,21 @@ export interface HudCallbacks {
   onClearRecords?: () => void;
 }
 
+export interface DebugMetricsSnapshot {
+  fps: number;
+  avgFrameMs: number;
+  drawCalls: number;
+  triangles: number;
+  geometries: number;
+  textures: number;
+  status: 'TITLE' | 'LOADING' | 'COUNTDOWN' | 'RACING' | 'FINISH';
+  countdownSec: number;
+  countdownWallMs: number;
+  courseId: string;
+  routeId: string;
+  quality: QualityLevel;
+}
+
 export interface HudHandle {
   root: HTMLElement;
   container: HTMLElement;
@@ -90,6 +107,10 @@ export interface HudHandle {
   toastLaneEl: HTMLElement;
   toastQueue: ToastQueue;
   loadingOverlayEl: HTMLElement;
+  loadingPillEl: HTMLElement;
+  contextLostOverlayEl: HTMLElement;
+  contextLostCardEl: HTMLButtonElement;
+  debugMetricsEl: HTMLElement;
   titleScreenEl: HTMLElement;
   titleCourseSelectSlotEl: HTMLElement;
   titleTargetGoldEl: HTMLElement;
@@ -147,6 +168,8 @@ export interface HudHandle {
   lastToastTickMs: number;
   hintManualExpanded: boolean | null;
   lastHintCollapsed: boolean | null;
+  lastDebugMetricsSampleMs: number;
+  lastDebugMetricsKey: string;
 }
 
 const CLEAR_HOLD_DURATION_MS = 1200;
@@ -239,6 +262,7 @@ function applyHudConfigCssVars(root: HTMLElement): void {
     '--sr-hint-collapsed-opacity',
     String(cfg.controlsHintCollapsedOpacity),
   );
+  root.style.setProperty('--sr-debug-opacity', String(CONFIG.debugOverlay.opacity));
 }
 
 export function createHud(
@@ -417,6 +441,15 @@ export function createHud(
     <div class="sr-overlay-center sr-loading-overlay sr-hud-hidden" aria-live="polite">
       <div class="sr-hud-panel sr-loading-pill">Memuat arena...</div>
     </div>
+
+    <div class="sr-overlay-center sr-contextlost-overlay sr-hud-hidden" role="alertdialog" aria-modal="true">
+      <button type="button" class="sr-hud-panel sr-contextlost-card">
+        <span class="sr-contextlost-title">Grafik terhenti.</span>
+        <span class="sr-contextlost-sub">Ketuk untuk memuat ulang</span>
+      </button>
+    </div>
+
+    <div class="sr-debug-metrics sr-hud-hidden" aria-hidden="true"></div>
 
     <div class="sr-overlay-center sr-finish-screen sr-hud-hidden">
       <div class="sr-hud-panel sr-finish-card">
@@ -659,6 +692,10 @@ export function createHud(
     toastLaneEl,
     toastQueue,
     loadingOverlayEl: root.querySelector('.sr-loading-overlay') as HTMLElement,
+    loadingPillEl: root.querySelector('.sr-loading-pill') as HTMLElement,
+    contextLostOverlayEl: root.querySelector('.sr-contextlost-overlay') as HTMLElement,
+    contextLostCardEl: root.querySelector('.sr-contextlost-card') as HTMLButtonElement,
+    debugMetricsEl: root.querySelector('.sr-debug-metrics') as HTMLElement,
     titleScreenEl: root.querySelector('.sr-title-screen') as HTMLElement,
     titleCourseSelectSlotEl: root.querySelector('.sr-arena-select') as HTMLElement,
     titleTargetGoldEl: root.querySelector('.sr-target-gold') as HTMLElement,
@@ -716,6 +753,8 @@ export function createHud(
     lastToastTickMs: performance.now(),
     hintManualExpanded: null,
     lastHintCollapsed: null,
+    lastDebugMetricsSampleMs: -Infinity,
+    lastDebugMetricsKey: '',
   };
 
   const syncHintCollapseClass = (): void => {
@@ -776,6 +815,14 @@ export function createHud(
   };
   window.addEventListener('keydown', handleHudKeyDown);
 
+  const handleContextLostReload = (event: Event): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    window.location.reload();
+  };
+  handle.contextLostOverlayEl.addEventListener('click', handleContextLostReload);
+  handle.contextLostCardEl.addEventListener('click', handleContextLostReload);
+
   handle.disposeEvents = () => {
     cancelClearHold();
     if (copyResetTimerId !== null) {
@@ -784,6 +831,8 @@ export function createHud(
     }
     window.removeEventListener('keydown', handleHudKeyDown);
     hintBadgeEl.removeEventListener('click', handleHintBadgeClick);
+    handle.contextLostOverlayEl.removeEventListener('click', handleContextLostReload);
+    handle.contextLostCardEl.removeEventListener('click', handleContextLostReload);
     titleStartBtnEl.removeEventListener('click', handleStartClick);
     finishRetryBtnEl.removeEventListener('click', handleRetryClick);
     finishMenuBtnEl.removeEventListener('click', handleMenuClick);
@@ -855,12 +904,66 @@ export function updateTitleScreen(hud: HudHandle, data: TitleScreenData): void {
   }
 }
 
-export function showLoadingOverlay(hud: HudHandle): void {
+export function showLoadingOverlay(
+  hud: HudHandle,
+  message = 'Memuat arena...',
+  percent?: number,
+): void {
+  const pct =
+    typeof percent === 'number' && Number.isFinite(percent)
+      ? ` ${Math.min(100, Math.max(0, Math.round(percent)))}%`
+      : '';
+  hud.loadingPillEl.textContent = `${message}${pct}`;
   hud.loadingOverlayEl.classList.remove('sr-hud-hidden');
 }
 
 export function hideLoadingOverlay(hud: HudHandle): void {
   hud.loadingOverlayEl.classList.add('sr-hud-hidden');
+}
+
+export function setStartButtonLoading(
+  hud: HudHandle,
+  loading: boolean,
+  queued = false,
+): void {
+  hud.titleStartBtnEl.setAttribute('aria-disabled', loading ? 'true' : 'false');
+  hud.titleStartBtnEl.classList.toggle('sr-btn--loading', loading);
+  if (loading && queued) {
+    hud.titleStartBtnEl.textContent = 'Menyiapkan...';
+  } else {
+    hud.titleStartBtnEl.textContent = 'Mulai Balapan';
+  }
+}
+
+export function showContextLostOverlay(hud: HudHandle): void {
+  hud.contextLostOverlayEl.classList.remove('sr-hud-hidden');
+}
+
+export function updateDebugMetricsOverlay(
+  hud: HudHandle,
+  metrics: DebugMetricsSnapshot,
+  nowMs: number,
+): void {
+  if (!isDebugUrlEnabled()) {
+    return;
+  }
+  hud.debugMetricsEl.classList.remove('sr-hud-hidden');
+  const stateKey = `${metrics.status}:${metrics.courseId}:${metrics.routeId}:${metrics.quality}`;
+  const elapsedMs = nowMs - hud.lastDebugMetricsSampleMs;
+  if (elapsedMs < CONFIG.debugOverlay.sampleIntervalMs && stateKey === hud.lastDebugMetricsKey) {
+    return;
+  }
+  hud.lastDebugMetricsSampleMs = nowMs;
+  hud.lastDebugMetricsKey = stateKey;
+
+  const cdPart =
+    metrics.status === 'COUNTDOWN'
+      ? `CD ${metrics.countdownSec} (${Math.round(metrics.countdownWallMs)}ms) `
+      : '';
+  hud.debugMetricsEl.textContent =
+    `${Math.round(metrics.fps)} FPS | ${metrics.avgFrameMs.toFixed(1)} ms | ${metrics.quality.toUpperCase()}\n` +
+    `DC ${metrics.drawCalls} | TRI ${metrics.triangles} | GEO ${metrics.geometries} TEX ${metrics.textures}\n` +
+    `${metrics.status} ${cdPart}| ${metrics.courseId} (${metrics.routeId})`;
 }
 
 export function setHudProgressCheckpoints(
@@ -946,6 +1049,15 @@ export function showZoneToast(hud: HudHandle, title: string): void {
 
 export function hideZoneToast(hud: HudHandle): void {
   hud.toastQueue.clearKind('zone');
+}
+
+export function showShortcutToast(hud: HudHandle, title: string): void {
+  hud.toastQueue.push({
+    kind: 'zone',
+    text: title,
+    priority: CONFIG.hud.toastPriorities.zone,
+    durationMs: CONFIG.hud.zoneToastDurationMs,
+  });
 }
 
 export function showCountdownOverlay(hud: HudHandle, label: string, isGo: boolean): void {

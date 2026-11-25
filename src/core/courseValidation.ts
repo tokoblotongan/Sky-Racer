@@ -1,11 +1,14 @@
 // src/core/courseValidation.ts
 
+import * as THREE from 'three';
 import { CONFIG } from '../config';
 import type { TrackStyle } from '../courses/types';
 import { autopilotInput } from './autopilot';
 import type { Course, CourseSegmentMeta, TrackFrame } from './course';
 import type { ClosureReport } from './courseClosure';
 import { createCarState, stepCar } from './physics';
+import type { BranchRoute } from './routes';
+import { updateRouteTransitions } from './routeTransitions';
 import { createRaceState, getRespawnTarget, updateRace } from './state';
 
 export interface LoopValidationResult {
@@ -52,6 +55,34 @@ export interface TunnelClearanceResult {
   ok: boolean;
 }
 
+export interface BranchValidationResult {
+  routeId: string;
+  name: string;
+  fromS: number;
+  toS: number;
+  mainArcM: number;
+  branchLengthM: number;
+  width: number;
+  entryWorldErrorM: number;
+  entryEndWorldErrorM: number;
+  mergeWorldErrorM: number;
+  solverConverged: boolean;
+  solverPosErrorM: number;
+  solverYawErrorDeg: number;
+  minCorridorClearanceM: number | null;
+  jumps: JumpValidationResult[];
+  mainTimeSec: number;
+  shortcutTimeSec: number;
+  timeSavingSec: number;
+  perLapSavingSec: number;
+  shortcutEntries: number;
+  shortcutMerges: number;
+  shortcutFalls: number;
+  shortcutStuck: number;
+  shortcutRailHits: number;
+  ok: boolean;
+}
+
 export interface CourseValidationReport {
   ok: boolean;
   closed: boolean;
@@ -70,6 +101,7 @@ export interface CourseValidationReport {
   loops: LoopValidationResult[];
   jumps: JumpValidationResult[];
   zones: ZoneValidationResult[];
+  branches: BranchValidationResult[];
   railHits: number;
   stuckEvents: number;
   falls: number;
@@ -113,6 +145,185 @@ function collectNamedZones(segments: readonly CourseSegmentMeta[]): ZoneSpan[] {
     }
   }
   return spans;
+}
+
+function getWorldPointOnFrame(frame: TrackFrame, lateral: number): THREE.Vector3 {
+  return frame.position.clone().addScaledVector(frame.right, lateral);
+}
+
+function measureBranchCorridorClearance(course: Course, branch: BranchRoute): number | null {
+  const branchSamples = branch.getSamples();
+  const mainSamples = course.getSamples();
+  const entryEnd = branch.entryGapLength + 15;
+  const mergeStart = branch.getLength() - branch.mergeGapLength - 15;
+  let minDist = Infinity;
+
+  const strideB = Math.max(1, Math.floor(branchSamples.length / 220));
+  const strideM = Math.max(1, Math.floor(mainSamples.length / 360));
+
+  for (let i = 0; i < branchSamples.length; i += strideB) {
+    const bs = branchSamples[i];
+    if (bs.isGap || bs.s < entryEnd || bs.s > mergeStart) continue;
+
+    for (let j = 0; j < mainSamples.length; j += strideM) {
+      const ms = mainSamples[j];
+      if (ms.isGap) continue;
+      const nearEntry =
+        ms.s >= branch.fromS - 20 && ms.s <= branch.fromS + branch.entryGapLength + 25;
+      const nearMerge =
+        ms.s >= branch.toS - branch.mergeGapLength - 25 && ms.s <= branch.toS + 20;
+      if (nearEntry || nearMerge) continue;
+
+      const d = bs.position.distanceTo(ms.position);
+      if (d < minDist) {
+        minDist = d;
+      }
+    }
+  }
+
+  return Number.isFinite(minDist) ? minDist : null;
+}
+
+interface BranchAutopilotOutcome {
+  finished: boolean;
+  elapsedTime: number;
+  lapTimes: number[];
+  railHits: number;
+  falls: number;
+  stuckEvents: number;
+  entries: number;
+  merges: number;
+  jumps: JumpValidationResult[];
+}
+
+function runBranchAutopilotSim(
+  course: Course,
+  branch: BranchRoute,
+  branchMinSpeedReqBySeg: ReadonlyMap<number, number>,
+): BranchAutopilotOutcome {
+  const dt = 1 / 60;
+  const maxSteps = Math.round(360 / dt);
+  const startSlot = course.getGridSlots(1)[0];
+  const carState = createCarState({ s: startSlot.s, lateral: startSlot.lateral });
+  const raceState = createRaceState(course, { persistRecords: false });
+  raceState.phase = 'RACING';
+
+  const jumpResults: JumpValidationResult[] = branch
+    .getSegmentList()
+    .filter((s) => s.type === 'gap')
+    .map((s) => ({
+      segmentIndex: s.index,
+      startS: s.startS,
+      endS: s.endS,
+      gapLength: s.length,
+      takeoffSpeed: 0,
+      minSpeedRequired: branchMinSpeedReqBySeg.get(s.index) ?? 0,
+      landed: false,
+      airtime: 0,
+    }));
+
+  let activeJumpIdx = -1;
+  let railHits = 0;
+  let falls = 0;
+  let stuckEvents = 0;
+  let entries = 0;
+  let merges = 0;
+  let lowSpeedTimer = 0;
+  let simElapsed = 0;
+  let finished = false;
+
+  for (let step = 0; step < maxSteps; step++) {
+    const activeRoute = course.getRoute(carState.routeId);
+    const input = autopilotInput(carState, activeRoute, { course, preferRoute: 'shortcut' });
+    const respawnTarget = getRespawnTarget(raceState, course);
+    const events = stepCar(carState, input, activeRoute, dt, {
+      phase: raceState.phase,
+      respawnTarget,
+      respawnRoute: course.getRoute(respawnTarget.routeId),
+    });
+    simElapsed += dt;
+
+    const transition = updateRouteTransitions(carState, course);
+    if (transition?.toRouteId === branch.routeId && transition.kind === 'enter') {
+      entries++;
+    } else if (transition?.fromRouteId === branch.routeId && transition.kind === 'merge') {
+      merges++;
+    }
+
+    const onBranch = carState.routeId === branch.routeId;
+    for (const ev of events) {
+      if (ev.type === 'railHit') {
+        railHits++;
+      } else if (ev.type === 'fell') {
+        falls++;
+      } else if (ev.type === 'takeoff' && onBranch) {
+        let bestIdx = -1;
+        let bestDist = Infinity;
+        for (let ji = 0; ji < jumpResults.length; ji++) {
+          const d = Math.abs(carState.sApprox - jumpResults[ji].startS);
+          if (d < bestDist) {
+            bestDist = d;
+            bestIdx = ji;
+          }
+        }
+        if (bestIdx >= 0 && bestDist < 12) {
+          activeJumpIdx = bestIdx;
+          if (jumpResults[bestIdx].takeoffSpeed === 0) {
+            jumpResults[bestIdx].takeoffSpeed = carState.worldVel.length();
+          }
+        }
+      } else if (ev.type === 'landed' && activeJumpIdx >= 0) {
+        if (onBranch) {
+          const jr = jumpResults[activeJumpIdx];
+          if (carState.s >= jr.endS - 1.5) {
+            jr.landed = true;
+            jr.airtime = Math.max(jr.airtime, ev.airtime);
+          }
+        }
+        activeJumpIdx = -1;
+      }
+    }
+
+    if (simElapsed > 2.0 && carState.mode === 'grounded' && Math.abs(carState.vForward) < 2.0) {
+      lowSpeedTimer += dt;
+      if (lowSpeedTimer >= 1.5) {
+        stuckEvents++;
+        lowSpeedTimer = 0;
+      }
+    } else {
+      lowSpeedTimer = 0;
+    }
+
+    const raceEvents = updateRace(
+      raceState,
+      {
+        s: carState.s,
+        sApprox: carState.sApprox,
+        mode: carState.mode,
+        routeId: carState.routeId,
+        routeLapOffset: carState.routeLapOffset,
+      },
+      course,
+      dt,
+    );
+
+    if (raceEvents.some((ev) => ev.type === 'finish')) {
+      finished = true;
+      break;
+    }
+  }
+
+  return {
+    finished,
+    elapsedTime: finished ? raceState.timer : simElapsed,
+    lapTimes: raceState.lapTimes.map((t) => Number(t.toFixed(3))),
+    railHits,
+    falls,
+    stuckEvents,
+    entries,
+    merges,
+    jumps: jumpResults,
+  };
 }
 
 export function validateCourse(
@@ -562,13 +773,16 @@ export function validateCourse(
   let prevWrappedS = isClosed ? course.wrapDistance(startSlot.s) : startSlot.s;
 
   for (let step = 0; step < maxSteps; step++) {
-    const input = autopilotInput(carState, course);
+    const activeRoute = course.getRoute(carState.routeId);
+    const input = autopilotInput(carState, activeRoute, { course, preferRoute: 'main' });
     const respawnTarget = getRespawnTarget(raceState, course);
-    const events = stepCar(carState, input, course, dt, {
+    const events = stepCar(carState, input, activeRoute, dt, {
       phase: raceState.phase,
       respawnTarget,
+      respawnRoute: course.getRoute(respawnTarget.routeId),
     });
     simElapsed += dt;
+    updateRouteTransitions(carState, course);
 
     const rawS = carState.mode === 'grounded' ? carState.s : carState.sApprox;
     const wrappedS = isClosed ? course.wrapDistance(rawS) : rawS;
@@ -663,7 +877,13 @@ export function validateCourse(
 
     const raceEvents = updateRace(
       raceState,
-      { s: carState.s, sApprox: carState.sApprox, mode: carState.mode },
+      {
+        s: carState.s,
+        sApprox: carState.sApprox,
+        mode: carState.mode,
+        routeId: carState.routeId,
+        routeLapOffset: carState.routeLapOffset,
+      },
       course,
       dt,
     );
@@ -744,6 +964,182 @@ export function validateCourse(
     };
   });
 
+  // (h) Branching shortcut route validation
+  const branchResults: BranchValidationResult[] = [];
+  const branchRoutes = course.getBranchRoutes();
+  for (const branch of branchRoutes) {
+    const branchErrorCountBefore = errors.length;
+    const branchLen = branch.getLength();
+    const mainArcM = branch.toS - branch.fromS;
+    const solveRep = branch.solveReport;
+
+    if (
+      !solveRep.converged ||
+      solveRep.posErrorM > CONFIG.course.closure.posToleranceM ||
+      Math.abs(solveRep.dYawDeg) > CONFIG.course.closure.yawToleranceDeg
+    ) {
+      errors.push(
+        `Rute pintas '${branch.routeId}' gagal konvergen ke jalur utama: posErr=${solveRep.posErrorM.toFixed(4)} m, dYaw=${solveRep.dYawDeg.toFixed(3)}°.`,
+      );
+    }
+
+    const mainHalfW = course.getFrameAt(branch.fromS).width * 0.5;
+    const branchHalfW = branch.getTrackWidth() * 0.5;
+    const entryWorldErrorM = getWorldPointOnFrame(course.getFrameAt(branch.fromS), mainHalfW).distanceTo(
+      getWorldPointOnFrame(branch.getFrameAt(0), -branchHalfW),
+    );
+    const entryEndWorldErrorM = getWorldPointOnFrame(
+      course.getFrameAt(branch.fromS + branch.entryGapLength),
+      mainHalfW,
+    ).distanceTo(getWorldPointOnFrame(branch.getFrameAt(branch.entryGapLength), -branchHalfW));
+    const mergeWorldErrorM = getWorldPointOnFrame(branch.getFrameAt(branchLen), 0).distanceTo(
+      getWorldPointOnFrame(course.getFrameAt(branch.toS), branch.endOffset),
+    );
+
+    if (entryWorldErrorM > 0.1 || entryEndWorldErrorM > 0.15) {
+      errors.push(
+        `Kontinuitas sambungan masuk rute '${branch.routeId}' tidak sejajar (errStart=${entryWorldErrorM.toFixed(3)}m, errEnd=${entryEndWorldErrorM.toFixed(3)}m).`,
+      );
+    }
+    if (mergeWorldErrorM > 0.1) {
+      errors.push(
+        `Kontinuitas sambungan keluar rute '${branch.routeId}' tidak menyatu bersih (err=${mergeWorldErrorM.toFixed(3)}m).`,
+      );
+    }
+
+    for (const cp of checkpoints) {
+      if (cp.s >= branch.fromS - 0.5 && cp.s <= branch.fromS + branch.entryGapLength + 0.5) {
+        errors.push(
+          `Checkpoint utama #${cp.index + 1} (s=${cp.s.toFixed(1)}m) berada di dalam celah masuk rute '${branch.routeId}'.`,
+        );
+      }
+      if (cp.s >= branch.toS - branch.mergeGapLength - 0.5 && cp.s <= branch.toS + 0.5) {
+        errors.push(
+          `Checkpoint utama #${cp.index + 1} (s=${cp.s.toFixed(1)}m) berada di dalam celah gabung rute '${branch.routeId}'.`,
+        );
+      }
+    }
+
+    const minCorridorClearanceM = measureBranchCorridorClearance(course, branch);
+    if (
+      minCorridorClearanceM !== null &&
+      minCorridorClearanceM < CONFIG.shortcut.corridorClearance
+    ) {
+      errors.push(
+        `Koridor rute '${branch.routeId}' terlalu dekat jalur utama (${minCorridorClearanceM.toFixed(1)} m < ${CONFIG.shortcut.corridorClearance} m).`,
+      );
+    }
+
+    // Ballistic feasibility for gaps inside branch
+    const branchMinSpeedBySeg = new Map<number, number>();
+    for (const seg of branch.getSegmentList()) {
+      if (seg.type !== 'gap' || seg.config.type !== 'gap') continue;
+      const fStart = branch.getFrameAt(seg.startS);
+      const fEnd = branch.getFrameAt(seg.endS);
+      const dx = fEnd.position.x - fStart.position.x;
+      const dz = fEnd.position.z - fStart.position.z;
+      const horizSpan = Math.hypot(dx, dz);
+      const tanHoriz = Math.max(0.15, Math.hypot(fStart.tangent.x, fStart.tangent.z));
+      const slopeTan = fStart.tangent.y / tanHoriz;
+      const dyTarget = fEnd.position.y - fStart.position.y;
+      const neededDrop = horizSpan * slopeTan - dyTarget;
+      if (neededDrop <= 0.1) {
+        errors.push(
+          `Lompatan rute '${branch.routeId}' segmen #${seg.index} tidak realistis secara balistik.`,
+        );
+        branchMinSpeedBySeg.set(seg.index, Infinity);
+      } else {
+        const vHorizMin = horizSpan * Math.sqrt(physicsConfig.gravity / (2 * neededDrop));
+        const vMinRequired = vHorizMin / tanHoriz;
+        branchMinSpeedBySeg.set(seg.index, vMinRequired);
+        if (vMinRequired > maxPossibleSpeed) {
+          errors.push(
+            `Lompatan rute '${branch.routeId}' segmen #${seg.index} butuh kecepatan ${vMinRequired.toFixed(1)} m/s (> maks ${maxPossibleSpeed.toFixed(1)} m/s).`,
+          );
+        }
+      }
+    }
+
+    const simOut = runBranchAutopilotSim(course, branch, branchMinSpeedBySeg);
+    if (!simOut.finished) {
+      errors.push(`Autopilot rute '${branch.routeId}' gagal mencapai finish.`);
+    }
+    if (simOut.entries < laps) {
+      errors.push(
+        `Autopilot rute '${branch.routeId}' hanya masuk ${simOut.entries}/${laps} kali sepanjang balapan.`,
+      );
+    }
+    if (simOut.merges < laps) {
+      errors.push(
+        `Autopilot rute '${branch.routeId}' hanya menyatu kembali ${simOut.merges}/${laps} kali.`,
+      );
+    }
+    if (simOut.falls > 0) {
+      errors.push(`Autopilot rute '${branch.routeId}' terjatuh ${simOut.falls} kali.`);
+    }
+    if (simOut.stuckEvents > 0) {
+      errors.push(`Autopilot rute '${branch.routeId}' macet ${simOut.stuckEvents} kali.`);
+    }
+    for (const jr of simOut.jumps) {
+      if (!jr.landed) {
+        errors.push(
+          `Lompatan rute '${branch.routeId}' segmen #${jr.segmentIndex} gagal didarati autopilot.`,
+        );
+      }
+    }
+
+    const timeSavingSec = referenceTime - simOut.elapsedTime;
+    const perLapSavingSec = timeSavingSec / Math.max(1, laps);
+    if (perLapSavingSec < CONFIG.shortcut.minTimeSaving) {
+      warnings.push(
+        `Penghematan waktu rute '${branch.routeId}' per pengambilan (${perLapSavingSec.toFixed(2)} s/lap, total ${timeSavingSec.toFixed(2)} s) < target ${CONFIG.shortcut.minTimeSaving.toFixed(1)} s (pertimbangkan memperpendek segmen lurus atau menambah pad boost).`,
+      );
+    } else if (perLapSavingSec > CONFIG.shortcut.maxTimeSaving) {
+      warnings.push(
+        `Penghematan waktu rute '${branch.routeId}' per pengambilan (${perLapSavingSec.toFixed(2)} s/lap, total ${timeSavingSec.toFixed(2)} s) > target ${CONFIG.shortcut.maxTimeSaving.toFixed(1)} s (pertimbangkan sedikit memperpanjang jalur jembatan pintas).`,
+      );
+    }
+
+    branchResults.push({
+      routeId: branch.routeId,
+      name: branch.name,
+      fromS: Number(branch.fromS.toFixed(2)),
+      toS: Number(branch.toS.toFixed(2)),
+      mainArcM: Number(mainArcM.toFixed(2)),
+      branchLengthM: Number(branchLen.toFixed(2)),
+      width: branch.getTrackWidth(),
+      entryWorldErrorM: Number(entryWorldErrorM.toFixed(4)),
+      entryEndWorldErrorM: Number(entryEndWorldErrorM.toFixed(4)),
+      mergeWorldErrorM: Number(mergeWorldErrorM.toFixed(4)),
+      solverConverged: solveRep.converged,
+      solverPosErrorM: Number(solveRep.posErrorM.toFixed(5)),
+      solverYawErrorDeg: Number(solveRep.dYawDeg.toFixed(4)),
+      minCorridorClearanceM:
+        minCorridorClearanceM !== null ? Number(minCorridorClearanceM.toFixed(2)) : null,
+      jumps: simOut.jumps.map((j) => ({
+        ...j,
+        startS: Number(j.startS.toFixed(2)),
+        endS: Number(j.endS.toFixed(2)),
+        gapLength: Number(j.gapLength.toFixed(2)),
+        takeoffSpeed: Number(j.takeoffSpeed.toFixed(2)),
+        minSpeedRequired: Number(
+          (Number.isFinite(j.minSpeedRequired) ? j.minSpeedRequired : 0).toFixed(2),
+        ),
+        airtime: Number(j.airtime.toFixed(3)),
+      })),
+      mainTimeSec: Number(referenceTime.toFixed(3)),
+      shortcutTimeSec: Number(simOut.elapsedTime.toFixed(3)),
+      timeSavingSec: Number(timeSavingSec.toFixed(3)),
+      perLapSavingSec: Number(perLapSavingSec.toFixed(3)),
+      shortcutEntries: simOut.entries,
+      shortcutMerges: simOut.merges,
+      shortcutFalls: simOut.falls,
+      shortcutStuck: simOut.stuckEvents,
+      shortcutRailHits: simOut.railHits,
+      ok: errors.length === branchErrorCountBefore,
+    });
+  }
+
   return {
     ok: errors.length === 0,
     closed: isClosed,
@@ -789,6 +1185,7 @@ export function validateCourse(
       airtime: Number(j.airtime.toFixed(3)),
     })),
     zones,
+    branches: branchResults,
     railHits,
     stuckEvents,
     falls,

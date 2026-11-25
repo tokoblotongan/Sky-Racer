@@ -45,91 +45,99 @@ export function createEngine(manager: AudioManager): EngineAudio {
   let disposed = false;
 
   if (ctx && buses) {
-    const now = ctx.currentTime;
+    try {
+      const now = ctx.currentTime;
 
-    envelopeGain = ctx.createGain();
-    envelopeGain.gain.setValueAtTime(0, now);
-    envelopeGain.connect(buses.engine);
+      envelopeGain = ctx.createGain();
+      envelopeGain.gain.setValueAtTime(0, now);
+      envelopeGain.connect(buses.engine);
 
-    engineFilter = ctx.createBiquadFilter();
-    engineFilter.type = 'lowpass';
-    engineFilter.frequency.setValueAtTime(cfg.filterBase, now);
-    engineFilter.Q.setValueAtTime(1.4, now);
+      engineFilter = ctx.createBiquadFilter();
+      engineFilter.type = 'lowpass';
+      engineFilter.frequency.setValueAtTime(cfg.filterBase, now);
+      engineFilter.Q.setValueAtTime(1.4, now);
 
-    motorMixGain = ctx.createGain();
-    motorMixGain.gain.setValueAtTime(cfg.idleGain, now);
+      motorMixGain = ctx.createGain();
+      motorMixGain.gain.setValueAtTime(cfg.idleGain, now);
 
-    oscSaw = ctx.createOscillator();
-    oscSaw.type = 'sawtooth';
-    oscSaw.frequency.setValueAtTime(cfg.idleFreq, now);
-    oscSaw.detune.setValueAtTime(-cfg.detuneCents, now);
-    oscSawGain = ctx.createGain();
-    oscSawGain.gain.setValueAtTime(0.58, now);
+      oscSaw = ctx.createOscillator();
+      oscSaw.type = 'sawtooth';
+      oscSaw.frequency.setValueAtTime(cfg.idleFreq, now);
+      oscSaw.detune.setValueAtTime(-cfg.detuneCents, now);
+      oscSawGain = ctx.createGain();
+      oscSawGain.gain.setValueAtTime(0.58, now);
 
-    oscSquare = ctx.createOscillator();
-    oscSquare.type = 'square';
-    oscSquare.frequency.setValueAtTime(cfg.idleFreq * 1.002, now);
-    oscSquare.detune.setValueAtTime(cfg.detuneCents, now);
-    oscSquareGain = ctx.createGain();
-    oscSquareGain.gain.setValueAtTime(0.32, now);
+      oscSquare = ctx.createOscillator();
+      oscSquare.type = 'square';
+      oscSquare.frequency.setValueAtTime(cfg.idleFreq * 1.002, now);
+      oscSquare.detune.setValueAtTime(cfg.detuneCents, now);
+      oscSquareGain = ctx.createGain();
+      oscSquareGain.gain.setValueAtTime(0.32, now);
 
-    oscSaw.connect(oscSawGain);
-    oscSquare.connect(oscSquareGain);
-    oscSawGain.connect(engineFilter);
-    oscSquareGain.connect(engineFilter);
-    engineFilter.connect(motorMixGain);
-    motorMixGain.connect(envelopeGain);
+      oscSaw.connect(oscSawGain);
+      oscSquare.connect(oscSquareGain);
+      oscSawGain.connect(engineFilter);
+      oscSquareGain.connect(engineFilter);
+      engineFilter.connect(motorMixGain);
+      motorMixGain.connect(envelopeGain);
 
-    oscSaw.start(now);
-    oscSquare.start(now);
+      oscSaw.start(now);
+      oscSquare.start(now);
 
-    if (whiteBuffer) {
-      noiseSource = ctx.createBufferSource();
-      noiseSource.buffer = whiteBuffer;
-      noiseSource.loop = true;
+      if (whiteBuffer) {
+        noiseSource = ctx.createBufferSource();
+        noiseSource.buffer = whiteBuffer;
+        noiseSource.loop = true;
 
-      tireFilter = ctx.createBiquadFilter();
-      tireFilter.type = 'bandpass';
-      tireFilter.frequency.setValueAtTime(860, now);
-      tireFilter.Q.setValueAtTime(1.1, now);
+        tireFilter = ctx.createBiquadFilter();
+        tireFilter.type = 'bandpass';
+        tireFilter.frequency.setValueAtTime(860, now);
+        tireFilter.Q.setValueAtTime(1.1, now);
 
-      tireGain = ctx.createGain();
-      tireGain.gain.setValueAtTime(0, now);
+        tireGain = ctx.createGain();
+        tireGain.gain.setValueAtTime(0, now);
 
-      boostFilter = ctx.createBiquadFilter();
-      boostFilter.type = 'bandpass';
-      boostFilter.frequency.setValueAtTime(1250, now);
-      boostFilter.Q.setValueAtTime(1.4, now);
+        boostFilter = ctx.createBiquadFilter();
+        boostFilter.type = 'bandpass';
+        boostFilter.frequency.setValueAtTime(1250, now);
+        boostFilter.Q.setValueAtTime(1.4, now);
 
-      boostGain = ctx.createGain();
-      boostGain.gain.setValueAtTime(0, now);
+        boostGain = ctx.createGain();
+        boostGain.gain.setValueAtTime(0, now);
 
-      noiseSource.connect(tireFilter);
-      tireFilter.connect(tireGain);
-      tireGain.connect(envelopeGain);
+        noiseSource.connect(tireFilter);
+        tireFilter.connect(tireGain);
+        tireGain.connect(envelopeGain);
 
-      noiseSource.connect(boostFilter);
-      boostFilter.connect(boostGain);
-      boostGain.connect(envelopeGain);
+        noiseSource.connect(boostFilter);
+        boostFilter.connect(boostGain);
+        boostGain.connect(envelopeGain);
 
-      noiseSource.start(now);
+        noiseSource.start(now);
+      }
+    } catch {
+      dispose();
     }
   }
 
   function applyIdleTargets(): void {
-    if (!ctx || !oscSaw || !oscSquare || !engineFilter || !motorMixGain) {
+    if (!ctx || ctx.state !== 'running' || !oscSaw || !oscSquare || !engineFilter || !motorMixGain) {
       return;
     }
-    const now = ctx.currentTime;
-    oscSaw.frequency.setTargetAtTime(cfg.idleFreq, now, 0.05);
-    oscSquare.frequency.setTargetAtTime(cfg.idleFreq * 1.002, now, 0.05);
-    engineFilter.frequency.setTargetAtTime(cfg.filterBase, now, 0.05);
-    motorMixGain.gain.setTargetAtTime(cfg.idleGain, now, 0.05);
-    if (tireGain) {
-      tireGain.gain.setTargetAtTime(0, now, 0.04);
-    }
-    if (boostGain) {
-      boostGain.gain.setTargetAtTime(0, now, 0.05);
+    try {
+      const now = ctx.currentTime;
+      oscSaw.frequency.setTargetAtTime(cfg.idleFreq, now, 0.05);
+      oscSquare.frequency.setTargetAtTime(cfg.idleFreq * 1.002, now, 0.05);
+      engineFilter.frequency.setTargetAtTime(cfg.filterBase, now, 0.05);
+      motorMixGain.gain.setTargetAtTime(cfg.idleGain, now, 0.05);
+      if (tireGain) {
+        tireGain.gain.setTargetAtTime(0, now, 0.04);
+      }
+      if (boostGain) {
+        boostGain.gain.setTargetAtTime(0, now, 0.05);
+      }
+    } catch {
+      // Ignore WebAudio scheduling errors
     }
   }
 
@@ -141,28 +149,44 @@ export function createEngine(manager: AudioManager): EngineAudio {
       return;
     }
     isFadedIn = false;
-    const now = ctx.currentTime;
-    const tc = Math.max(0.02, cfg.fadeOutTime / 3);
-    envelopeGain.gain.cancelScheduledValues(now);
-    envelopeGain.gain.setTargetAtTime(0, now, tc);
+    try {
+      const now = ctx.currentTime;
+      const tc = Math.max(0.02, cfg.fadeOutTime / 3);
+      envelopeGain.gain.cancelScheduledValues(now);
+      envelopeGain.gain.setTargetAtTime(0, now, tc);
+    } catch {
+      // Ignore fade errors
+    }
   }
 
   function fadeIn(): void {
-    if (disposed || !ctx || !envelopeGain) {
+    if (disposed || !ctx || !envelopeGain || ctx.state !== 'running') {
       return;
     }
     if (isFadedIn) {
       return;
     }
     isFadedIn = true;
-    const now = ctx.currentTime;
-    const tc = Math.max(0.015, cfg.fadeInTime / 3);
-    envelopeGain.gain.cancelScheduledValues(now);
-    envelopeGain.gain.setTargetAtTime(1, now, tc);
+    try {
+      const now = ctx.currentTime;
+      const tc = Math.max(0.015, cfg.fadeInTime / 3);
+      envelopeGain.gain.cancelScheduledValues(now);
+      envelopeGain.gain.setTargetAtTime(1, now, tc);
+    } catch {
+      // Ignore fade errors
+    }
   }
 
   function update(params: EngineUpdateParams, dt: number): void {
-    if (disposed || !ctx || !oscSaw || !oscSquare || !engineFilter || !motorMixGain) {
+    if (
+      disposed ||
+      !ctx ||
+      ctx.state !== 'running' ||
+      !oscSaw ||
+      !oscSquare ||
+      !engineFilter ||
+      !motorMixGain
+    ) {
       return;
     }
 
@@ -172,17 +196,18 @@ export function createEngine(manager: AudioManager): EngineAudio {
     }
     updateAccumulator = 0;
 
-    if (!params.active) {
-      if (isFadedIn) {
-        fadeOut();
+    try {
+      if (!params.active) {
+        if (isFadedIn) {
+          fadeOut();
+        }
+        applyIdleTargets();
+        return;
       }
-      applyIdleTargets();
-      return;
-    }
 
-    if (!isFadedIn) {
-      fadeIn();
-    }
+      if (!isFadedIn) {
+        fadeIn();
+      }
 
     const now = ctx.currentTime;
     const speedClamped = Math.max(0, Math.min(1.4, params.speedNorm));
@@ -244,6 +269,9 @@ export function createEngine(manager: AudioManager): EngineAudio {
         now,
         0.07,
       );
+      }
+    } catch {
+      // Ignore engine audio scheduling errors
     }
   }
 

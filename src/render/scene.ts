@@ -93,7 +93,7 @@ function createSkyDome(preset: VisualPreset): {
   geometry: THREE.BufferGeometry;
   material: THREE.ShaderMaterial;
 } {
-  const radius = Math.min(580, CONFIG.render.viewDistance * 0.8);
+  const radius = Math.min(340, CONFIG.render.viewDistance * 0.7);
   const geometry = new THREE.SphereGeometry(radius, 32, 24);
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -147,11 +147,12 @@ function createWoodFloorTextures(
   preset: VisualPreset,
   repeatX: number = CONFIG.floor.textureRepeat,
   repeatZ: number = CONFIG.floor.textureRepeat,
+  maxTextureSize = 2048,
 ): {
   colorMap: THREE.CanvasTexture;
   roughnessMap: THREE.CanvasTexture;
 } {
-  const size = CONFIG.floor.textureSize;
+  const size = Math.min(CONFIG.floor.textureSize, maxTextureSize);
   const fc = preset.room.floorColor;
 
   const colorCanvas = document.createElement('canvas');
@@ -243,9 +244,10 @@ function createWallTexture(
   baseHex: string,
   stripeHex: string,
   maxAnisotropy: number,
+  maxTextureSize = 2048,
 ): THREE.CanvasTexture {
-  const width = 512;
-  const height = 256;
+  const width = Math.min(512, maxTextureSize);
+  const height = Math.min(256, maxTextureSize);
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -306,8 +308,9 @@ function createCeilingTexture(
   preset: VisualPreset,
   repeatX = 4,
   repeatZ = 4,
+  maxTextureSize = 2048,
 ): THREE.CanvasTexture {
-  const size = 512;
+  const size = Math.min(512, maxTextureSize);
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -371,34 +374,41 @@ function disposeObjectResources(root: THREE.Object3D): void {
   materials.forEach((m) => m.dispose());
 }
 
-export function createSceneContext(container: HTMLElement): SceneContext {
+export function createSceneContext(
+  container: HTMLElement,
+  initialQuality: QualityLevel = 'high',
+): SceneContext {
   const isSoftwareGl = detectSoftwareWebGL();
+  const initialQualityPreset = CONFIG.quality.levels[initialQuality];
   const vis = CONFIG.visual;
   let activePresetName: VisualPresetName = vis.activePreset;
   let activePreset: VisualPreset = vis.presets[activePresetName];
 
   const renderer = new THREE.WebGLRenderer({
-    antialias: !isSoftwareGl,
+    antialias: !isSoftwareGl && initialQualityPreset.antialias,
     powerPreference: 'high-performance',
   });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = activePreset.exposure;
   renderer.setPixelRatio(
-    isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, CONFIG.renderer.maxPixelRatio),
+    isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, initialQualityPreset.pixelRatioMax),
   );
   renderer.setSize(
     container.clientWidth || window.innerWidth,
     container.clientHeight || window.innerHeight,
   );
-  renderer.shadowMap.enabled = !isSoftwareGl;
+  const initialShadowsEnabled = !isSoftwareGl && initialQualityPreset.shadowsEnabled;
+  renderer.shadowMap.enabled = initialShadowsEnabled;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.appendChild(renderer.domElement);
 
   const maxAnisotropy = Math.min(
     renderer.capabilities.getMaxAnisotropy(),
     CONFIG.render.anisotropyMax,
+    initialQualityPreset.anisotropy,
   );
+  const maxTextureSize = initialQualityPreset.maxTextureSize;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(activePreset.skyHorizon);
@@ -432,7 +442,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     CONFIG.camera.fovBase,
     aspect,
     CONFIG.camera.near,
-    CONFIG.render.viewDistance * 1.2,
+    initialQualityPreset.viewDistance * 1.2,
   );
 
   const sunOffsetVec = new THREE.Vector3(
@@ -446,13 +456,14 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   const sunUp = new THREE.Vector3().crossVectors(sunDir, sunRight).normalize();
   const snappedTarget = new THREE.Vector3();
 
-  let currentPixelRatioMax: number = CONFIG.renderer.maxPixelRatio;
-  let currentShadowMapSize: number = CONFIG.renderer.shadowMapSize;
-  let currentShadowFollowRadius: number = CONFIG.lighting.sunShadowExtent;
+  let currentPixelRatioMax: number = initialQualityPreset.pixelRatioMax;
+  let currentShadowMapSize: number =
+    initialQualityPreset.shadowMapSize > 0 ? initialQualityPreset.shadowMapSize : 256;
+  let currentShadowFollowRadius: number = initialQualityPreset.shadowFollowRadius;
 
   const sunLight = new THREE.DirectionalLight(activePreset.sunColor, activePreset.sunIntensity);
   sunLight.position.copy(sunOffsetVec);
-  sunLight.castShadow = true;
+  sunLight.castShadow = initialShadowsEnabled;
   sunLight.shadow.mapSize.set(currentShadowMapSize, currentShadowMapSize);
   sunLight.shadow.camera.left = -currentShadowFollowRadius;
   sunLight.shadow.camera.right = currentShadowFollowRadius;
@@ -485,6 +496,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     activePreset,
     plankRepeatX,
     plankRepeatZ,
+    maxTextureSize,
   );
   const floorMaterial = new THREE.MeshStandardMaterial({
     map: woodColorMap,
@@ -497,6 +509,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     activePreset.room.wallColor,
     activePreset.room.wallStripe,
     maxAnisotropy,
+    maxTextureSize,
   );
   const backWallMat = new THREE.MeshStandardMaterial({
     map: backWallTex,
@@ -508,6 +521,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     activePreset.room.sideWallColor,
     activePreset.room.sideWallStripe,
     maxAnisotropy,
+    maxTextureSize,
   );
   const sideWallMat = new THREE.MeshStandardMaterial({
     map: sideWallTex,
@@ -526,6 +540,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     activePreset,
     ceilingRepeatX,
     ceilingRepeatZ,
+    maxTextureSize,
   );
   const ceilingMat = new THREE.MeshStandardMaterial({
     map: ceilingTex,
@@ -764,8 +779,28 @@ export function createSceneContext(container: HTMLElement): SceneContext {
 
   let activeCourse: Course | null = null;
   let activeTheme: ThemeInstance | null = null;
-  let activeQuality: QualityLevel = 'high';
+  let activeQuality: QualityLevel = initialQuality;
   let activeDensityScale = -1;
+  let activeRoomDim: RoomDimensions = {
+    centerX: 0,
+    centerZ: 0,
+    width: CONFIG.props.roomSize.width,
+    depth: CONFIG.props.roomSize.depth,
+    height: CONFIG.props.roomSize.height,
+  };
+
+  function syncCameraFar(): void {
+    const qualityViewDist = CONFIG.quality.levels[activeQuality].viewDistance;
+    let requiredFar = qualityViewDist * 1.35;
+    if (activeCourse) {
+      requiredFar = Math.max(requiredFar, activeCourse.getBounds().radius * 2 + 420);
+    }
+    requiredFar = Math.max(requiredFar, Math.hypot(activeRoomDim.width, activeRoomDim.depth) + 180);
+    if (Math.abs(camera.far - requiredFar) > 1) {
+      camera.far = requiredFar;
+      camera.updateProjectionMatrix();
+    }
+  }
 
   function applyThemeAtmosphere(): void {
     const theme = getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom');
@@ -811,15 +846,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     activeTheme = theme.build(course, quality, scene, maxAnisotropy, activePresetName);
     scene.add(activeTheme.group);
 
-    const bounds = course.getBounds();
-    const requiredFar = Math.max(
-      CONFIG.render.viewDistance * 1.35,
-      bounds.radius * 2 + 540,
-    );
-    if (camera.far < requiredFar) {
-      camera.far = requiredFar;
-      camera.updateProjectionMatrix();
-    }
+    syncCameraFar();
 
     applyThemeAtmosphere();
     updateVisualDebugOverlay();
@@ -835,16 +862,10 @@ export function createSceneContext(container: HTMLElement): SceneContext {
 
   function setRoomBounds(bounds: CourseBounds): void {
     const dim = computeRoomDimensions(bounds);
+    activeRoomDim = dim;
     rebuildRoomShell(dim);
     skyDome.mesh.position.set(dim.centerX, 0, dim.centerZ);
-    const requiredFar = Math.max(
-      CONFIG.render.viewDistance * 1.35,
-      Math.hypot(dim.width, dim.depth) + 220,
-    );
-    if (camera.far < requiredFar) {
-      camera.far = requiredFar;
-      camera.updateProjectionMatrix();
-    }
+    syncCameraFar();
   }
 
   function setOrbitTarget(target: THREE.Vector3, radius: number, height: number): void {
@@ -872,8 +893,12 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     const preset = CONFIG.quality.levels[level];
     currentPixelRatioMax = preset.pixelRatioMax;
     renderer.setPixelRatio(
-      isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, currentPixelRatioMax),
+      isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, currentPixelRatioMax),
     );
+
+    const shadowsEnabled = !isSoftwareGl && preset.shadowsEnabled;
+    renderer.shadowMap.enabled = shadowsEnabled;
+    sunLight.castShadow = shadowsEnabled;
 
     let frustumChanged = false;
     if (currentShadowFollowRadius !== preset.shadowFollowRadius) {
@@ -885,8 +910,9 @@ export function createSceneContext(container: HTMLElement): SceneContext {
       frustumChanged = true;
     }
 
-    if (currentShadowMapSize !== preset.shadowMapSize) {
-      currentShadowMapSize = preset.shadowMapSize;
+    const nextShadowSize = preset.shadowMapSize > 0 ? preset.shadowMapSize : 256;
+    if (currentShadowMapSize !== nextShadowSize) {
+      currentShadowMapSize = nextShadowSize;
       sunLight.shadow.mapSize.set(currentShadowMapSize, currentShadowMapSize);
       if (sunLight.shadow.map) {
         sunLight.shadow.map.dispose();
@@ -900,6 +926,8 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     }
 
     activeQuality = level;
+    syncCameraFar();
+
     const nextDensityScale = preset.propsDensityScale;
     if (activeCourse && nextDensityScale !== activeDensityScale) {
       setTheme(activeCourse, activeQuality);
@@ -960,6 +988,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
       activePreset,
       plankRepeatX,
       plankRepeatZ,
+      maxTextureSize,
     );
     woodColorMap = nextWood.colorMap;
     woodRoughnessMap = nextWood.roughnessMap;
@@ -974,6 +1003,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
       activePreset.room.wallColor,
       activePreset.room.wallStripe,
       maxAnisotropy,
+      maxTextureSize,
     );
     backWallMat.map = backWallTex;
     backWallMat.needsUpdate = true;
@@ -984,6 +1014,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
       activePreset.room.sideWallColor,
       activePreset.room.sideWallStripe,
       maxAnisotropy,
+      maxTextureSize,
     );
     sideWallMat.map = sideWallTex;
     sideWallMat.needsUpdate = true;
@@ -997,6 +1028,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
       activePreset,
       ceilingRepeatX,
       ceilingRepeatZ,
+      maxTextureSize,
     );
     ceilingMat.map = ceilingTex;
     ceilingMat.emissive.set(activePreset.room.ceilingColor);

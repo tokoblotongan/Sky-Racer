@@ -32,7 +32,14 @@ export function createSfx(manager: AudioManager): SfxAudio {
   let disposed = false;
 
   function canTrigger(key: EffectKey): boolean {
-    if (disposed || !ctx || !buses || !manager.isUnlocked() || document.hidden) {
+    if (
+      disposed ||
+      !ctx ||
+      !buses ||
+      ctx.state !== 'running' ||
+      !manager.isUnlocked() ||
+      document.hidden
+    ) {
       return false;
     }
     const now = ctx.currentTime;
@@ -523,46 +530,53 @@ export function createSfx(manager: AudioManager): SfxAudio {
   }
 
   function play(event: SoundEffectEvent): void {
-    switch (event.type) {
-      case 'countdownTick':
-        playCountdownTick();
-        break;
-      case 'go':
-        playGo();
-        break;
-      case 'checkpoint':
-        playCheckpoint(event.index);
-        break;
-      case 'finish':
-        playFinish(event.medal, event.isNewBest);
-        break;
-      case 'boost':
-        playBoost();
-        break;
-      case 'takeoff':
-        playTakeoff();
-        break;
-      case 'landed':
-        playLanded(event.impactSpeed);
-        break;
-      case 'railHit':
-        playRailHit(event.intensity);
-        break;
-      case 'fell':
-        playFell();
-        break;
-      case 'respawn':
-        playRespawn();
-        break;
-      case 'restart':
-        playClick('restart');
-        break;
-      case 'uiConfirm':
-        playClick('uiConfirm');
-        break;
-      case 'uiMove':
-        playClick('uiMove');
-        break;
+    if (disposed || !ctx || ctx.state !== 'running') {
+      return;
+    }
+    try {
+      switch (event.type) {
+        case 'countdownTick':
+          playCountdownTick();
+          break;
+        case 'go':
+          playGo();
+          break;
+        case 'checkpoint':
+          playCheckpoint(event.index);
+          break;
+        case 'finish':
+          playFinish(event.medal, event.isNewBest);
+          break;
+        case 'boost':
+          playBoost();
+          break;
+        case 'takeoff':
+          playTakeoff();
+          break;
+        case 'landed':
+          playLanded(event.impactSpeed);
+          break;
+        case 'railHit':
+          playRailHit(event.intensity);
+          break;
+        case 'fell':
+          playFell();
+          break;
+        case 'respawn':
+          playRespawn();
+          break;
+        case 'restart':
+          playClick('restart');
+          break;
+        case 'uiConfirm':
+          playClick('uiConfirm');
+          break;
+        case 'uiMove':
+          playClick('uiMove');
+          break;
+      }
+    } catch {
+      // Skip SFX cleanly if WebAudio node creation or scheduling fails
     }
   }
 

@@ -236,8 +236,8 @@ export function createPostFx(
 
     bloomEnabled = !isSoftwareGl && preset.bloomEnabled;
     speedLinesEnabled = !isSoftwareGl && preset.speedLinesEnabled;
-    colorGradeEnabled = !isSoftwareGl && level !== 'low';
-    fxaaEnabled = !isSoftwareGl && currentSamples === 0;
+    colorGradeEnabled = !isSoftwareGl && preset.colorGradeEnabled;
+    fxaaEnabled = !isSoftwareGl && preset.fxaaEnabled && currentSamples === 0;
 
     bloomPass.enabled = bloomEnabled && scene.userData.visualDebugBloomEnabled !== false;
     speedLinesPass.enabled = speedLinesEnabled;

@@ -112,6 +112,17 @@ function main(): void {
     ],
   );
 
+  for (const br of report.branches) {
+    const inRange =
+      br.perLapSavingSec >= CONFIG.shortcut.minTimeSaving &&
+      br.perLapSavingSec <= CONFIG.shortcut.maxTimeSaving;
+    rows.push([
+      `Rute Pintas (${br.routeId})`,
+      br.ok ? (inRange ? 'OK' : 'WARN') : 'FAIL',
+      `len=${br.branchLengthM.toFixed(1)}m (utama=${br.mainArcM.toFixed(1)}m), koridor=${br.minCorridorClearanceM !== null ? `${br.minCorridorClearanceM.toFixed(1)}m` : 'n/a'}, utama=${br.mainTimeSec.toFixed(2)}s vs pintas=${br.shortcutTimeSec.toFixed(2)}s (hemat ${br.timeSavingSec.toFixed(2)}s total / ${br.perLapSavingSec.toFixed(2)}s per lap), jatuh=${br.shortcutFalls}`,
+    ]);
+  }
+
   console.log('');
   console.log(
     `=== VALIDASI LINTASAN: ${courseDef.name} (${courseDef.id}) [${report.closed ? `TERTUTUP ${report.laps} LAP` : 'SATU ARAH'}] ===`,
@@ -128,6 +139,21 @@ function main(): void {
     console.log(
       `Waktu Per Lap  : ${report.lapTimes.map((t, idx) => `Lap ${idx + 1}: ${t.toFixed(2)}s`).join(' | ')}${report.bestLap !== null ? ` (Best: ${report.bestLap.toFixed(2)}s)` : ''}`,
     );
+  }
+
+  if (report.branches.length > 0) {
+    console.log('');
+    console.log('Detail Rute Pintas:');
+    for (const br of report.branches) {
+      console.log(
+        `  - ${br.name} (${br.routeId}) | fromS=${br.fromS.toFixed(1)}m -> toS=${br.toS.toFixed(1)}m | errEntry=${br.entryWorldErrorM.toFixed(4)}m, errMerge=${br.mergeWorldErrorM.toFixed(4)}m | masuk=${br.shortcutEntries}, gabung=${br.shortcutMerges}, railHit=${br.shortcutRailHits}`,
+      );
+      for (const j of br.jumps) {
+        console.log(
+          `    * Lompatan #${j.segmentIndex} (${j.gapLength.toFixed(1)}m): vTakeoff=${j.takeoffSpeed.toFixed(1)} m/s (min ${j.minSpeedRequired.toFixed(1)} m/s), air=${j.airtime.toFixed(2)}s, landed=${j.landed}`,
+        );
+      }
+    }
   }
 
   if (report.zones.length > 0) {
