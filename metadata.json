@@ -1,0 +1,6 @@
+{
+  "name": "Sky Racer",
+  "description": "3D die-cast stunt car racing game on glossy orange tracks suspended in a giant room.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
