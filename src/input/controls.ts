@@ -82,9 +82,17 @@ export function createKeyboardControls(): KeyboardControls {
     throttle = approachExponential(throttle, gasTarget, cfg.throttleResponseRate, dt);
     brake = approachExponential(brake, brakeTarget, cfg.brakeResponseRate, dt);
 
-    const steerRate =
-      Math.abs(steerTarget) > 0.01 ? cfg.steerResponseRate : cfg.steerReturnRate;
-    steer = approachExponential(steer, steerTarget, steerRate, dt);
+    const isReleasing =
+      Math.abs(steerTarget) <= 0.01 ||
+      (Math.abs(steer) > 0.01 && Math.sign(steerTarget) !== Math.sign(steer));
+    const rampTime = isReleasing ? cfg.steerReleaseTime : cfg.steerAttackTime;
+    const maxSteerStep = dt / Math.max(0.001, rampTime);
+    const steerDelta = steerTarget - steer;
+    if (Math.abs(steerDelta) <= maxSteerStep) {
+      steer = steerTarget;
+    } else {
+      steer += Math.sign(steerDelta) * maxSteerStep;
+    }
 
     if (Math.abs(throttle) < 1e-3 && gasTarget === 0) throttle = 0;
     if (Math.abs(brake) < 1e-3 && brakeTarget === 0) brake = 0;

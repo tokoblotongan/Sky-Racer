@@ -29,6 +29,8 @@ export interface CarState {
   boostTimeLeft: number;
   boostCooldown: number;
   railHitCooldown: number;
+  currentGrip: number;
+  railContactTimer: number;
   worldPos: THREE.Vector3;
   worldVel: THREE.Vector3;
   worldQuat: THREE.Quaternion;
@@ -121,6 +123,8 @@ export function createCarState(): CarState {
     boostTimeLeft: 0,
     boostCooldown: 0,
     railHitCooldown: 0,
+    currentGrip: CONFIG.physics.grip,
+    railContactTimer: 0,
     worldPos: new THREE.Vector3(),
     worldVel: new THREE.Vector3(),
     worldQuat: new THREE.Quaternion(),
@@ -150,6 +154,8 @@ export function copyCarState(src: CarState, dst: CarState): void {
   dst.boostTimeLeft = src.boostTimeLeft;
   dst.boostCooldown = src.boostCooldown;
   dst.railHitCooldown = src.railHitCooldown;
+  dst.currentGrip = src.currentGrip;
+  dst.railContactTimer = src.railContactTimer;
   dst.worldPos.copy(src.worldPos);
   dst.worldVel.copy(src.worldVel);
   dst.worldQuat.copy(src.worldQuat);
@@ -189,6 +195,8 @@ export function interpolateCarState(
   out.boostTimeLeft = THREE.MathUtils.lerp(prev.boostTimeLeft, curr.boostTimeLeft, alpha);
   out.boostCooldown = THREE.MathUtils.lerp(prev.boostCooldown, curr.boostCooldown, alpha);
   out.railHitCooldown = curr.railHitCooldown;
+  out.currentGrip = curr.currentGrip;
+  out.railContactTimer = curr.railContactTimer;
   out.worldPos.lerpVectors(prev.worldPos, curr.worldPos, alpha);
   out.worldVel.lerpVectors(prev.worldVel, curr.worldVel, alpha);
   out.worldQuat.slerpQuaternions(prev.worldQuat, curr.worldQuat, alpha);
@@ -225,7 +233,10 @@ export function respawnAt(
 ): void {
   const clampedS = course.clampDistance(s);
   course.getFrameAt(clampedS, _frame);
-  const maxLateral = Math.max(0.2, _frame.width * 0.5 - CONFIG.physics.railMargin);
+  const maxLateral = Math.max(
+    0.25,
+    _frame.width * 0.5 - CONFIG.physics.railInnerOffset - CONFIG.car.carHalfWidth,
+  );
   const clampedLat = THREE.MathUtils.clamp(lateral, -maxLateral, maxLateral);
 
   const forwardSpeed = Math.max(0, state.vForward) * speedFactor;
@@ -249,6 +260,8 @@ export function respawnAt(
   state.boostTimeLeft = 0;
   state.boostCooldown = 0;
   state.railHitCooldown = 0;
+  state.currentGrip = CONFIG.physics.grip;
+  state.railContactTimer = 0;
   state.normalForce = CONFIG.physics.gravity * _frame.up.y;
 
   state.worldPos
@@ -382,27 +395,42 @@ function stepGroundedCar(
     boostedMaxSpeed,
   );
 
-  // 3. Steering -> yaw relative to track tangent
-  state.steer = input.steer;
+  // 3. Steering -> yaw relative to track tangent (speed-limited & controlled)
   const absSpeed = Math.abs(state.vForward);
-  const lowSpeedFactor = THREE.MathUtils.clamp(absSpeed / cfg.steerMinSpeed, 0, 1);
-  const speedNorm = absSpeed / cfg.steerRefSpeed;
-  const highSpeedFactor = 1 / (1 + speedNorm * speedNorm * cfg.steerHighSpeedDamp);
+  const speedNorm01 = THREE.MathUtils.clamp(absSpeed / Math.max(1, cfg.maxSpeed), 0, 1);
+  const steerLimit = THREE.MathUtils.lerp(1, CONFIG.input.highSpeedSteerLimit, speedNorm01);
+  const effectiveSteer = input.steer * steerLimit;
+  state.steer = effectiveSteer;
+
+  let speedFactor = 0;
+  if (absSpeed > 1e-4) {
+    if (absSpeed <= cfg.steerPeakSpeed) {
+      const riseT = THREE.MathUtils.clamp(absSpeed / Math.max(0.1, cfg.steerPeakSpeed), 0, 1);
+      speedFactor = riseT * (2 - riseT);
+    } else {
+      const highT = THREE.MathUtils.clamp(
+        (absSpeed - cfg.steerPeakSpeed) / Math.max(1, cfg.maxSpeed - cfg.steerPeakSpeed),
+        0,
+        1,
+      );
+      speedFactor = THREE.MathUtils.lerp(1, cfg.steerHighSpeedFactor, highT);
+    }
+  }
+
   const steerDirection = state.vForward >= -0.25 ? 1 : -1;
   const handbrakeTurnBoost = input.handbrake ? cfg.handbrakeYawBoost : 1;
 
   if (Math.abs(input.steer) > 0.01) {
     const yawDelta =
-      input.steer *
+      effectiveSteer *
       steerDirection *
       cfg.steerRate *
-      lowSpeedFactor *
-      highSpeedFactor *
+      speedFactor *
       handbrakeTurnBoost *
       dt;
     state.yaw += yawDelta;
   } else {
-    const alignRate = cfg.yawSelfAlign * THREE.MathUtils.lerp(0.25, 1, lowSpeedFactor);
+    const alignRate = cfg.yawSelfAlign * THREE.MathUtils.lerp(0.35, 1.45, speedNorm01);
     state.yaw *= Math.exp(-alignRate * dt);
     if (Math.abs(state.yaw) < 1e-4) {
       state.yaw = 0;
@@ -413,7 +441,7 @@ function stepGroundedCar(
   const dYaw = state.yaw - prevYaw;
   const yawRate = dt > 0 ? dYaw / dt : 0;
 
-  // 4. Re-project track-plane velocity, apply lateral banking gravity, decay lateral slip by grip
+  // 4. Re-project track-plane velocity, apply lateral banking gravity, decay lateral slip with grip recovery
   if (Math.abs(dYaw) > 1e-6) {
     const cosD = Math.cos(dYaw);
     const sinD = Math.sin(dYaw);
@@ -425,8 +453,17 @@ function stepGroundedCar(
 
   state.vLateral += gCarRight * cfg.bankGravityFactor * dt;
 
-  const activeGrip = input.handbrake ? cfg.handbrakeGrip : cfg.grip;
-  state.vLateral *= Math.exp(-activeGrip * dt);
+  if (input.handbrake) {
+    state.currentGrip = cfg.handbrakeGrip;
+  } else if (state.currentGrip < cfg.grip) {
+    const recoverRate = (cfg.grip - cfg.handbrakeGrip) / Math.max(0.02, cfg.gripRecoverTime);
+    state.currentGrip = Math.min(cfg.grip, state.currentGrip + recoverRate * dt);
+  } else {
+    state.currentGrip = cfg.grip;
+  }
+
+  state.vLateral *= Math.exp(-state.currentGrip * dt);
+  state.vLateral = THREE.MathUtils.clamp(state.vLateral, -cfg.maxSlipSpeed, cfg.maxSlipSpeed);
   if (Math.abs(state.vLateral) < 1e-4 && Math.abs(gCarRight) < 0.05) {
     state.vLateral = 0;
   }
@@ -434,62 +471,87 @@ function stepGroundedCar(
   // 5. Advance s and lateral in track-space
   const cosY = Math.cos(state.yaw);
   const sinY = Math.sin(state.yaw);
-  const vTrackTangent = state.vForward * cosY - state.vLateral * sinY;
+  let vTrackTangent = state.vForward * cosY - state.vLateral * sinY;
   let vTrackRight = state.vForward * sinY + state.vLateral * cosY;
 
   state.s += vTrackTangent * dt;
   state.lateral += vTrackRight * dt;
 
-  // 6. Guardrail bounds, bounce restitution, speed penalty & railHit event
-  const maxLateral = Math.max(0.2, _frame.width * 0.5 - cfg.railMargin);
-  if (state.lateral > maxLateral) {
-    state.lateral = maxLateral;
-    if (vTrackRight > 0) {
-      const impactSpeed = Math.abs(vTrackRight);
-      if (state.railHitCooldown <= 0 && impactSpeed > 0.35 && phase === 'RACING') {
-        const contactPos = _frame.position
-          .clone()
-          .addScaledVector(_frame.right, state.lateral + CONFIG.car.bodyWidth * 0.5)
-          .addScaledVector(_frame.up, 0.36);
-        events.push({
-          type: 'railHit',
-          side: 1,
-          intensity: THREE.MathUtils.clamp(impactSpeed / 14, 0.2, 1),
-          worldPos: contactPos,
-        });
+  // 6. Guardrail bounds (yaw-aware footprint), smooth depenetration, one-time impact penalty & anti-stuck
+  const halfExtentLateral =
+    CONFIG.car.carHalfWidth * Math.abs(cosY) + CONFIG.car.carHalfLength * Math.abs(sinY);
+  const maxLateral = Math.max(0.25, _frame.width * 0.5 - cfg.railInnerOffset - halfExtentLateral);
+
+  const contactSide: -1 | 0 | 1 =
+    state.lateral >= maxLateral - 0.01 ? 1 : state.lateral <= -maxLateral + 0.01 ? -1 : 0;
+
+  if (contactSide !== 0) {
+    state.railContactTimer += dt;
+
+    const penetration = contactSide * state.lateral - maxLateral;
+    if (penetration > 0) {
+      const pushOut = Math.min(penetration, cfg.railPushOutSpeed * dt);
+      state.lateral -= contactSide * pushOut;
+      const hardLimit = maxLateral + 0.35;
+      state.lateral = THREE.MathUtils.clamp(state.lateral, -hardLimit, hardLimit);
+    }
+
+    const vIntoWall = contactSide * vTrackRight;
+    if (vIntoWall > 0) {
+      if (vIntoWall > 0.35 && state.railHitCooldown <= 0) {
+        const impactRatio = THREE.MathUtils.clamp(vIntoWall / 22, 0, 1);
+        vTrackTangent *= 1 - cfg.railImpactPenalty * impactRatio;
+        if (phase === 'RACING') {
+          const contactPos = _frame.position
+            .clone()
+            .addScaledVector(_frame.right, state.lateral + contactSide * halfExtentLateral)
+            .addScaledVector(_frame.up, 0.36);
+          events.push({
+            type: 'railHit',
+            side: contactSide,
+            intensity: THREE.MathUtils.clamp(vIntoWall / 14, 0.2, 1),
+            worldPos: contactPos,
+          });
+        }
         state.railHitCooldown = cfg.railHitCooldown;
       }
-      vTrackRight = -vTrackRight * cfg.railRestitution;
-      state.vForward *= cfg.railSpeedPenalty;
-      state.yaw *= cfg.railYawDamp;
-      const cosR = Math.cos(state.yaw);
-      const sinR = Math.sin(state.yaw);
-      state.vLateral = (vTrackRight - state.vForward * sinR) / Math.max(0.2, cosR);
+      vTrackRight = -contactSide * vIntoWall * cfg.railRestitution;
     }
-  } else if (state.lateral < -maxLateral) {
-    state.lateral = -maxLateral;
-    if (vTrackRight < 0) {
-      const impactSpeed = Math.abs(vTrackRight);
-      if (state.railHitCooldown <= 0 && impactSpeed > 0.35 && phase === 'RACING') {
-        const contactPos = _frame.position
-          .clone()
-          .addScaledVector(_frame.right, state.lateral - CONFIG.car.bodyWidth * 0.5)
-          .addScaledVector(_frame.up, 0.36);
-        events.push({
-          type: 'railHit',
-          side: -1,
-          intensity: THREE.MathUtils.clamp(impactSpeed / 14, 0.2, 1),
-          worldPos: contactPos,
-        });
-        state.railHitCooldown = cfg.railHitCooldown;
+
+    vTrackTangent *= Math.exp(-cfg.railScrapeFriction * dt);
+
+    // Exact 2D transpose rotation back into car-space (avoids cos(yaw) division spikes)
+    state.vForward = vTrackTangent * cosY + vTrackRight * sinY;
+    state.vLateral = THREE.MathUtils.clamp(
+      -vTrackTangent * sinY + vTrackRight * cosY,
+      -cfg.maxSlipSpeed,
+      cfg.maxSlipSpeed,
+    );
+
+    if (state.vForward >= -0.25 && contactSide * state.yaw > 0) {
+      const yawToZero = Math.min(Math.abs(state.yaw), cfg.railAlignRate * dt);
+      state.yaw -= Math.sign(state.yaw) * yawToZero;
+    }
+
+    if (state.railContactTimer >= cfg.stuckTime && Math.abs(state.vForward) < cfg.stuckSpeed) {
+      state.lateral -= contactSide * cfg.railPushOutSpeed * 0.5 * dt;
+      if (contactSide * state.yaw > 0) {
+        const strongAlign = Math.min(Math.abs(state.yaw), cfg.railAlignRate * 2.0 * dt);
+        state.yaw -= Math.sign(state.yaw) * strongAlign;
       }
-      vTrackRight = -vTrackRight * cfg.railRestitution;
-      state.vForward *= cfg.railSpeedPenalty;
-      state.yaw *= cfg.railYawDamp;
-      const cosR = Math.cos(state.yaw);
-      const sinR = Math.sin(state.yaw);
-      state.vLateral = (vTrackRight - state.vForward * sinR) / Math.max(0.2, cosR);
+      const awaySpeed = -contactSide * state.vLateral;
+      if (awaySpeed < 1.5) {
+        const pushDelta = Math.min(1.5 - awaySpeed, cfg.railPushOutSpeed * dt);
+        state.vLateral -= contactSide * pushDelta;
+        state.vLateral = THREE.MathUtils.clamp(
+          state.vLateral,
+          -cfg.maxSlipSpeed,
+          cfg.maxSlipSpeed,
+        );
+      }
     }
+  } else {
+    state.railContactTimer = 0;
   }
 
   state.slip =
@@ -497,16 +559,17 @@ function stepGroundedCar(
       ? Math.atan2(Math.abs(state.vLateral), Math.max(0.5, Math.abs(state.vForward)))
       : 0;
 
-  // 7. Clamp s to [0, totalLength] with smooth stop at ends
+  // 7. Clamp s to [0, endClampS] with smooth stop past finish
   const totalLength = course.getLength();
+  const endClampS = Math.max(totalLength, course.getFinishS() + 0.5);
   if (state.s <= 0) {
     state.s = 0;
     if (state.vForward < 0) {
       state.vForward = 0;
       state.vLateral = 0;
     }
-  } else if (state.s >= totalLength) {
-    state.s = totalLength;
+  } else if (state.s >= endClampS) {
+    state.s = endClampS;
     const stopDecay = Math.exp(-cfg.endStopDamping * dt);
     state.vForward *= stopDecay;
     state.vLateral *= stopDecay;

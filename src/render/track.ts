@@ -794,7 +794,8 @@ function buildRailPosts(
     let instanceIdx = 0;
     for (const s of postLocations) {
       course.getFrameAt(s, frame);
-      const railEdgeOffset = frame.width * 0.5 + cfg.railOffsetFromEdge * 0.65;
+      const railEdgeOffset =
+        frame.width * 0.5 + CONFIG.physics.railInnerOffset + cfg.railWidth * 0.5;
       negForward.copy(frame.tangent).negate();
       basisMatrix.makeBasis(frame.right, frame.up, negForward);
 
@@ -842,7 +843,8 @@ function buildRailPosts(
 
     for (const s of endLocations) {
       course.getFrameAt(s, frame);
-      const railCenterOffset = frame.width * 0.5 + cfg.railOffsetFromEdge + cfg.railWidth * 0.5;
+      const railCenterOffset =
+        frame.width * 0.5 + CONFIG.physics.railInnerOffset + cfg.railWidth * 0.5;
       negForward.copy(frame.tangent).negate();
       basisMatrix.makeBasis(frame.right, frame.up, negForward);
 
@@ -994,7 +996,7 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
         railProfile,
         cfg.railTileMeters,
         (frame, pt, scale) =>
-          side * (frame.width * 0.5 + cfg.railOffsetFromEdge + cfg.railWidth * 0.5) +
+          side * (frame.width * 0.5 + CONFIG.physics.railInnerOffset + cfg.railWidth * 0.5) +
           pt.xOffset * scale,
         cfg.railVerticalOffset,
         cfg.endCapBevelLength * 0.75,
