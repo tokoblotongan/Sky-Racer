@@ -24,6 +24,7 @@ export interface HudViewModel {
   cpPassed: number;
   cpTotal: number;
   bestTime: number | null;
+  wrongWay: boolean;
   muted: boolean;
   touchActive: boolean;
 }
@@ -86,9 +87,10 @@ export interface HudHandle {
   splitSlotEl: HTMLElement;
   airtimeSlotEl: HTMLElement;
   lapPopupSlotEl: HTMLElement;
+  wrongWayEl: HTMLElement;
+  loadingOverlayEl: HTMLElement;
   titleScreenEl: HTMLElement;
-  titleCourseNameEl: HTMLElement;
-  titleBestPillEl: HTMLElement;
+  titleCourseSelectSlotEl: HTMLElement;
   titleTargetGoldEl: HTMLElement;
   titleTargetSilverEl: HTMLElement;
   titleTargetBronzeEl: HTMLElement;
@@ -139,6 +141,7 @@ export interface HudHandle {
   lastLapText: string;
   lastShowLap: boolean | null;
   lastCpText: string;
+  lastWrongWay: boolean | null;
   lastMuted: boolean | null;
   lastTouchActive: boolean | null;
 }
@@ -263,6 +266,13 @@ export function createHud(
     <div class="sr-hud-panel sr-split-slot sr-hud-hidden" data-slot="split"></div>
     <div class="sr-hud-panel sr-airtime-slot sr-hud-hidden" data-slot="airtime"></div>
     <div class="sr-hud-panel sr-lap-popup sr-hud-hidden" data-slot="lap-popup"></div>
+    <div class="sr-hud-panel sr-wrong-way sr-hud-hidden" role="alert" aria-live="assertive">
+      <svg class="sr-wrong-way-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3L2 20h20L12 3z" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linejoin="round" />
+        <path d="M12 9v5M12 17h.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+      </svg>
+      <span>ARAH SALAH</span>
+    </div>
 
     <div class="${hintClass}">
       <span class="sr-hint-item"><span class="sr-key">W A S D</span> / <span class="sr-key">Panah</span> Kemudi</span>
@@ -321,10 +331,7 @@ export function createHud(
       <div class="sr-hud-panel sr-title-card">
         <div class="sr-title-kicker">Stunt Track Time Trial</div>
         <h1 class="sr-title-logo">SKY RACER</h1>
-        <div class="sr-title-course-row">
-          <span class="sr-title-course-name">Sky Circuit</span>
-          <span class="sr-title-best-pill"></span>
-        </div>
+        <div class="sr-arena-select"></div>
         <div class="sr-title-targets">
           <div class="sr-target-chip sr-target-chip--gold">
             <span class="sr-target-label">Emas</span>
@@ -381,6 +388,10 @@ export function createHud(
 
     <div class="sr-overlay-center sr-countdown-overlay sr-hud-hidden">
       <div class="sr-countdown-text">3</div>
+    </div>
+
+    <div class="sr-overlay-center sr-loading-overlay sr-hud-hidden" aria-live="polite">
+      <div class="sr-hud-panel sr-loading-pill">Memuat arena...</div>
     </div>
 
     <div class="sr-overlay-center sr-finish-screen sr-hud-hidden">
@@ -583,9 +594,10 @@ export function createHud(
     splitSlotEl: root.querySelector('[data-slot="split"]') as HTMLElement,
     airtimeSlotEl: root.querySelector('[data-slot="airtime"]') as HTMLElement,
     lapPopupSlotEl: root.querySelector('[data-slot="lap-popup"]') as HTMLElement,
+    wrongWayEl: root.querySelector('.sr-wrong-way') as HTMLElement,
+    loadingOverlayEl: root.querySelector('.sr-loading-overlay') as HTMLElement,
     titleScreenEl: root.querySelector('.sr-title-screen') as HTMLElement,
-    titleCourseNameEl: root.querySelector('.sr-title-course-name') as HTMLElement,
-    titleBestPillEl: root.querySelector('.sr-title-best-pill') as HTMLElement,
+    titleCourseSelectSlotEl: root.querySelector('.sr-arena-select') as HTMLElement,
     titleTargetGoldEl: root.querySelector('.sr-target-gold') as HTMLElement,
     titleTargetSilverEl: root.querySelector('.sr-target-silver') as HTMLElement,
     titleTargetBronzeEl: root.querySelector('.sr-target-bronze') as HTMLElement,
@@ -650,6 +662,7 @@ export function createHud(
     lastLapText: '',
     lastShowLap: null,
     lastCpText: 'CP 0 / 0',
+    lastWrongWay: null,
     lastMuted: null,
     lastTouchActive: null,
   };
@@ -700,23 +713,9 @@ function renderTopRecordsList(
 }
 
 export function updateTitleScreen(hud: HudHandle, data: TitleScreenData): void {
-  hud.titleCourseNameEl.textContent = data.courseName;
   hud.titleTargetGoldEl.textContent = formatRaceTime(data.medals.gold);
   hud.titleTargetSilverEl.textContent = formatRaceTime(data.medals.silver);
   hud.titleTargetBronzeEl.textContent = formatRaceTime(data.medals.bronze);
-
-  const best = data.records.best;
-  hud.titleBestPillEl.innerHTML = '';
-  if (best) {
-    hud.titleBestPillEl.insertAdjacentHTML('beforeend', createMedalBadgeSvg(best.medal));
-    const textSpan = document.createElement('span');
-    textSpan.textContent = `Rekor ${formatRaceTime(best.time)}`;
-    hud.titleBestPillEl.appendChild(textSpan);
-  } else {
-    const textSpan = document.createElement('span');
-    textSpan.textContent = 'Belum ada rekor';
-    hud.titleBestPillEl.appendChild(textSpan);
-  }
 
   renderTopRecordsList(hud.titleTopListEl, data.records, null);
 
@@ -727,6 +726,14 @@ export function updateTitleScreen(hud: HudHandle, data: TitleScreenData): void {
   } else if (hasRecords && hud.titleClearTextEl.textContent === 'Belum ada rekor') {
     hud.titleClearTextEl.textContent = 'Hapus Rekor (Tahan)';
   }
+}
+
+export function showLoadingOverlay(hud: HudHandle): void {
+  hud.loadingOverlayEl.classList.remove('sr-hud-hidden');
+}
+
+export function hideLoadingOverlay(hud: HudHandle): void {
+  hud.loadingOverlayEl.classList.add('sr-hud-hidden');
 }
 
 export function setHudProgressCheckpoints(
@@ -1086,6 +1093,12 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     if (!isTitle) {
       hud.clearHoldCleanup();
     }
+  }
+
+  const showWrongWay = viewModel.phase === 'RACING' && viewModel.wrongWay;
+  if (showWrongWay !== hud.lastWrongWay) {
+    hud.lastWrongWay = showWrongWay;
+    hud.wrongWayEl.classList.toggle('sr-hud-hidden', !showWrongWay);
   }
 
   if (viewModel.phase === 'TITLE') {

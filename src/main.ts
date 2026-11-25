@@ -4,8 +4,9 @@ import * as THREE from 'three';
 import { setAudioPaused } from './audio/audioManager';
 import { createSound, type SoundSnapshot } from './audio/sound';
 import { CONFIG, type VisualPresetName } from './config';
-import { buildCourseConfigFromDefinition, Course } from './core/course';
-import { getCourse } from './courses';
+import { buildCourseConfigFromDefinition, Course, type TrackFrame } from './core/course';
+import { createWrongWayDetector } from './core/wrongWay';
+import { getCourse, getLastCourseId, listCourses, setLastCourseId } from './courses';
 import {
   copyCarState,
   createCarState,
@@ -34,19 +35,19 @@ import { createTouchControls } from './input/touch';
 import { buildCarMesh, type CarVisual } from './render/car';
 import type { CarDesignId } from './render/carDesigns';
 import { ChaseCamera } from './render/chaseCamera';
-import { buildGates } from './render/gates';
+import { buildGates, type GatesVisual } from './render/gates';
 import { createParticles } from './render/particles';
 import { createPostFx } from './render/postfx';
-import { buildProps, type PropsVisual } from './render/props';
 import { createQualityManager, type QualityLevel } from './render/quality';
 import { createSceneContext } from './render/scene';
-import { buildTrackMesh } from './render/track';
+import { buildTrackMesh, type TrackVisual } from './render/track';
 import {
   clearRecords,
   exportSummaryText,
   getRecords,
   type CourseRecords,
 } from './services/records';
+import { createCourseSelect, type CourseSelectHandle } from './ui/courseCard';
 import {
   createHud,
   disposeHud,
@@ -54,12 +55,14 @@ import {
   hideCountdownOverlay,
   hideFinishScreen,
   hideLapPopup,
+  hideLoadingOverlay,
   hideSplitPopup,
   setHudProgressCheckpoints,
   showAirtimePopup,
   showCountdownOverlay,
   showFinishScreen,
   showLapPopup,
+  showLoadingOverlay,
   showSplitPopup,
   updateHud,
   updateTitleScreen,
@@ -199,8 +202,6 @@ function bootstrap(): void {
     throw new Error('Root container #app not found.');
   }
 
-  let propsVisual: PropsVisual | null = null;
-  let activePropsDensityScale = -1;
   let activePreset: VisualPresetName = CONFIG.visual.activePreset;
   let activeCarDesign: CarDesignId = CONFIG.car.visual.designId;
 
@@ -213,9 +214,13 @@ function bootstrap(): void {
   const touchControls = createTouchControls(container, CONFIG.touch);
   touchControls.setMutedVisual(sound.getMuted());
 
-  const activeCourseDef = getCourse(CONFIG.activeCourseId);
-  const course = new Course(buildCourseConfigFromDefinition(activeCourseDef));
-  const raceState = createRaceState(course);
+  let selectedCourseId = getLastCourseId();
+  let loadedCourseId = selectedCourseId;
+  let activeCourseDef = getCourse(selectedCourseId);
+  let course = new Course(buildCourseConfigFromDefinition(activeCourseDef));
+  let raceState = createRaceState(course);
+  const wrongWayDetector = createWrongWayDetector();
+  let wrongWayActive = false;
 
   let lastFinishData: FinishResultData | null = null;
   let lastFinishRecords: CourseRecords | null = null;
@@ -262,32 +267,36 @@ function bootstrap(): void {
   }
   hud.audioBtnEl.addEventListener('click', handleAudioButtonClick);
 
-  const startGridSlot = course.getGridSlots(1)[0];
-  const isClosedCourse = course.isClosed();
-  const finishS = course.getFinishS();
-  const lapLength = Math.max(1, course.getLength());
-  const progressSpanS = isClosedCourse ? lapLength : Math.max(1, finishS - startGridSlot.s);
-  const checkpointRatios = course
-    .getCheckpoints()
-    .map((cp) =>
-      THREE.MathUtils.clamp(
-        (isClosedCourse ? cp.s : cp.s - startGridSlot.s) / progressSpanS,
-        0,
-        1,
-      ),
-    );
-  setHudProgressCheckpoints(hud, checkpointRatios);
+  let startGridSlot = course.getGridSlots(1)[0];
+  let isClosedCourse = course.isClosed();
+  let finishS = course.getFinishS();
+  let lapLength = Math.max(1, course.getLength());
+  let progressSpanS = isClosedCourse ? lapLength : Math.max(1, finishS - startGridSlot.s);
 
-  const bounds = course.getBounds();
+  function syncCourseCheckpointsHud(): void {
+    const checkpointRatios = course
+      .getCheckpoints()
+      .map((cp) =>
+        THREE.MathUtils.clamp(
+          (isClosedCourse ? cp.s : cp.s - startGridSlot.s) / progressSpanS,
+          0,
+          1,
+        ),
+      );
+    setHudProgressCheckpoints(hud, checkpointRatios);
+  }
+  syncCourseCheckpointsHud();
+
+  let bounds = course.getBounds();
   sceneCtx.setRoomBounds(bounds);
 
-  const trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy);
+  let trackVisual: TrackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy);
   sceneCtx.scene.add(trackVisual.group);
 
-  const gates = buildGates(course, sceneCtx.maxAnisotropy);
+  let gates: GatesVisual = buildGates(course, sceneCtx.maxAnisotropy);
   sceneCtx.scene.add(gates.group);
 
-  const orbitRadius = Math.max(
+  let orbitRadius = Math.max(
     CONFIG.camera.orbitMinRadius,
     bounds.radius * CONFIG.camera.orbitRadiusScale,
   );
@@ -306,30 +315,15 @@ function bootstrap(): void {
   let particles: ReturnType<typeof createParticles>;
   let postfx: ReturnType<typeof createPostFx>;
 
-  function syncPropsForQuality(level: QualityLevel): void {
-    const nextDensityScale = CONFIG.quality.levels[level].propsDensityScale;
-    if (propsVisual && nextDensityScale === activePropsDensityScale) {
-      return;
-    }
-    if (propsVisual) {
-      sceneCtx.scene.remove(propsVisual.group);
-      propsVisual.dispose();
-    }
-    activePropsDensityScale = nextDensityScale;
-    propsVisual = buildProps(course, level, sceneCtx.maxAnisotropy, activePreset);
-    sceneCtx.scene.add(propsVisual.group);
-  }
-
   const qualityManager = createQualityManager(CONFIG.quality, (level) => {
     sceneCtx.setQuality(level);
     particles?.setQuality(level);
     postfx?.setQuality(level);
-    syncPropsForQuality(level);
   });
 
   const initialQuality = qualityManager.getLevel();
   sceneCtx.setQuality(initialQuality);
-  syncPropsForQuality(initialQuality);
+  sceneCtx.setTheme(course, initialQuality);
   particles = createParticles(sceneCtx.scene, initialQuality);
   postfx = createPostFx(
     sceneCtx.renderer,
@@ -355,7 +349,6 @@ function bootstrap(): void {
   function applyPalette(name: VisualPresetName): void {
     activePreset = name;
     sceneCtx.applyPalette(name);
-    propsVisual?.applyPalette(name);
     trackVisual.applyPalette(name);
     carVisual.applyPalette(name);
     postfx.applyPalette(name);
@@ -470,6 +463,17 @@ function bootstrap(): void {
     quaternion: new THREE.Quaternion(),
   };
 
+  const wrongWayFrame: TrackFrame = {
+    s: 0,
+    position: new THREE.Vector3(),
+    tangent: new THREE.Vector3(),
+    up: new THREE.Vector3(),
+    right: new THREE.Vector3(),
+    width: CONFIG.course.trackWidth,
+    bank: 0,
+    isGap: false,
+  };
+
   const hudViewModel: HudViewModel = {
     phase: raceState.phase,
     resultReady: raceState.resultReady,
@@ -484,6 +488,7 @@ function bootstrap(): void {
     cpPassed: 0,
     cpTotal: raceState.totalCheckpoints,
     bestTime: raceState.bestTime,
+    wrongWay: false,
     muted: sound.getMuted(),
     touchActive: touchControls.isEnabled(),
   };
@@ -518,15 +523,167 @@ function bootstrap(): void {
   let prevOrbitAngle = 0;
   let currOrbitAngle = 0;
   let frameHandle = 0;
+  let switchDebounceTimer = 0;
+  let switchRafId = 0;
   let disposed = false;
 
+  let courseSelect: CourseSelectHandle;
+
   function syncTitleUi(): void {
+    const previewDef = getCourse(selectedCourseId);
     updateTitleScreen(hud, {
-      courseName: course.getName(),
-      medals: course.getMedals(),
-      records: getRecords(course.getId(), course.getMedals()),
+      courseName: previewDef.displayName,
+      medals: previewDef.medals,
+      records: getRecords(previewDef.id, previewDef.medals),
     });
+    courseSelect?.setSelected(previewDef.id);
+    courseSelect?.refreshRecords();
   }
+
+  function clearPendingCourseSwitch(): void {
+    if (switchDebounceTimer !== 0) {
+      window.clearTimeout(switchDebounceTimer);
+      switchDebounceTimer = 0;
+    }
+    if (switchRafId !== 0) {
+      window.cancelAnimationFrame(switchRafId);
+      switchRafId = 0;
+    }
+    hideLoadingOverlay(hud);
+  }
+
+  function loadCourse(id: string): void {
+    clearPendingCourseSwitch();
+    const nextDef = getCourse(id);
+    selectedCourseId = nextDef.id;
+    loadedCourseId = nextDef.id;
+    activeCourseDef = nextDef;
+
+    sceneCtx.scene.remove(trackVisual.group);
+    trackVisual.dispose();
+    sceneCtx.scene.remove(gates.group);
+    gates.dispose();
+
+    course = new Course(buildCourseConfigFromDefinition(activeCourseDef));
+    raceState = createRaceState(course);
+    wrongWayDetector.reset();
+    wrongWayActive = false;
+
+    startGridSlot = course.getGridSlots(1)[0];
+    isClosedCourse = course.isClosed();
+    finishS = course.getFinishS();
+    lapLength = Math.max(1, course.getLength());
+    progressSpanS = isClosedCourse ? lapLength : Math.max(1, finishS - startGridSlot.s);
+    syncCourseCheckpointsHud();
+
+    bounds = course.getBounds();
+    sceneCtx.setRoomBounds(bounds);
+    sceneCtx.setTheme(course, qualityManager.getLevel());
+
+    trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy);
+    trackVisual.applyPalette(activePreset);
+    sceneCtx.scene.add(trackVisual.group);
+
+    gates = buildGates(course, sceneCtx.maxAnisotropy);
+    sceneCtx.scene.add(gates.group);
+
+    orbitRadius = Math.max(
+      CONFIG.camera.orbitMinRadius,
+      bounds.radius * CONFIG.camera.orbitRadiusScale,
+    );
+    sceneCtx.setOrbitTarget(bounds.center, orbitRadius, CONFIG.camera.orbitHeight);
+
+    lastFinishData = null;
+    lastFinishRecords = null;
+    lastThrottle = 0;
+    prevState = createStartCarState();
+    currState = createStartCarState();
+    particles.reset();
+    postfx.setSpeedIntensity(0);
+    hideAirtimePopup(hud);
+    hideSplitPopup(hud);
+    hideLapPopup(hud);
+    hideCountdownOverlay(hud);
+    hideFinishScreen(hud);
+
+    getCarPose(currState, course, renderPose);
+    carVisual.group.position.copy(renderPose.position);
+    carVisual.group.quaternion.copy(renderPose.quaternion);
+    carVisual.update(currState, 0);
+
+    chaseCamera.setMode('title');
+    if (!CONFIG.camera.debugOrbitMode) {
+      chaseCamera.snapTo(renderPose, currState, course);
+    }
+
+    hudViewModel.phase = raceState.phase;
+    hudViewModel.resultReady = raceState.resultReady;
+    hudViewModel.lap = raceState.currentLap;
+    hudViewModel.totalLaps = raceState.laps;
+    hudViewModel.cpPassed = 0;
+    hudViewModel.cpTotal = raceState.totalCheckpoints;
+    hudViewModel.bestTime = raceState.bestTime;
+    hudViewModel.bestLapSeconds = raceState.bestLap;
+    hudViewModel.wrongWay = false;
+
+    touchControls.setPhase(raceState.phase);
+    sound.setPhase(raceState.phase);
+    syncTitleUi();
+    lastFrameMs = performance.now();
+    accumulator = 0;
+  }
+
+  function selectArena(id: string): void {
+    if (raceState.phase !== 'TITLE') {
+      return;
+    }
+    const nextDef = getCourse(id);
+    if (nextDef.id === selectedCourseId && switchDebounceTimer === 0 && switchRafId === 0) {
+      return;
+    }
+    selectedCourseId = nextDef.id;
+    setLastCourseId(nextDef.id);
+    sound.unlock();
+    sound.handleEvents([{ type: 'uiMove' }]);
+    syncTitleUi();
+
+    clearPendingCourseSwitch();
+    if (nextDef.id === loadedCourseId) {
+      return;
+    }
+
+    switchDebounceTimer = window.setTimeout(() => {
+      switchDebounceTimer = 0;
+      if (disposed || raceState.phase !== 'TITLE' || selectedCourseId === loadedCourseId) {
+        return;
+      }
+      showLoadingOverlay(hud);
+      switchRafId = window.requestAnimationFrame(() => {
+        switchRafId = 0;
+        if (disposed) {
+          return;
+        }
+        if (raceState.phase === 'TITLE' && selectedCourseId !== loadedCourseId) {
+          loadCourse(selectedCourseId);
+        }
+        hideLoadingOverlay(hud);
+      });
+    }, CONFIG.courseSelect.debounceMs);
+  }
+
+  courseSelect = createCourseSelect(
+    hud.titleCourseSelectSlotEl,
+    listCourses(),
+    selectedCourseId,
+    (id) => {
+      selectArena(id);
+    },
+    () => {
+      if (raceState.phase === 'TITLE') {
+        onConfirmFromUi();
+      }
+    },
+  );
   syncTitleUi();
 
   touchControls.setPhase(raceState.phase);
@@ -590,8 +747,14 @@ function bootstrap(): void {
     lastFinishData = null;
     lastFinishRecords = null;
     hideFinishScreen(hud);
+    wrongWayDetector.reset();
+    wrongWayActive = false;
 
     if (raceState.phase === 'TITLE') {
+      clearPendingCourseSwitch();
+      if (selectedCourseId !== loadedCourseId) {
+        loadCourse(selectedCourseId);
+      }
       sound.handleEvents([{ type: 'uiConfirm' }]);
       particles.reset();
       postfx.setSpeedIntensity(0);
@@ -625,9 +788,12 @@ function bootstrap(): void {
 
   function handleReturnToTitle(): void {
     sound.unlock();
+    clearPendingCourseSwitch();
     lastFinishData = null;
     lastFinishRecords = null;
     lastThrottle = 0;
+    wrongWayDetector.reset();
+    wrongWayActive = false;
 
     prevState = createStartCarState();
     currState = createStartCarState();
@@ -658,8 +824,11 @@ function bootstrap(): void {
   onReturnToMenuFromUi = handleReturnToTitle;
   onClearRecordsFromUi = (): void => {
     sound.unlock();
-    clearRecords(course.getId());
-    refreshRaceRecords(raceState, course);
+    const previewDef = getCourse(selectedCourseId);
+    clearRecords(previewDef.id);
+    if (previewDef.id === course.getId()) {
+      refreshRaceRecords(raceState, course);
+    }
     sound.handleEvents([{ type: 'uiConfirm' }]);
     syncTitleUi();
   };
@@ -669,6 +838,8 @@ function bootstrap(): void {
     respawnAt(currState, course, target.s, target.lateral, CONFIG.race.resetSpeedFactor);
     applyManualResetPenalty(raceState);
     copyCarState(currState, prevState);
+    wrongWayDetector.reset();
+    wrongWayActive = false;
     hideAirtimePopup(hud);
     sound.handleEvents([{ type: 'respawn' }]);
 
@@ -685,6 +856,16 @@ function bootstrap(): void {
       sound.unlock();
       const nextMuted = sound.toggleMute();
       touchControls.setMutedVisual(nextMuted);
+    }
+
+    if (input.navPressed !== 0 && raceState.phase === 'TITLE') {
+      const allCourses = listCourses();
+      if (allCourses.length > 1) {
+        const curIdx = allCourses.findIndex((c) => c.id === selectedCourseId);
+        const safeIdx = curIdx >= 0 ? curIdx : 0;
+        const nextIdx = (safeIdx + input.navPressed + allCourses.length) % allCourses.length;
+        selectArena(allCourses[nextIdx].id);
+      }
     }
 
     if (input.menuPressed && raceState.phase === 'FINISH') {
@@ -766,6 +947,20 @@ function bootstrap(): void {
     );
     handleRaceEvents(raceEvents);
 
+    const activeWrongWayS = currState.mode === 'grounded' ? currState.s : currState.sApprox;
+    course.getFrameAt(activeWrongWayS, wrongWayFrame);
+    getCarPose(currState, course, eventPose);
+    wrongWayActive = wrongWayDetector.update(
+      {
+        carState: currState,
+        carPose: eventPose,
+        trackFrame: wrongWayFrame,
+        isClosed: isClosedCourse,
+        phase: raceState.phase,
+      },
+      step,
+    );
+
     if (CONFIG.camera.debugOrbitMode) {
       prevOrbitAngle = currOrbitAngle;
       currOrbitAngle += CONFIG.camera.orbitSpeed * step;
@@ -794,7 +989,7 @@ function bootstrap(): void {
       sceneCtx.updateSunShadowTarget(renderPose.position);
     }
 
-    propsVisual?.update(sceneCtx.camera.position);
+    sceneCtx.updateTheme(sceneCtx.camera.position, realDt);
     particles.update(realDt, renderPose, renderState);
 
     const speedMs =
@@ -857,6 +1052,7 @@ function bootstrap(): void {
     hudViewModel.cpPassed = raceState.nextCheckpointIndex;
     hudViewModel.cpTotal = raceState.totalCheckpoints;
     hudViewModel.bestTime = raceState.bestTime;
+    hudViewModel.wrongWay = wrongWayActive;
     hudViewModel.muted = sound.getMuted();
     hudViewModel.touchActive = touchControls.isEnabled();
     updateHud(hud, hudViewModel);
@@ -940,6 +1136,7 @@ function bootstrap(): void {
 
   window.addEventListener('beforeunload', () => {
     disposed = true;
+    clearPendingCourseSwitch();
     window.cancelAnimationFrame(frameHandle);
     window.clearTimeout(frameHandle);
     window.clearTimeout(debugToastTimeout);
@@ -953,6 +1150,7 @@ function bootstrap(): void {
     document.removeEventListener('visibilitychange', syncPauseState);
     unbindTouchStatus();
     hud.audioBtnEl.removeEventListener('click', handleAudioButtonClick);
+    courseSelect.dispose();
     controls.dispose();
     touchControls.dispose();
     sound.dispose();
@@ -961,7 +1159,8 @@ function bootstrap(): void {
     qualityManager.dispose();
     particles.dispose();
     postfx.dispose();
-    propsVisual?.dispose();
+    trackVisual.dispose();
+    gates.dispose();
     carVisual.dispose();
     sceneCtx.dispose();
   });

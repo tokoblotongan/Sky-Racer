@@ -571,10 +571,22 @@ export const CONFIG = {
     titleOrbitRadius: 11.5,
     titleOrbitHeight: 4.2,
   },
+  courseSelect: {
+    debounceMs: 250,
+    minimapWidth: 180,
+    minimapHeight: 108,
+  },
+  wrongWay: {
+    dotThreshold: -0.3,
+    minSpeed: 3,
+    triggerSeconds: 1.5,
+    clearSeconds: 0.5,
+  },
   storage: {
     key: 'sky-racer-best-v1', // kunci lama Tahap 6 (hanya untuk migrasi satu kali)
     recordsKey: 'sky-racer-records-v1',
     migratedKey: 'sky-racer-records-migrated-v1',
+    lastCourseKey: 'sky-racer-last-course-v1',
     topRecordsCount: 5,
   },
   audio: {
@@ -696,6 +708,12 @@ export const CONFIG = {
         duration: 0.06, // durasi klik konfirmasi detik
         gain: 0.25, // volume klik konfirmasi
         cooldown: 0.1, // jeda minimum detik
+      },
+      uiMove: {
+        frequency: 540, // frekuensi klik pindah pilihan arena Hz
+        duration: 0.045, // durasi klik pindah pilihan detik
+        gain: 0.16, // volume klik pindah pilihan
+        cooldown: 0.06, // jeda minimum detik
       },
     },
     skid: {

@@ -4,8 +4,9 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CONFIG, type VisualPreset, type VisualPresetName } from '../config';
-import type { CourseBounds } from '../core/course';
+import type { Course, CourseBounds } from '../core/course';
 import type { QualityLevel } from './quality';
+import { getTheme, type ThemeInstance } from './themes';
 
 export interface RoomDimensions {
   centerX: number;
@@ -22,6 +23,8 @@ export interface SceneContext {
   isSoftwareGl: boolean;
   maxAnisotropy: number;
   setRoomBounds: (bounds: CourseBounds) => void;
+  setTheme: (course: Course, quality: QualityLevel) => void;
+  updateTheme: (cameraPos: THREE.Vector3, dt: number) => void;
   setOrbitTarget: (target: THREE.Vector3, radius: number, height: number) => void;
   setCameraOrbitAngle: (angleRad: number) => void;
   updateSunShadowTarget: (focusPos: THREE.Vector3) => void;
@@ -758,13 +761,80 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     sunLight.target.updateMatrixWorld();
   }
 
+  let activeCourse: Course | null = null;
+  let activeTheme: ThemeInstance | null = null;
+  let activeQuality: QualityLevel = 'high';
+  let activeDensityScale = -1;
+
+  function applyThemeAtmosphere(): void {
+    const theme = getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom');
+    const sky = theme.getSkyColors(activePresetName);
+    const lighting = theme.getLighting(activePresetName);
+
+    roomShellGroup.visible = lighting.showRoomShell;
+
+    currentExposure = lighting.exposure;
+    renderer.toneMappingExposure = currentExposure;
+
+    scene.background = new THREE.Color(sky.skyHorizon);
+    skyDome.material.uniforms.uSkyTop.value.set(sky.skyTop);
+    skyDome.material.uniforms.uSkyHorizon.value.set(sky.skyHorizon);
+    skyDome.material.uniforms.uGroundBounce.value.set(sky.groundBounce);
+
+    if (debugFog) {
+      debugFog.color.set(sky.fogColor);
+    }
+
+    scene.environmentIntensity = lighting.envIntensity;
+
+    sunLight.color.set(lighting.sunColor);
+    sunLight.intensity = lighting.sunIntensity;
+
+    hemiLight.color.set(lighting.hemisphereSkyColor);
+    hemiLight.groundColor.set(lighting.hemisphereGroundColor);
+    hemiLight.intensity = lighting.hemisphereIntensity;
+  }
+
+  function setTheme(course: Course, quality: QualityLevel): void {
+    if (activeTheme) {
+      scene.remove(activeTheme.group);
+      activeTheme.dispose();
+      activeTheme = null;
+    }
+
+    activeCourse = course;
+    activeQuality = quality;
+    activeDensityScale = CONFIG.quality.levels[quality].propsDensityScale;
+
+    const theme = getTheme(course.getThemeId());
+    activeTheme = theme.build(course, quality, scene, maxAnisotropy, activePresetName);
+    scene.add(activeTheme.group);
+
+    const bounds = course.getBounds();
+    const requiredFar = Math.max(
+      CONFIG.render.viewDistance * 1.35,
+      bounds.radius * 2 + 540,
+    );
+    if (camera.far < requiredFar) {
+      camera.far = requiredFar;
+      camera.updateProjectionMatrix();
+    }
+
+    applyThemeAtmosphere();
+    updateVisualDebugOverlay();
+  }
+
+  function updateTheme(cameraPos: THREE.Vector3, dt: number): void {
+    activeTheme?.update(cameraPos, dt);
+  }
+
   function setRoomBounds(bounds: CourseBounds): void {
     const dim = computeRoomDimensions(bounds);
     rebuildRoomShell(dim);
     skyDome.mesh.position.set(dim.centerX, 0, dim.centerZ);
     const requiredFar = Math.max(
-      CONFIG.render.viewDistance * 1.2,
-      Math.hypot(dim.width, dim.depth) + 160,
+      CONFIG.render.viewDistance * 1.35,
+      Math.hypot(dim.width, dim.depth) + 220,
     );
     if (camera.far < requiredFar) {
       camera.far = requiredFar;
@@ -823,6 +893,12 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     if (frustumChanged) {
       sunLight.shadow.camera.updateProjectionMatrix();
     }
+
+    activeQuality = level;
+    const nextDensityScale = preset.propsDensityScale;
+    if (activeCourse && nextDensityScale !== activeDensityScale) {
+      setTheme(activeCourse, activeQuality);
+    }
   }
 
   function getViewportSize(): { width: number; height: number } {
@@ -852,6 +928,11 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     if (debugPanel && debugPanel.parentElement === container) {
       container.removeChild(debugPanel);
     }
+    if (activeTheme) {
+      scene.remove(activeTheme.group);
+      activeTheme.dispose();
+      activeTheme = null;
+    }
     disposeObjectResources(scene);
     skyDome.geometry.dispose();
     skyDome.material.dispose();
@@ -866,27 +947,6 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   function applyPalette(name: VisualPresetName): void {
     activePresetName = name;
     activePreset = vis.presets[name];
-
-    currentExposure = activePreset.exposure;
-    renderer.toneMappingExposure = currentExposure;
-
-    scene.background = new THREE.Color(activePreset.skyHorizon);
-    skyDome.material.uniforms.uSkyTop.value.set(activePreset.skyTop);
-    skyDome.material.uniforms.uSkyHorizon.value.set(activePreset.skyHorizon);
-    skyDome.material.uniforms.uGroundBounce.value.set(activePreset.room.floorColor.dark);
-
-    if (debugFog) {
-      debugFog.color.set(activePreset.fogColor);
-    }
-
-    scene.environmentIntensity = activePreset.envIntensity;
-
-    sunLight.color.set(activePreset.sunColor);
-    sunLight.intensity = activePreset.sunIntensity;
-
-    hemiLight.color.set(activePreset.hemisphereSkyColor);
-    hemiLight.groundColor.set(activePreset.hemisphereGroundColor);
-    hemiLight.intensity = activePreset.hemisphereIntensity;
 
     const prevWoodColor = woodColorMap;
     const prevWoodRough = woodRoughnessMap;
@@ -938,6 +998,9 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     ceilingMat.needsUpdate = true;
     prevCeilingTex.dispose();
 
+    activeTheme?.applyPalette(name);
+    getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom').applyPalette(name);
+    applyThemeAtmosphere();
     updateVisualDebugOverlay();
   }
 
@@ -948,6 +1011,8 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     isSoftwareGl,
     maxAnisotropy,
     setRoomBounds,
+    setTheme,
+    updateTheme,
     setOrbitTarget,
     setCameraOrbitAngle,
     updateSunShadowTarget,

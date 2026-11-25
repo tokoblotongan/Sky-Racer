@@ -5,6 +5,11 @@ import type { CourseDefinition } from './types';
 export const fantasyLandCourse: CourseDefinition = {
   id: 'fantasy-land',
   name: 'FantasyLand',
+  arenaNumber: 2,
+  displayName: 'FantasyLand',
+  tagline: 'Sirkuit lebar di padang fantasi cerah',
+  themeId: 'fantasyland',
+  typeLabel: '3 lap',
   closed: true,
   laps: 3,
   trackWidth: 16,

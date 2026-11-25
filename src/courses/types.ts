@@ -59,6 +59,8 @@ export type CourseSegmentConfig =
       readonly boostPads?: readonly BoostPadSegmentConfig[];
     };
 
+export type ThemeId = 'toyroom' | 'fantasyland';
+
 export interface CourseMedals {
   readonly gold: number;
   readonly silver: number;
@@ -68,6 +70,11 @@ export interface CourseMedals {
 export interface CourseDefinition {
   readonly id: string;
   readonly name: string;
+  readonly arenaNumber: number;
+  readonly displayName: string;
+  readonly tagline: string;
+  readonly themeId: ThemeId;
+  readonly typeLabel: string;
   readonly closed?: boolean;
   readonly laps?: number;
   readonly trackWidth?: number;

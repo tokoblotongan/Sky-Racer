@@ -19,6 +19,7 @@ export interface SampledCarInput extends CarInput {
   restartPressed: boolean;
   menuPressed: boolean;
   mutePressed: boolean;
+  navPressed: -1 | 0 | 1;
 }
 
 export interface KeyboardControls {
@@ -45,6 +46,7 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
   let confirmQueued = false;
   let menuQueued = false;
   let muteQueued = false;
+  let navQueued: -1 | 0 | 1 = 0;
 
   let kbThrottle = 0;
   let kbBrake = 0;
@@ -56,22 +58,30 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
       event.preventDefault();
     }
 
-    if (event.code === 'KeyR' && !event.repeat) {
-      resetQueued = true;
-    }
+    if (!event.repeat) {
+      if (event.code === 'KeyR') {
+        resetQueued = true;
+      }
 
-    if (event.code === 'KeyM' && !event.repeat) {
-      muteQueued = true;
-    }
+      if (event.code === 'KeyM') {
+        muteQueued = true;
+      }
 
-    if ((event.code === 'Enter' || event.code === 'NumpadEnter') && !event.repeat) {
-      event.preventDefault();
-      confirmQueued = true;
-    }
+      if (event.code === 'Enter' || event.code === 'NumpadEnter') {
+        event.preventDefault();
+        confirmQueued = true;
+      }
 
-    if (event.code === 'Escape' && !event.repeat) {
-      event.preventDefault();
-      menuQueued = true;
+      if (event.code === 'Escape') {
+        event.preventDefault();
+        menuQueued = true;
+      }
+
+      if (event.code === 'ArrowLeft' || event.code === 'KeyA') {
+        navQueued = -1;
+      } else if (event.code === 'ArrowRight' || event.code === 'KeyD') {
+        navQueued = 1;
+      }
     }
 
     pressed.add(event.code);
@@ -132,6 +142,9 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
     const kbMute = muteQueued;
     muteQueued = false;
 
+    const kbNav = navQueued;
+    navQueued = 0;
+
     const touchState = touchControls?.getState();
     const touchPresses = touchControls?.consumePresses();
 
@@ -159,6 +172,7 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
       confirmPressed: kbConfirm || Boolean(touchPresses?.confirm),
       menuPressed: kbMenu,
       mutePressed: kbMute || Boolean(touchPresses?.mute),
+      navPressed: kbNav,
     };
   }
 

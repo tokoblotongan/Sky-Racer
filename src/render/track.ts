@@ -27,6 +27,7 @@ export interface TrackVisual {
   group: THREE.Group;
   update: (dt: number) => void;
   applyPalette: (name: VisualPresetName) => void;
+  dispose: () => void;
 }
 
 function createTrackCanvasTexture(
@@ -1222,9 +1223,42 @@ export function buildTrackMesh(
     prevBoostTex.dispose();
   }
 
+  function dispose(): void {
+    const geoms = new Set<THREE.BufferGeometry>([postGeometry, endBodyGeom, endDomeGeom]);
+    const mats = new Set<THREE.Material>([
+      trackMaterial,
+      railMaterial,
+      jumpStripMaterial,
+      boostMaterial,
+      startGridMaterial,
+    ]);
+    const texs = new Set<THREE.Texture>([
+      trackTexture,
+      railTexture,
+      jumpStripTexture,
+      boostTexture,
+      startGridTexture,
+    ]);
+
+    group.traverse((obj) => {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
+        geoms.add(obj.geometry);
+        const list = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const m of list) {
+          mats.add(m);
+        }
+      }
+    });
+
+    geoms.forEach((g) => g.dispose());
+    texs.forEach((t) => t.dispose());
+    mats.forEach((m) => m.dispose());
+  }
+
   return {
     group,
     update,
     applyPalette,
+    dispose,
   };
 }

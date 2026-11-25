@@ -5,6 +5,11 @@ import type { CourseDefinition } from './types';
 export const skyCircuitCourse: CourseDefinition = {
   id: 'sky-circuit',
   name: 'Sky Circuit',
+  arenaNumber: 1,
+  displayName: 'Sky Circuit',
+  tagline: 'Lintasan akrobatik melayang di ruang mainan',
+  themeId: 'toyroom',
+  typeLabel: 'Satu arah',
   closed: false,
   laps: 1,
   trackWidth: 7,

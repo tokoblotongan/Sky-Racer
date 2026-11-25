@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config';
 import { getCourse, type CourseDefinition } from '../courses';
-import type { CourseMedals, CourseSegmentConfig } from '../courses/types';
+import type { CourseMedals, CourseSegmentConfig, ThemeId } from '../courses/types';
 import { solveClosure, type ClosureReport } from './courseClosure';
 
 export type CourseSegmentType = CourseSegmentConfig['type'];
@@ -80,6 +80,7 @@ export interface LapProgress {
 export interface CourseConfig {
   id?: string;
   name?: string;
+  themeId?: ThemeId;
   closed?: boolean;
   laps?: number;
   medals?: CourseMedals;
@@ -284,13 +285,14 @@ function solveLoopYawAmplitude(
 
 export function buildCourseConfigFromDefinition(
   definition: CourseDefinition = getCourse(CONFIG.activeCourseId),
-  validate = CONFIG.debug.logCourseValidation ||
+  validate: boolean = CONFIG.debug.logCourseValidation ||
     CONFIG.debug.showCourseFrames ||
     CONFIG.debug.showFps,
 ): CourseConfig {
   return {
     id: definition.id,
     name: definition.name,
+    themeId: definition.themeId,
     closed: Boolean(definition.closed),
     laps: Math.max(1, Math.round(definition.laps ?? 1)),
     medals: definition.medals,
@@ -343,6 +345,7 @@ export class Course {
 
   private readonly id: string;
   private readonly name: string;
+  private readonly themeId: ThemeId;
   private readonly closed: boolean;
   private readonly laps: number;
   private readonly trackWidth: number;
@@ -362,6 +365,7 @@ export class Course {
     const fallbackDef = getCourse(CONFIG.activeCourseId);
     this.id = config.id ?? fallbackDef.id;
     this.name = config.name ?? fallbackDef.name;
+    this.themeId = config.themeId ?? fallbackDef.themeId ?? 'toyroom';
     this.closed = Boolean(config.closed);
     this.laps = Math.max(1, Math.round(config.laps ?? 1));
     this.trackWidth = config.defaultWidth;
@@ -1041,6 +1045,10 @@ export class Course {
 
   getName(): string {
     return this.name;
+  }
+
+  getThemeId(): ThemeId {
+    return this.themeId;
   }
 
   isClosed(): boolean {

@@ -10,6 +10,7 @@ export interface GatesVisual {
   setActive: (index: number) => void;
   setPassed: (index: number) => void;
   reset: () => void;
+  dispose: () => void;
 }
 
 type GateStatus = 'active' | 'upcoming' | 'passed';
@@ -305,10 +306,31 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
 
   reset();
 
+  function dispose(): void {
+    const geoms = new Set<THREE.BufferGeometry>();
+    const mats = new Set<THREE.Material>();
+    const texs = new Set<THREE.Texture>([checkerTexture]);
+
+    group.traverse((obj) => {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
+        geoms.add(obj.geometry);
+        const list = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const m of list) {
+          mats.add(m);
+        }
+      }
+    });
+
+    geoms.forEach((g) => g.dispose());
+    texs.forEach((t) => t.dispose());
+    mats.forEach((m) => m.dispose());
+  }
+
   return {
     group,
     setActive,
     setPassed,
     reset,
+    dispose,
   };
 }

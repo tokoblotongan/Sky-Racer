@@ -9,7 +9,8 @@ import type { AudioManager } from './audioManager';
 export type SoundEffectEvent =
   | PhysicsEvent
   | RaceEvent
-  | { type: 'uiConfirm' };
+  | { type: 'uiConfirm' }
+  | { type: 'uiMove' };
 
 export interface SfxAudio {
   play: (event: SoundEffectEvent) => void;
@@ -495,19 +496,22 @@ export function createSfx(manager: AudioManager): SfxAudio {
     osc.stop(now + cfg.duration + 0.015);
   }
 
-  function playClick(key: 'restart' | 'uiConfirm'): void {
+  function playClick(key: 'restart' | 'uiConfirm' | 'uiMove'): void {
     if (!canTrigger(key) || !ctx || !buses) return;
     const cfg = sfxCfg[key];
     const now = ctx.currentTime;
 
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.type = 'triangle';
+    osc.type = key === 'uiMove' ? 'sine' : 'triangle';
     osc.frequency.setValueAtTime(cfg.frequency, now);
-    osc.frequency.exponentialRampToValueAtTime(cfg.frequency * 1.25, now + cfg.duration);
+    osc.frequency.exponentialRampToValueAtTime(
+      cfg.frequency * (key === 'uiMove' ? 1.15 : 1.25),
+      now + cfg.duration,
+    );
 
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(cfg.gain, now + 0.005);
+    gain.gain.linearRampToValueAtTime(cfg.gain, now + 0.004);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + cfg.duration);
 
     osc.connect(gain);
@@ -555,6 +559,9 @@ export function createSfx(manager: AudioManager): SfxAudio {
         break;
       case 'uiConfirm':
         playClick('uiConfirm');
+        break;
+      case 'uiMove':
+        playClick('uiMove');
         break;
     }
   }

@@ -93,5 +93,5 @@ src/
 - Tema dunia fantasi orisinal (tanpa meniru taman hiburan, karakter, atau merek yang ada). Warna tajam dan cerah.
 - Fisika multi-mobil: senggolan, tabrakan, terguling (tahap F4).
 - Sky Circuit tetap tersedia sebagai arena satu arah.
-Pelacak: [ ] F1A  [ ] F1B  [ ] F2  [ ] F3  [ ] F4  [ ] F5  [ ] F6  [ ] F7
+Pelacak: [x] F1A  [x] F1B  [ ] F2  [ ] F3  [ ] F4  [ ] F5  [ ] F6  [ ] F7
 
