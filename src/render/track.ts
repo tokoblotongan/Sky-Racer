@@ -15,6 +15,14 @@ interface SweptMeshResult {
   geometry: THREE.BufferGeometry;
 }
 
+interface RingSpec {
+  frame: TrackFrame;
+  profileScale: number;
+  profileMidY: number;
+  tangentShift: number;
+  vCoord: number;
+}
+
 function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
   const size = CONFIG.course.trackTextureSize;
   const canvas = document.createElement('canvas');
@@ -118,6 +126,50 @@ function createRailCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
   return texture;
 }
 
+function createJumpStripCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const size = CONFIG.course.jumpStripTextureSize;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  if (ctx) {
+    ctx.fillStyle = CONFIG.colors.accent;
+    ctx.fillRect(0, 0, size, size);
+
+    // Bold diagonal hazard/chevron stripes in #FFD23F + dark contrast
+    ctx.save();
+    ctx.fillStyle = CONFIG.colors.jumpStripeDark;
+    const stripeCount = 6;
+    const stripePitch = size / stripeCount;
+    const stripeWidth = stripePitch * 0.44;
+    for (let i = -stripeCount; i <= stripeCount * 2; i++) {
+      const x0 = i * stripePitch;
+      ctx.beginPath();
+      ctx.moveTo(x0, 0);
+      ctx.lineTo(x0 + stripeWidth, 0);
+      ctx.lineTo(x0 + stripeWidth + size * 0.55, size);
+      ctx.lineTo(x0 + size * 0.55, size);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Crisp yellow border bands along front and back edge of the strip
+    ctx.fillStyle = CONFIG.colors.accent;
+    const borderH = Math.max(8, size * 0.11);
+    ctx.fillRect(0, 0, size, borderH);
+    ctx.fillRect(0, size - borderH, size, borderH);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.anisotropy = maxAnisotropy;
+  return texture;
+}
+
 function buildTrackCrossSectionProfile(): ProfilePoint[] {
   const cfg = CONFIG.course;
   const thickness = cfg.trackThickness;
@@ -129,7 +181,6 @@ function buildTrackCrossSectionProfile(): ProfilePoint[] {
   const points: ProfilePoint[] = [];
 
   // Left-to-right across the top drivable deck (xNorm in [-1, 1], y = 0)
-  // Top-left shoulder arc: from outer left side (y = -topR) up to top deck (y = 0)
   for (let i = 0; i <= topSegs; i++) {
     const angle = Math.PI - (i / topSegs) * (Math.PI * 0.5);
     const dx = Math.cos(angle) * topR;
@@ -143,7 +194,6 @@ function buildTrackCrossSectionProfile(): ProfilePoint[] {
     });
   }
 
-  // Intermediate top deck subdivisions for smooth lighting interpolation across width
   const deckDivisions = 6;
   for (let d = 1; d < deckDivisions; d++) {
     const t = d / deckDivisions;
@@ -155,7 +205,6 @@ function buildTrackCrossSectionProfile(): ProfilePoint[] {
     });
   }
 
-  // Top-right shoulder arc: from top deck (y = 0) down to outer right side (y = -topR)
   for (let i = 0; i <= topSegs; i++) {
     const angle = Math.PI * 0.5 - (i / topSegs) * (Math.PI * 0.5);
     const dx = Math.cos(angle) * topR;
@@ -169,7 +218,6 @@ function buildTrackCrossSectionProfile(): ProfilePoint[] {
     });
   }
 
-  // Bottom-right rounded corner
   for (let i = 0; i <= botSegs; i++) {
     const angle = -(i / botSegs) * (Math.PI * 0.5);
     const dx = Math.cos(angle) * botR;
@@ -182,11 +230,9 @@ function buildTrackCrossSectionProfile(): ProfilePoint[] {
     });
   }
 
-  // Underside right-to-left (mapped to pure orange core u = 0.2 so center dashes don't bleed under)
   points.push({ xNorm: 0.65, xOffset: 0, yOffset: -thickness, u: 0.2 });
   points.push({ xNorm: -0.65, xOffset: 0, yOffset: -thickness, u: 0.2 });
 
-  // Bottom-left rounded corner
   for (let i = 0; i <= botSegs; i++) {
     const angle = -Math.PI * 0.5 - (i / botSegs) * (Math.PI * 0.5);
     const dx = Math.cos(angle) * botR;
@@ -208,7 +254,6 @@ function buildRoundedRailProfile(width: number, height: number, arcSegments: num
   const r = Math.min(halfW, halfH) * 0.85;
   const points: ProfilePoint[] = [];
 
-  // Clockwise in (right, up) plane to match track profile outward winding
   const corners = [
     { cx: -halfW + r, cy: halfH - r, start: Math.PI, uStart: 0.05, uEnd: 0.25 },
     { cx: halfW - r, cy: halfH - r, start: Math.PI * 0.5, uStart: 0.25, uEnd: 0.5 },
@@ -232,19 +277,99 @@ function buildRoundedRailProfile(width: number, height: number, arcSegments: num
   return points;
 }
 
+function splitSolidSpans(samples: readonly TrackFrame[]): TrackFrame[][] {
+  const spans: TrackFrame[][] = [];
+  let current: TrackFrame[] = [];
+
+  for (const sample of samples) {
+    if (sample.isGap) {
+      if (current.length >= 2) {
+        spans.push(current);
+      }
+      current = [];
+    } else {
+      current.push(sample);
+    }
+  }
+
+  if (current.length >= 2) {
+    spans.push(current);
+  }
+  return spans;
+}
+
+function buildRingSequence(
+  frames: readonly TrackFrame[],
+  tileMeters: number,
+  bevelLength: number,
+  bevelSegments: number,
+  profileMidY: number,
+): RingSpec[] {
+  const rings: RingSpec[] = [];
+  const firstFrame = frames[0];
+  const lastFrame = frames[frames.length - 1];
+
+  // Rounded start bevel nose extending slightly along -tangent
+  if (bevelLength > 1e-4 && bevelSegments >= 1) {
+    for (let k = bevelSegments; k >= 1; k--) {
+      const t = k / bevelSegments;
+      const angle = t * (Math.PI * 0.46);
+      const shift = -bevelLength * Math.sin(angle);
+      rings.push({
+        frame: firstFrame,
+        profileScale: Math.max(0.14, Math.cos(angle)),
+        profileMidY,
+        tangentShift: shift,
+        vCoord: (firstFrame.s + shift) / tileMeters,
+      });
+    }
+  }
+
+  for (const frame of frames) {
+    rings.push({
+      frame,
+      profileScale: 1,
+      profileMidY,
+      tangentShift: 0,
+      vCoord: frame.s / tileMeters,
+    });
+  }
+
+  // Rounded end bevel nose extending slightly along +tangent
+  if (bevelLength > 1e-4 && bevelSegments >= 1) {
+    for (let k = 1; k <= bevelSegments; k++) {
+      const t = k / bevelSegments;
+      const angle = t * (Math.PI * 0.46);
+      const shift = bevelLength * Math.sin(angle);
+      rings.push({
+        frame: lastFrame,
+        profileScale: Math.max(0.14, Math.cos(angle)),
+        profileMidY,
+        tangentShift: shift,
+        vCoord: (lastFrame.s + shift) / tileMeters,
+      });
+    }
+  }
+
+  return rings;
+}
+
 function buildSweptGeometry(
   frames: readonly TrackFrame[],
   profile: readonly ProfilePoint[],
   tileMeters: number,
-  computeLateralOffset: (frame: TrackFrame, pt: ProfilePoint) => number,
+  computeLateralOffset: (frame: TrackFrame, pt: ProfilePoint, profileScale: number) => number,
   verticalBias: number,
+  bevelLength: number,
+  bevelSegments: number,
+  profileMidY: number,
 ): SweptMeshResult {
-  const frameCount = frames.length;
+  const rings = buildRingSequence(frames, tileMeters, bevelLength, bevelSegments, profileMidY);
+  const ringCount = rings.length;
   const profCount = profile.length;
-  const ringStride = profCount + 1; // +1 duplicate seam vertex for UV continuity
+  const ringStride = profCount + 1;
 
-  // Side surface vertices + 2 endcap rings (start and end)
-  const sideVertexCount = frameCount * ringStride;
+  const sideVertexCount = ringCount * ringStride;
   const capVertexCount = profCount * 2;
   const totalVertices = sideVertexCount + capVertexCount;
 
@@ -254,34 +379,35 @@ function buildSweptGeometry(
 
   const vPos = new THREE.Vector3();
 
-  for (let f = 0; f < frameCount; f++) {
-    const frame = frames[f];
-    const vCoord = frame.s / tileMeters;
+  for (let r = 0; r < ringCount; r++) {
+    const ring = rings[r];
+    const frame = ring.frame;
 
     for (let p = 0; p < ringStride; p++) {
       const pt = profile[p % profCount];
-      const lat = computeLateralOffset(frame, pt);
-      const vert = pt.yOffset + verticalBias;
+      const lat = computeLateralOffset(frame, pt, ring.profileScale);
+      const scaledY = ring.profileMidY + (pt.yOffset - ring.profileMidY) * ring.profileScale;
+      const vert = scaledY + verticalBias;
 
       vPos
         .copy(frame.position)
+        .addScaledVector(frame.tangent, ring.tangentShift)
         .addScaledVector(frame.right, lat)
         .addScaledVector(frame.up, vert);
 
-      const idx = f * ringStride + p;
+      const idx = r * ringStride + p;
       positions[idx * 3] = vPos.x;
       positions[idx * 3 + 1] = vPos.y;
       positions[idx * 3 + 2] = vPos.z;
 
       uvs[idx * 2] = p === profCount ? profile[0].u : pt.u;
-      uvs[idx * 2 + 1] = vCoord;
+      uvs[idx * 2 + 1] = ring.vCoord;
     }
   }
 
-  // Side quads (outward normals for CW profile in (right, up))
-  for (let f = 0; f < frameCount - 1; f++) {
-    const rowA = f * ringStride;
-    const rowB = (f + 1) * ringStride;
+  for (let r = 0; r < ringCount - 1; r++) {
+    const rowA = r * ringStride;
+    const rowB = (r + 1) * ringStride;
     for (let p = 0; p < profCount; p++) {
       const a = rowA + p;
       const b = rowA + p + 1;
@@ -293,34 +419,46 @@ function buildSweptGeometry(
     }
   }
 
-  // Start and end caps so open ends are solid
+  // Cap the outermost bevel rings cleanly
   const startCapOffset = sideVertexCount;
   const endCapOffset = sideVertexCount + profCount;
-  const firstFrame = frames[0];
-  const lastFrame = frames[frameCount - 1];
+  const startRing = rings[0];
+  const endRing = rings[ringCount - 1];
 
   for (let p = 0; p < profCount; p++) {
     const pt = profile[p];
 
+    const startScaledY =
+      startRing.profileMidY + (pt.yOffset - startRing.profileMidY) * startRing.profileScale;
     vPos
-      .copy(firstFrame.position)
-      .addScaledVector(firstFrame.right, computeLateralOffset(firstFrame, pt))
-      .addScaledVector(firstFrame.up, pt.yOffset + verticalBias);
+      .copy(startRing.frame.position)
+      .addScaledVector(startRing.frame.tangent, startRing.tangentShift)
+      .addScaledVector(
+        startRing.frame.right,
+        computeLateralOffset(startRing.frame, pt, startRing.profileScale),
+      )
+      .addScaledVector(startRing.frame.up, startScaledY + verticalBias);
     positions[(startCapOffset + p) * 3] = vPos.x;
     positions[(startCapOffset + p) * 3 + 1] = vPos.y;
     positions[(startCapOffset + p) * 3 + 2] = vPos.z;
     uvs[(startCapOffset + p) * 2] = pt.u;
-    uvs[(startCapOffset + p) * 2 + 1] = 0;
+    uvs[(startCapOffset + p) * 2 + 1] = startRing.vCoord;
 
+    const endScaledY =
+      endRing.profileMidY + (pt.yOffset - endRing.profileMidY) * endRing.profileScale;
     vPos
-      .copy(lastFrame.position)
-      .addScaledVector(lastFrame.right, computeLateralOffset(lastFrame, pt))
-      .addScaledVector(lastFrame.up, pt.yOffset + verticalBias);
+      .copy(endRing.frame.position)
+      .addScaledVector(endRing.frame.tangent, endRing.tangentShift)
+      .addScaledVector(
+        endRing.frame.right,
+        computeLateralOffset(endRing.frame, pt, endRing.profileScale),
+      )
+      .addScaledVector(endRing.frame.up, endScaledY + verticalBias);
     positions[(endCapOffset + p) * 3] = vPos.x;
     positions[(endCapOffset + p) * 3 + 1] = vPos.y;
     positions[(endCapOffset + p) * 3 + 2] = vPos.z;
     uvs[(endCapOffset + p) * 2] = pt.u;
-    uvs[(endCapOffset + p) * 2 + 1] = 0;
+    uvs[(endCapOffset + p) * 2 + 1] = endRing.vCoord;
   }
 
   for (let p = 1; p < profCount - 1; p++) {
@@ -338,21 +476,116 @@ function buildSweptGeometry(
   return { geometry };
 }
 
-function buildRailPosts(course: Course, railMaterial: THREE.Material): THREE.InstancedMesh {
+function buildJumpEdgeStrips(
+  course: Course,
+  stripMaterial: THREE.Material,
+): THREE.Group {
   const cfg = CONFIG.course;
-  const totalLen = course.getLength();
-  const postCountPerSide = Math.max(2, Math.floor(totalLen / cfg.railPostSpacingMeters) + 1);
-  const totalInstances = postCountPerSide * 2;
+  const stripsGroup = new THREE.Group();
+  stripsGroup.name = 'JumpEdgeStrips';
 
-  const postGeometry = new THREE.CylinderGeometry(
-    cfg.railPostRadius,
-    cfg.railPostRadius,
-    cfg.railPostHeight,
-    10,
-  );
-  const instanced = new THREE.InstancedMesh(postGeometry, railMaterial, totalInstances);
-  instanced.castShadow = true;
-  instanced.receiveShadow = true;
+  const gaps = course.getGapRanges();
+  if (gaps.length === 0) {
+    return stripsGroup;
+  }
+
+  const totalLen = course.getLength();
+  const stripLen = cfg.jumpStripLength;
+  const latSubdivs = 8;
+  const frame: TrackFrame = {
+    s: 0,
+    position: new THREE.Vector3(),
+    tangent: new THREE.Vector3(),
+    up: new THREE.Vector3(),
+    right: new THREE.Vector3(),
+    width: cfg.trackWidth,
+    bank: 0,
+  };
+  const vPos = new THREE.Vector3();
+
+  const createStripForRange = (startS: number, endS: number): THREE.Mesh | null => {
+    const clampedStart = Math.max(0, startS);
+    const clampedEnd = Math.min(totalLen, endS);
+    const spanLen = clampedEnd - clampedStart;
+    if (spanLen < 0.2) {
+      return null;
+    }
+
+    const lengthSteps = Math.max(4, Math.ceil(spanLen / cfg.stepLength));
+    const cols = latSubdivs + 1;
+    const rows = lengthSteps + 1;
+    const positions = new Float32Array(rows * cols * 3);
+    const uvs = new Float32Array(rows * cols * 2);
+    const indices: number[] = [];
+
+    for (let r = 0; r < rows; r++) {
+      const vFrac = r / lengthSteps;
+      const s = THREE.MathUtils.lerp(clampedStart, clampedEnd, vFrac);
+      course.getFrameAt(s, frame);
+      const halfStripW = Math.max(0.5, frame.width * 0.5 - cfg.jumpStripInset);
+
+      for (let c = 0; c < cols; c++) {
+        const uFrac = c / latSubdivs;
+        const lat = THREE.MathUtils.lerp(-halfStripW, halfStripW, uFrac);
+        vPos
+          .copy(frame.position)
+          .addScaledVector(frame.right, lat)
+          .addScaledVector(frame.up, cfg.jumpStripLift);
+
+        const idx = r * cols + c;
+        positions[idx * 3] = vPos.x;
+        positions[idx * 3 + 1] = vPos.y;
+        positions[idx * 3 + 2] = vPos.z;
+        uvs[idx * 2] = uFrac * 2;
+        uvs[idx * 2 + 1] = vFrac;
+      }
+    }
+
+    for (let r = 0; r < lengthSteps; r++) {
+      for (let c = 0; c < latSubdivs; c++) {
+        const a = r * cols + c;
+        const b = a + 1;
+        const cIdx = (r + 1) * cols + c;
+        const d = cIdx + 1;
+        indices.push(a, b, cIdx);
+        indices.push(b, d, cIdx);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+
+    const mesh = new THREE.Mesh(geometry, stripMaterial);
+    mesh.receiveShadow = true;
+    return mesh;
+  };
+
+  for (const gap of gaps) {
+    const takeoffStrip = createStripForRange(gap.startS - stripLen, gap.startS);
+    if (takeoffStrip) {
+      stripsGroup.add(takeoffStrip);
+    }
+    const landingStrip = createStripForRange(gap.endS, gap.endS + stripLen);
+    if (landingStrip) {
+      stripsGroup.add(landingStrip);
+    }
+  }
+
+  return stripsGroup;
+}
+
+function buildRailPosts(
+  course: Course,
+  railMaterial: THREE.Material,
+  spans: readonly TrackFrame[][],
+): THREE.Group {
+  const cfg = CONFIG.course;
+  const postsGroup = new THREE.Group();
+  postsGroup.name = 'RailPostsGroup';
 
   const frame: TrackFrame = {
     s: 0,
@@ -367,31 +600,121 @@ function buildRailPosts(course: Course, railMaterial: THREE.Material): THREE.Ins
   const pos = new THREE.Vector3();
   const negForward = new THREE.Vector3();
 
-  let instanceIdx = 0;
-  const startMargin = 1.0;
-  const usableLen = Math.max(1, totalLen - startMargin * 2);
-
-  for (let i = 0; i < postCountPerSide; i++) {
-    const s = startMargin + (i / (postCountPerSide - 1)) * usableLen;
-    course.getFrameAt(s, frame);
-
-    const railEdgeOffset = frame.width * 0.5 + cfg.railOffsetFromEdge * 0.65;
-    negForward.copy(frame.tangent).negate();
-    basisMatrix.makeBasis(frame.right, frame.up, negForward);
-
-    for (const side of [-1, 1]) {
-      pos
-        .copy(frame.position)
-        .addScaledVector(frame.right, side * railEdgeOffset)
-        .addScaledVector(frame.up, cfg.railVerticalOffset * 0.35);
-      basisMatrix.setPosition(pos);
-      instanced.setMatrixAt(instanceIdx++, basisMatrix);
+  // 1. Intermediate posts along each solid track span
+  const postLocations: number[] = [];
+  for (const span of spans) {
+    const spanStart = span[0].s;
+    const spanEnd = span[span.length - 1].s;
+    const margin = 1.25;
+    const usableLen = spanEnd - spanStart - margin * 2;
+    if (usableLen <= 0.5) {
+      continue;
+    }
+    const count = Math.max(1, Math.floor(usableLen / cfg.railPostSpacingMeters) + 1);
+    for (let i = 0; i < count; i++) {
+      const frac = count === 1 ? 0.5 : i / (count - 1);
+      postLocations.push(spanStart + margin + frac * usableLen);
     }
   }
 
-  instanced.instanceMatrix.needsUpdate = true;
-  instanced.computeBoundingSphere();
-  return instanced;
+  if (postLocations.length > 0) {
+    const postGeometry = new THREE.CylinderGeometry(
+      cfg.railPostRadius,
+      cfg.railPostRadius,
+      cfg.railPostHeight,
+      10,
+    );
+    const instanced = new THREE.InstancedMesh(
+      postGeometry,
+      railMaterial,
+      postLocations.length * 2,
+    );
+    instanced.castShadow = true;
+    instanced.receiveShadow = true;
+
+    let instanceIdx = 0;
+    for (const s of postLocations) {
+      course.getFrameAt(s, frame);
+      const railEdgeOffset = frame.width * 0.5 + cfg.railOffsetFromEdge * 0.65;
+      negForward.copy(frame.tangent).negate();
+      basisMatrix.makeBasis(frame.right, frame.up, negForward);
+
+      for (const side of [-1, 1]) {
+        pos
+          .copy(frame.position)
+          .addScaledVector(frame.right, side * railEdgeOffset)
+          .addScaledVector(frame.up, cfg.railVerticalOffset * 0.35);
+        basisMatrix.setPosition(pos);
+        instanced.setMatrixAt(instanceIdx++, basisMatrix);
+      }
+    }
+
+    instanced.instanceMatrix.needsUpdate = true;
+    instanced.computeBoundingSphere();
+    postsGroup.add(instanced);
+  }
+
+  // 2. Short rounded end posts capping the rails at each span start/end (including gap edges)
+  const endLocations: number[] = [];
+  for (const span of spans) {
+    endLocations.push(span[0].s, span[span.length - 1].s);
+  }
+
+  if (endLocations.length > 0) {
+    const endBodyGeom = new THREE.CylinderGeometry(
+      cfg.railEndPostRadius,
+      cfg.railEndPostRadius,
+      cfg.railEndPostHeight,
+      14,
+    );
+    const endDomeGeom = new THREE.SphereGeometry(cfg.railEndPostRadius, 14, 10);
+
+    const totalEndPosts = endLocations.length * 2;
+    const endBodies = new THREE.InstancedMesh(endBodyGeom, railMaterial, totalEndPosts);
+    const endDomes = new THREE.InstancedMesh(endDomeGeom, railMaterial, totalEndPosts);
+    endBodies.castShadow = true;
+    endBodies.receiveShadow = true;
+    endDomes.castShadow = true;
+    endDomes.receiveShadow = true;
+
+    let endIdx = 0;
+    const postCenterHeight = cfg.railVerticalOffset * 0.5 + cfg.railEndPostHeight * 0.35;
+    const domeHeight = postCenterHeight + cfg.railEndPostHeight * 0.5;
+
+    for (const s of endLocations) {
+      course.getFrameAt(s, frame);
+      const railCenterOffset = frame.width * 0.5 + cfg.railOffsetFromEdge + cfg.railWidth * 0.5;
+      negForward.copy(frame.tangent).negate();
+      basisMatrix.makeBasis(frame.right, frame.up, negForward);
+
+      for (const side of [-1, 1]) {
+        pos
+          .copy(frame.position)
+          .addScaledVector(frame.right, side * railCenterOffset)
+          .addScaledVector(frame.up, postCenterHeight);
+        basisMatrix.setPosition(pos);
+        endBodies.setMatrixAt(endIdx, basisMatrix);
+
+        pos
+          .copy(frame.position)
+          .addScaledVector(frame.right, side * railCenterOffset)
+          .addScaledVector(frame.up, domeHeight);
+        basisMatrix.setPosition(pos);
+        endDomes.setMatrixAt(endIdx, basisMatrix);
+
+        endIdx++;
+      }
+    }
+
+    endBodies.instanceMatrix.needsUpdate = true;
+    endBodies.computeBoundingSphere();
+    endDomes.instanceMatrix.needsUpdate = true;
+    endDomes.computeBoundingSphere();
+    postsGroup.add(endBodies);
+    postsGroup.add(endDomes);
+  }
+
+  return postsGroup;
 }
 
 function buildDebugCourseFrames(course: Course): THREE.Group {
@@ -454,20 +777,11 @@ function buildDebugCourseFrames(course: Course): THREE.Group {
 
 export function buildTrackMesh(course: Course, maxAnisotropy = 8): THREE.Group {
   const cfg = CONFIG.course;
-  const frames = course.getSamples();
+  const spans = splitSolidSpans(course.getSamples());
   const group = new THREE.Group();
   group.name = 'TrackGroup';
 
-  // 1. Track deck mesh (#FF6A00, rounded top shoulders, glossy clearcoat)
   const trackProfile = buildTrackCrossSectionProfile();
-  const { geometry: trackGeometry } = buildSweptGeometry(
-    frames,
-    trackProfile,
-    cfg.trackTileMeters,
-    (frame, pt) => pt.xNorm * (frame.width * 0.5) + pt.xOffset,
-    0,
-  );
-
   const trackTexture = createTrackCanvasTexture(maxAnisotropy);
   const trackMaterial = new THREE.MeshPhysicalMaterial({
     map: trackTexture,
@@ -478,12 +792,6 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): THREE.Group {
     ior: cfg.trackIor,
   });
 
-  const trackMesh = new THREE.Mesh(trackGeometry, trackMaterial);
-  trackMesh.castShadow = true;
-  trackMesh.receiveShadow = true;
-  group.add(trackMesh);
-
-  // 2. Left & right blue guardrails (#1E6BFF) following the spline
   const railProfile = buildRoundedRailProfile(
     cfg.railWidth,
     cfg.railHeight,
@@ -499,27 +807,67 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): THREE.Group {
     ior: cfg.trackIor,
   });
 
-  for (const side of [-1, 1]) {
-    const { geometry: railGeometry } = buildSweptGeometry(
-      frames,
-      railProfile,
-      cfg.railTileMeters,
-      (frame, pt) =>
-        side * (frame.width * 0.5 + cfg.railOffsetFromEdge + cfg.railWidth * 0.5) +
-        pt.xOffset,
-      cfg.railVerticalOffset,
+  // 1 & 2. Solid track deck spans and left/right guardrails (skipped inside gaps)
+  for (const spanFrames of spans) {
+    const { geometry: trackGeometry } = buildSweptGeometry(
+      spanFrames,
+      trackProfile,
+      cfg.trackTileMeters,
+      (frame, pt, scale) => {
+        const halfLat = frame.width * 0.5;
+        const innerTuck = (1 - scale) * 0.06;
+        return pt.xNorm * (halfLat - innerTuck) + pt.xOffset * scale;
+      },
+      0,
+      cfg.endCapBevelLength,
+      cfg.endCapBevelSegments,
+      -cfg.trackThickness * 0.5,
     );
 
-    const railMesh = new THREE.Mesh(railGeometry, railMaterial);
-    railMesh.castShadow = true;
-    railMesh.receiveShadow = true;
-    group.add(railMesh);
+    const trackMesh = new THREE.Mesh(trackGeometry, trackMaterial);
+    trackMesh.castShadow = true;
+    trackMesh.receiveShadow = true;
+    group.add(trackMesh);
+
+    for (const side of [-1, 1]) {
+      const { geometry: railGeometry } = buildSweptGeometry(
+        spanFrames,
+        railProfile,
+        cfg.railTileMeters,
+        (frame, pt, scale) =>
+          side * (frame.width * 0.5 + cfg.railOffsetFromEdge + cfg.railWidth * 0.5) +
+          pt.xOffset * scale,
+        cfg.railVerticalOffset,
+        cfg.endCapBevelLength * 0.75,
+        cfg.endCapBevelSegments,
+        0,
+      );
+
+      const railMesh = new THREE.Mesh(railGeometry, railMaterial);
+      railMesh.castShadow = true;
+      railMesh.receiveShadow = true;
+      group.add(railMesh);
+    }
   }
 
-  // 3. Support posts connecting rails to the track deck
-  group.add(buildRailPosts(course, railMaterial));
+  // 3. Yellow diagonal accent strips (#FFD23F) at takeoff & landing edges
+  const jumpStripTexture = createJumpStripCanvasTexture(maxAnisotropy);
+  const jumpStripMaterial = new THREE.MeshPhysicalMaterial({
+    map: jumpStripTexture,
+    clearcoat: cfg.trackClearcoat,
+    clearcoatRoughness: cfg.trackClearcoatRoughness,
+    roughness: 0.2,
+    metalness: 0.04,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  group.add(buildJumpEdgeStrips(course, jumpStripMaterial));
 
-  // 4. Optional debug spline centerline and parallel-transport frame arrows
+  // 4. Support posts + short rounded end posts at gaps & ends
+  group.add(buildRailPosts(course, railMaterial, spans));
+
+  // 5. Optional debug centerline & frame arrows (still shows imaginary gap centerline)
   if (CONFIG.debug.showCourseFrames) {
     group.add(buildDebugCourseFrames(course));
   }

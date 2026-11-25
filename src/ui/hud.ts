@@ -16,6 +16,8 @@ export interface HudHandle {
   arcFillEl: SVGCircleElement;
   boostFillEl: HTMLElement;
   timerValueEl: HTMLElement;
+  airtimeSlotEl: HTMLElement;
+  airtimeTimerId: number | null;
   arcTotalLen: number;
   lastSpeedInt: number;
   lastSpeedQuantized: number;
@@ -114,6 +116,7 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
   const arcFillEl = root.querySelector('.sr-speedo-fill') as SVGCircleElement;
   const boostFillEl = root.querySelector('.sr-boost-fill') as HTMLElement;
   const timerValueEl = root.querySelector('.sr-timer-value') as HTMLElement;
+  const airtimeSlotEl = root.querySelector('[data-slot="airtime"]') as HTMLElement;
 
   return {
     root,
@@ -122,12 +125,42 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
     arcFillEl,
     boostFillEl,
     timerValueEl,
+    airtimeSlotEl,
+    airtimeTimerId: null,
     arcTotalLen: arcLen,
     lastSpeedInt: 0,
     lastSpeedQuantized: 0,
     lastBoostQuantized: 0,
     lastTimeText: '00:00.00',
   };
+}
+
+export function showAirtimePopup(hud: HudHandle, airtimeSeconds: number): void {
+  if (hud.airtimeTimerId !== null) {
+    window.clearTimeout(hud.airtimeTimerId);
+    hud.airtimeTimerId = null;
+  }
+
+  hud.airtimeSlotEl.textContent = `AIRTIME ${airtimeSeconds.toFixed(2)} s`;
+  hud.airtimeSlotEl.classList.remove('sr-hud-hidden', 'sr-airtime-active');
+  // Force reflow so consecutive landings replay the animation cleanly
+  void hud.airtimeSlotEl.offsetWidth;
+  hud.airtimeSlotEl.classList.add('sr-airtime-active');
+
+  hud.airtimeTimerId = window.setTimeout(() => {
+    hud.airtimeSlotEl.classList.add('sr-hud-hidden');
+    hud.airtimeSlotEl.classList.remove('sr-airtime-active');
+    hud.airtimeTimerId = null;
+  }, CONFIG.hud.airtimePopupDurationMs);
+}
+
+export function hideAirtimePopup(hud: HudHandle): void {
+  if (hud.airtimeTimerId !== null) {
+    window.clearTimeout(hud.airtimeTimerId);
+    hud.airtimeTimerId = null;
+  }
+  hud.airtimeSlotEl.classList.add('sr-hud-hidden');
+  hud.airtimeSlotEl.classList.remove('sr-airtime-active');
 }
 
 export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
@@ -160,6 +193,7 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
 }
 
 export function disposeHud(hud: HudHandle): void {
+  hideAirtimePopup(hud);
   if (hud.root.parentElement === hud.container) {
     hud.container.removeChild(hud.root);
   }

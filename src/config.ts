@@ -1,12 +1,42 @@
 // src/config.ts
 
-export interface CourseControlPointConfig {
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
-  readonly bankDeg: number;
-  readonly width?: number;
-}
+export type CourseSegmentConfig =
+  | {
+      readonly type: 'straight';
+      readonly length: number;
+      readonly width?: number;
+    }
+  | {
+      readonly type: 'curve';
+      readonly radius: number;
+      readonly angleDeg: number; // + kanan, - kiri
+      readonly bankDeg: number; // + miring ke kiri, - miring ke kanan
+      readonly width?: number;
+    }
+  | {
+      readonly type: 'slope';
+      readonly length: number;
+      readonly pitchDeg: number; // + menanjak, - menurun
+      readonly width?: number;
+    }
+  | {
+      readonly type: 'pitchTo';
+      readonly length: number;
+      readonly pitchDeg: number; // transisi halus ke pitchDeg lalu ditahan
+      readonly width?: number;
+    }
+  | {
+      readonly type: 'gap';
+      readonly length: number;
+      readonly exitPitchDeg: number; // garis tengah tetap ada tanpa permukaan
+      readonly width?: number;
+    }
+  | {
+      readonly type: 'loop';
+      readonly radius: number;
+      readonly lateralOffset: number;
+      readonly width?: number;
+    };
 
 export const CONFIG = {
   sim: {
@@ -15,6 +45,7 @@ export const CONFIG = {
   },
   debug: {
     showFps: false,
+    logCourseValidation: true,
     fpsSampleIntervalSec: 0.25,
     showCourseFrames: false,
     courseFrameStepMeters: 8,
@@ -32,6 +63,7 @@ export const CONFIG = {
     skyHorizon: '#BFE3FF',
     skyFogHex: 0xbfe3ff,
     accent: '#FFD23F',
+    jumpStripeDark: '#1E293B',
     sunLightHex: 0xfff0d4,
     hemiSkyHex: 0xbfe3ff,
     hemiGroundHex: 0xd9b892,
@@ -55,26 +87,29 @@ export const CONFIG = {
   },
   lighting: {
     sunIntensity: 2.5,
-    sunOffset: { x: 85, y: 125, z: 70 },
-    sunShadowExtent: 145,
+    sunOffset: { x: 95, y: 140, z: 80 },
+    sunShadowExtent: 170,
     sunShadowNear: 10,
-    sunShadowFar: 360,
+    sunShadowFar: 420,
     sunShadowBias: -0.0004,
     sunShadowNormalBias: 0.04,
     sunShadowRadius: 3,
     hemiIntensity: 0.85,
-    fogDensity: 0.0018,
+    fogDensity: 0.0015,
   },
   camera: {
     near: 0.3,
-    far: 1200,
+    far: 1400,
     distance: 8.6,
     height: 3.35,
+    lateralFollowFactor: 0.65,
+    airHeightFollowFactor: 0.35,
     lookAheadDistance: 7.5,
     lookHeightOffset: 1.05,
     positionSmoothTime: 0.14,
     lookSmoothTime: 0.1,
-    upBlendSpeed: 7.5,
+    fallingLookSmoothTime: 0.08,
+    upBlendSpeed: 8.5,
     fovBase: 54,
     fovMaxExtra: 16,
     fovSmoothTime: 0.22,
@@ -83,9 +118,9 @@ export const CONFIG = {
     rollSmoothTime: 0.16,
     snapOnReset: true,
     debugOrbitMode: false,
-    orbitRadiusScale: 1.28,
-    orbitMinRadius: 75,
-    orbitHeight: 62,
+    orbitRadiusScale: 1.32,
+    orbitMinRadius: 95,
+    orbitHeight: 75,
     orbitSpeed: 0.14,
   },
   hud: {
@@ -94,6 +129,7 @@ export const CONFIG = {
     maxGaugeSpeedKmh: 210,
     moveThresholdSpeedMs: 0.35,
     showControlsHint: true,
+    airtimePopupDurationMs: 1500,
     gaugeArcRadius: 54,
     gaugeArcCircumference: 2 * Math.PI * 54,
     gaugeArcSweepRatio: 240 / 360,
@@ -108,21 +144,31 @@ export const CONFIG = {
     },
   },
   floor: {
-    size: 560,
+    size: 680,
     textureSize: 512,
-    textureRepeat: 44,
+    textureRepeat: 54,
     roughness: 0.72,
     metalness: 0.02,
   },
   course: {
+    startPosition: { x: 0, y: 6, z: 120 },
+    startHeadingDeg: 0, // 0 deg = menuju -Z
     trackWidth: 7,
     trackThickness: 0.52,
     edgeRadius: 0.22,
     edgeArcSegments: 5,
     bottomRadius: 0.12,
     bottomArcSegments: 3,
-    samplesPerMeter: 2,
-    curveDivisionsPerPoint: 60,
+    endCapBevelLength: 0.24,
+    endCapBevelSegments: 3,
+    jumpStripLength: 1.65,
+    jumpStripInset: 0.28,
+    jumpStripLift: 0.008,
+    jumpStripTextureSize: 256,
+    stepLength: 0.25,
+    bankBlendLength: 10,
+    slopeBlendLength: 10,
+    curvatureSmoothWindow: 2,
     railHeight: 0.62,
     railWidth: 0.3,
     railOffsetFromEdge: 0.14,
@@ -131,6 +177,8 @@ export const CONFIG = {
     railPostSpacingMeters: 6,
     railPostRadius: 0.09,
     railPostHeight: 0.44,
+    railEndPostRadius: 0.16,
+    railEndPostHeight: 0.56,
     trackClearcoat: 1.0,
     trackClearcoatRoughness: 0.08,
     trackRoughness: 0.22,
@@ -144,32 +192,50 @@ export const CONFIG = {
     railMetalness: 0.05,
     railTextureSize: 256,
     railTileMeters: 6,
-    controlPoints: [
-      { x: 0, y: 6.0, z: 90, bankDeg: 0 },
-      { x: 0, y: 6.0, z: 60, bankDeg: 0 },
-      { x: 0, y: 6.2, z: 30, bankDeg: 0 },
-      { x: 6, y: 7.4, z: 10, bankDeg: -4 },
-      { x: 22, y: 9.6, z: -4, bankDeg: -6 },
-      { x: 44, y: 11.2, z: -6, bankDeg: -2 },
-      { x: 64, y: 10.6, z: -6, bankDeg: 0 },
-      { x: 84, y: 9.2, z: -6, bankDeg: 0 },
-      { x: 106, y: 8.2, z: -14, bankDeg: 14 },
-      { x: 118, y: 8.0, z: -34, bankDeg: 18 },
-      { x: 114, y: 8.8, z: -56, bankDeg: 14 },
-      { x: 110, y: 9.0, z: -76, bankDeg: 0 },
-      { x: 110, y: 7.8, z: -106, bankDeg: 0 },
-      { x: 110, y: 6.5, z: -136, bankDeg: 0 },
-    ] as readonly CourseControlPointConfig[],
+    segments: [
+      { type: 'straight', length: 50 },
+      { type: 'curve', radius: 42, angleDeg: 90, bankDeg: -10 },
+      { type: 'straight', length: 30 },
+      { type: 'loop', radius: 12, lateralOffset: 9 },
+      { type: 'straight', length: 20 },
+      { type: 'pitchTo', length: 8, pitchDeg: 14 },
+      { type: 'gap', length: 16, exitPitchDeg: -12 },
+      { type: 'pitchTo', length: 10, pitchDeg: 0 },
+      { type: 'straight', length: 20 },
+      { type: 'curve', radius: 34, angleDeg: -90, bankDeg: 14 },
+      { type: 'slope', length: 36, pitchDeg: 14 },
+      { type: 'slope', length: 36, pitchDeg: -14 },
+      { type: 'straight', length: 50 },
+    ] as readonly CourseSegmentConfig[],
   },
   physics: {
+    gravity: 20,
+    bankGravityFactor: 0.85,
+    contactMinNormal: 0.5,
+    invertedStallSpeed: 2.0,
+    invertedSlideAssist: 6.5,
+    airDrag: 0.0014,
+    airYawControl: 0.45,
+    airOrientSmoothTime: 0.18,
+    airNearestWindow: 36,
+    landingAlignTime: 0.24,
+    landingLateralTolerance: 0.35,
+    landingPenalty: 0.22,
+    impactRefSpeed: 18,
+    fallKillDepth: 4.5,
+    respawnDelay: 1.5,
+    respawnBackoff: 16, // 8 m sebelum awal ramp 8 m
+    respawnSpeedFactor: 0.85,
+    minAirtimeForBonus: 0.4,
     maxSpeed: 54,
-    accel: 34,
+    accel: 36,
     accelFalloffExponent: 1.35,
     brakeDecel: 48,
     reverseAccel: 20,
     reverseMaxSpeed: 16,
-    drag: 0.0065,
-    rollingResistance: 2.2,
+    maxReverseSlideSpeed: 34,
+    drag: 0.0055,
+    rollingResistance: 1.8,
     handbrakeDrag: 5.5,
     steerRate: 2.25,
     steerMinSpeed: 4.5,

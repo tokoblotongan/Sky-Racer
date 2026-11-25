@@ -310,16 +310,27 @@ export function buildCarMesh(maxAnisotropy = 8): CarVisual {
     fl.steerPivot.rotation.y = steerAngle;
     fr.steerPivot.rotation.y = steerAngle;
 
-    const targetRoll = THREE.MathUtils.clamp(
-      state.latAccel * cfg.rollFactor,
-      -cfg.maxRollRad,
-      cfg.maxRollRad,
-    );
-    const targetPitch = THREE.MathUtils.clamp(
-      state.longAccel * cfg.pitchFactor,
-      -cfg.maxPitchRad,
-      cfg.maxPitchRad,
-    );
+    let targetRoll = 0;
+    let targetPitch = 0;
+    if (state.mode === 'grounded') {
+      targetRoll = THREE.MathUtils.clamp(
+        state.latAccel * cfg.rollFactor,
+        -cfg.maxRollRad,
+        cfg.maxRollRad,
+      );
+      targetPitch = THREE.MathUtils.clamp(
+        state.longAccel * cfg.pitchFactor,
+        -cfg.maxPitchRad,
+        cfg.maxPitchRad,
+      );
+    } else {
+      const speed = Math.max(8, state.worldVel.length());
+      targetPitch = THREE.MathUtils.clamp(
+        (state.worldVel.y / speed) * 0.08,
+        -cfg.maxPitchRad,
+        cfg.maxPitchRad,
+      );
+    }
 
     const safeDt = Math.max(dt, 1e-4);
     currentRoll = THREE.MathUtils.damp(currentRoll, targetRoll, cfg.suspensionDamping, safeDt);
