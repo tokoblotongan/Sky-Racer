@@ -1,0 +1,410 @@
+/* src/ui/touch.css */
+
+.sr-touch-root {
+  --sr-touch-btn-size: 64px;
+  --sr-touch-idle-opacity: 0.55;
+  --sr-touch-pressed-opacity: 0.9;
+  --sr-touch-safe-margin: 12px;
+
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
+  font-family: 'Arial Rounded MT Bold', 'Trebuchet MS', system-ui, -apple-system, sans-serif;
+  font-weight: 800;
+  color: #fffdf7;
+}
+
+.sr-touch-hidden {
+  display: none !important;
+}
+
+/* Full-area tap target behind top-right controls during TITLE / FINISH */
+.sr-touch-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: auto;
+  touch-action: none;
+  background: transparent;
+}
+
+/* Left-bottom steering zone */
+.sr-touch-steer-zone {
+  position: absolute;
+  left: max(var(--sr-touch-safe-margin), env(safe-area-inset-left, 0px));
+  bottom: max(var(--sr-touch-safe-margin), env(safe-area-inset-bottom, 0px));
+  width: clamp(188px, 38vw, 290px);
+  height: clamp(128px, 44dvh, 220px);
+  z-index: 2;
+  pointer-events: auto;
+  touch-action: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+}
+
+.sr-touch-stick-base {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: var(--sr-touch-idle-opacity);
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.sr-touch-steer-zone.sr-touch-is-active .sr-touch-stick-base {
+  opacity: var(--sr-touch-pressed-opacity);
+}
+
+.sr-touch-stick-track {
+  position: absolute;
+  left: calc(var(--sr-stick-radius, 68px) * -1 - 24px);
+  top: -26px;
+  width: calc(var(--sr-stick-radius, 68px) * 2 + 48px);
+  height: 52px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 2.5px solid rgba(53, 212, 255, 0.65);
+  box-shadow:
+    0 10px 24px rgba(15, 23, 42, 0.42),
+    inset 0 0 12px rgba(30, 107, 255, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+
+.sr-touch-stick-tick {
+  width: 2px;
+  height: 16px;
+  border-radius: 2px;
+  background: rgba(255, 210, 63, 0.48);
+  margin: 0 auto;
+}
+
+.sr-touch-stick-arrow {
+  width: 14px;
+  height: 14px;
+  color: rgba(53, 212, 255, 0.72);
+  flex-shrink: 0;
+}
+
+.sr-touch-stick-knob {
+  position: absolute;
+  left: -28px;
+  top: -28px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffd23f 0%, #ff6a00 88%);
+  border: 3px solid #fffdf7;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.55);
+  transform: translate3d(0, 0, 0);
+}
+
+/* Alternative 2-button steering mode */
+.sr-touch-steer-buttons {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px;
+  pointer-events: auto;
+}
+
+/* Main driving action buttons (right-bottom) */
+.sr-touch-actions {
+  position: absolute;
+  right: max(var(--sr-touch-safe-margin), env(safe-area-inset-right, 0px));
+  bottom: max(var(--sr-touch-safe-margin), env(safe-area-inset-bottom, 0px));
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: clamp(10px, 2vw, 16px);
+  pointer-events: none;
+}
+
+.sr-touch-btn {
+  position: relative;
+  min-width: 56px;
+  min-height: 56px;
+  width: var(--sr-touch-btn-size);
+  height: var(--sr-touch-btn-size);
+  border-radius: 50%;
+  border: 2.5px solid rgba(53, 212, 255, 0.78);
+  background: rgba(15, 23, 42, 0.8);
+  color: #fffdf7;
+  opacity: var(--sr-touch-idle-opacity);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: pointer;
+  transition: transform 0.08s ease, opacity 0.1s ease, border-color 0.1s ease, background 0.1s ease;
+}
+
+.sr-touch-btn.sr-touch-is-pressed {
+  opacity: var(--sr-touch-pressed-opacity);
+  transform: scale(0.94);
+}
+
+.sr-touch-btn-steer {
+  width: clamp(58px, 15vmin, 72px);
+  height: clamp(58px, 15vmin, 72px);
+  border-color: rgba(30, 107, 255, 0.9);
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.sr-touch-btn-steer.sr-touch-is-pressed {
+  border-color: #35d4ff;
+  background: rgba(30, 107, 255, 0.58);
+}
+
+.sr-touch-btn-drift {
+  width: clamp(56px, 14vmin, var(--sr-touch-btn-size));
+  height: clamp(56px, 14vmin, var(--sr-touch-btn-size));
+  border-color: rgba(255, 210, 63, 0.82);
+  color: #ffd23f;
+}
+
+.sr-touch-btn-drift.sr-touch-is-pressed {
+  border-color: #ffd23f;
+  background: rgba(255, 210, 63, 0.28);
+}
+
+.sr-touch-btn-brake {
+  width: clamp(64px, 16.5vmin, calc(var(--sr-touch-btn-size) + 10px));
+  height: clamp(64px, 16.5vmin, calc(var(--sr-touch-btn-size) + 10px));
+  border-color: rgba(255, 106, 0, 0.9);
+  color: #ff963d;
+}
+
+.sr-touch-btn-brake.sr-touch-is-pressed {
+  border-color: #ff6a00;
+  background: rgba(255, 106, 0, 0.35);
+  color: #fffdf7;
+}
+
+.sr-touch-btn-gas {
+  width: clamp(62px, 15.5vmin, calc(var(--sr-touch-btn-size) + 6px));
+  height: clamp(62px, 15.5vmin, calc(var(--sr-touch-btn-size) + 6px));
+  border-color: rgba(53, 212, 255, 0.9);
+  color: #35d4ff;
+}
+
+.sr-touch-btn-gas.sr-touch-is-pressed {
+  border-color: #35d4ff;
+  background: rgba(30, 107, 255, 0.45);
+  color: #fffdf7;
+}
+
+.sr-touch-btn-icon {
+  width: 24px;
+  height: 24px;
+  display: block;
+  pointer-events: none;
+}
+
+.sr-touch-btn-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+/* Top-right compact utility bar (targets >= 48x48 px) */
+.sr-touch-topbar {
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top, 0px));
+  right: max(var(--sr-touch-safe-margin), env(safe-area-inset-right, 0px));
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.sr-touch-util-btn {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  border-radius: 14px;
+  border: 2px solid rgba(53, 212, 255, 0.55);
+  background: rgba(15, 23, 42, 0.84);
+  color: #35d4ff;
+  opacity: 0.88;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.36);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: pointer;
+  transition: transform 0.08s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+}
+
+.sr-touch-util-btn.sr-touch-is-pressed {
+  opacity: 1;
+  transform: scale(0.93);
+  border-color: #ffd23f;
+}
+
+.sr-touch-util-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+  pointer-events: none;
+}
+
+.sr-touch-util-text {
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.sr-touch-util-mute.sr-touch-is-muted {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+.sr-touch-util-mute .sr-touch-icon-off {
+  display: none;
+}
+
+.sr-touch-util-mute.sr-touch-is-muted .sr-touch-icon-on {
+  display: none;
+}
+
+.sr-touch-util-mute.sr-touch-is-muted .sr-touch-icon-off {
+  display: block;
+}
+
+.sr-touch-util-auto.sr-touch-auto-on {
+  color: #ffd23f;
+  border-color: rgba(255, 210, 63, 0.78);
+}
+
+.sr-touch-util-auto:not(.sr-touch-auto-on) {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+.sr-touch-util-reset {
+  color: #ffd23f;
+  border-color: rgba(255, 210, 63, 0.55);
+}
+
+.sr-touch-util-restart {
+  color: #ff963d;
+  border-color: rgba(255, 106, 0, 0.6);
+}
+
+.sr-touch-restart-ring {
+  position: absolute;
+  inset: -1px;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  pointer-events: none;
+  transform: rotate(-90deg);
+}
+
+.sr-touch-restart-ring-fill {
+  fill: none;
+  stroke: #ffd23f;
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0;
+  transition: opacity 0.08s ease;
+}
+
+.sr-touch-util-restart.sr-touch-holding .sr-touch-restart-ring-fill {
+  opacity: 1;
+}
+
+/* Wrap top-right buttons cleanly on compact landscape phones (e.g. 640x360) */
+@media (max-width: 840px), (max-height: 440px) {
+  .sr-touch-topbar {
+    max-width: 158px;
+    gap: 5px;
+  }
+
+  .sr-touch-steer-zone {
+    width: clamp(168px, 34vw, 240px);
+    height: clamp(114px, 40dvh, 178px);
+  }
+
+  .sr-touch-actions {
+    gap: 10px;
+  }
+}
+
+/* Portrait orientation warning overlay */
+.sr-touch-portrait-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: auto;
+  touch-action: none;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+  text-align: center;
+}
+
+.sr-touch-portrait-icon {
+  width: 72px;
+  height: 72px;
+  color: #ffd23f;
+  animation: srRotatePhoneHint 1.8s ease-in-out infinite;
+}
+
+@keyframes srRotatePhoneHint {
+  0%,
+  20% {
+    transform: rotate(0deg);
+  }
+  55%,
+  80% {
+    transform: rotate(-90deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.sr-touch-portrait-title {
+  margin: 0;
+  font-size: clamp(20px, 5vw, 26px);
+  line-height: 1.25;
+  color: #fffdf7;
+}
+
+.sr-touch-portrait-sub {
+  margin: 0;
+  font-size: clamp(13px, 3.6vw, 15px);
+  color: #35d4ff;
+}

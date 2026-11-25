@@ -13,6 +13,7 @@ export interface HudViewModel {
   cpTotal: number;
   bestTime: number | null;
   muted: boolean;
+  touchActive: boolean;
 }
 
 export interface CheckpointSplitNotice {
@@ -59,6 +60,7 @@ export interface HudHandle {
   lastCpText: string;
   lastTitleBestText: string;
   lastMuted: boolean | null;
+  lastTouchActive: boolean | null;
 }
 
 export function formatRaceTime(totalSeconds: number): string {
@@ -173,13 +175,21 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
         <div class="sr-title-kicker">Stunt Track Challenge</div>
         <h1 class="sr-title-logo">SKY RACER</h1>
         <div class="sr-title-best sr-hud-hidden"></div>
-        <div class="sr-title-prompt">Tekan <span class="sr-key">Enter</span> untuk mulai</div>
+        <div class="sr-title-prompt">
+          <span class="sr-title-prompt-key">Tekan <span class="sr-key">Enter</span> untuk mulai</span>
+          <span class="sr-title-prompt-touch">Ketuk untuk mulai</span>
+        </div>
         <div class="sr-title-controls">
           <span class="sr-hint-item"><span class="sr-key">W A S D</span> / <span class="sr-key">Panah</span> Kemudi</span>
           <span class="sr-hint-item"><span class="sr-key">Space</span> Drift</span>
           <span class="sr-hint-item"><span class="sr-key">R</span> Checkpoint</span>
           <span class="sr-hint-item"><span class="sr-key">Enter</span> Mulai / Ulang</span>
           <span class="sr-hint-item"><span class="sr-key">M</span> Suara</span>
+        </div>
+        <div class="sr-title-touch-controls">
+          <span class="sr-hint-item">Kemudi kiri</span>
+          <span class="sr-hint-item">Rem &amp; drift kanan</span>
+          <span class="sr-hint-item">Tahan untuk ulang</span>
         </div>
       </div>
     </div>
@@ -205,7 +215,10 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
           </div>
         </div>
         <div class="sr-finish-splits"></div>
-        <div class="sr-finish-prompt">Tekan <span class="sr-key">Enter</span> untuk balapan lagi</div>
+        <div class="sr-finish-prompt">
+          <span class="sr-finish-prompt-key">Tekan <span class="sr-key">Enter</span> untuk balapan lagi</span>
+          <span class="sr-finish-prompt-touch">Ketuk untuk balapan lagi</span>
+        </div>
       </div>
     </div>
   `;
@@ -249,6 +262,7 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
     lastCpText: 'CP 0 / 0',
     lastTitleBestText: '',
     lastMuted: null,
+    lastTouchActive: null,
   };
 }
 
@@ -403,6 +417,11 @@ export function showFinishScreen(
 }
 
 export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
+  if (viewModel.touchActive !== hud.lastTouchActive) {
+    hud.lastTouchActive = viewModel.touchActive;
+    hud.root.classList.toggle('hud--touch', viewModel.touchActive);
+  }
+
   if (viewModel.muted !== hud.lastMuted) {
     hud.lastMuted = viewModel.muted;
     hud.audioBtnEl.classList.toggle('sr-audio-muted', viewModel.muted);

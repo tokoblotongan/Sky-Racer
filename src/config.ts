@@ -675,4 +675,28 @@ export const CONFIG = {
     throttleResponseRate: 12.0, // laju respons pedal gas per detik (naik = lebih instan, turun = lebih halus)
     brakeResponseRate: 14.0, // laju respons pedal rem per detik (naik = lebih instan, turun = lebih halus)
   },
+  touch: {
+    enableMode: 'auto' as 'auto' | 'always' | 'off', // tampil bila pointer: coarse atau setelah sentuhan pertama
+    steerMode: 'stick' as 'stick' | 'buttons', // 'stick' (tongkat analog melayang) atau 'buttons' (kiri/kanan)
+    stickMaxRadius: 68, // radius maksimum geser tongkat kemudi dalam px (naik = gerakan jempol lebih lebar, turun = lebih sensitif)
+    stickDeadzone: 0.1, // deadzone 0..1 di tengah tongkat (naik = tengah lebih stabil, turun = lebih peka)
+    stickResponseCurve: 1.45, // eksponen kurva respons analog (naik = halus di tengah, turun = lebih linear)
+    autoThrottleDefault: true, // gas otomatis saat RACING (true = otomatis gas, false = tampilkan tombol GAS)
+    buttonSize: 64, // ukuran tombol aksi utama dalam px (minimal 56 px)
+    idleOpacity: 0.55, // opasitas kontrol sentuh saat diam
+    pressedOpacity: 0.9, // opasitas kontrol sentuh saat ditekan
+    safeMargin: 12, // jarak aman tepi dalam px selain env(safe-area-inset-*)
+    restartHoldMs: 600, // durasi tahan tombol ulang balapan dalam ms
+    resetTapMaxMs: 320, // durasi maksimum ketukan singkat tombol reset checkpoint dalam ms
+    touchSteerSmoothTime: 0.04, // smoothing sangat ringan untuk kemudi sentuh analog dalam detik
+    haptics: {
+      enabled: true, // aktifkan getar navigator.vibrate bila tersedia
+      boostMs: 28, // durasi getar saat menginjak boost pad dalam ms
+      railMs: 20, // durasi getar saat membentur pagar dalam ms
+      landMaxMs: 42, // durasi maksimum getar saat mendarat keras dalam ms
+      minInterval: 80, // jeda minimum antar getaran haptik dalam ms agar tidak spam
+    },
+    orientationHint: true, // tampilkan overlay imbauan landscape saat perangkat sentuh berada dalam mode potret
+    storageKey: 'sky-racer-touch-v1', // kunci localStorage khusus preferensi kontrol sentuh (terpisah dari best time dan audio)
+  },
 } as const;

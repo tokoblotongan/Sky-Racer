@@ -4,7 +4,9 @@ import { CONFIG } from '../config';
 
 export type QualityLevel = 'low' | 'medium' | 'high';
 export type QualityConfig = typeof CONFIG.quality;
-export type QualityPreset = QualityConfig['levels'][QualityLevel];
+export type QualityPreset = Omit<QualityConfig['levels'][QualityLevel], 'pixelRatioMax'> & {
+  readonly pixelRatioMax: number;
+};
 
 export interface QualityManager {
   update: (dt: number) => void;
@@ -17,16 +19,49 @@ export interface QualityManager {
 
 const QUALITY_ORDER: readonly QualityLevel[] = ['low', 'medium', 'high'];
 
-function detectInitialQuality(config: QualityConfig): QualityLevel {
+function isCoarsePointerDevice(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  if (window.matchMedia?.('(pointer: coarse)').matches) {
+    return true;
+  }
+  return typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0 && window.innerWidth <= 1024;
+}
+
+function detectInitialQuality(config: QualityConfig, isCoarse: boolean): QualityLevel {
   if (config.initialOverride) {
+    if (isCoarse && config.initialOverride === 'high') {
+      return 'medium';
+    }
     return config.initialOverride;
   }
 
   const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-  const cores =
-    typeof navigator !== 'undefined' && typeof navigator.hardwareConcurrency === 'number'
-      ? navigator.hardwareConcurrency
-      : 4;
+  const nav =
+    typeof navigator !== 'undefined'
+      ? (navigator as Navigator & { deviceMemory?: number })
+      : undefined;
+  const cores = typeof nav?.hardwareConcurrency === 'number' ? nav.hardwareConcurrency : 4;
+  const deviceMemory = typeof nav?.deviceMemory === 'number' ? nav.deviceMemory : undefined;
+
+  if (isCoarse) {
+    const minScreenDim =
+      typeof window !== 'undefined'
+        ? Math.min(
+            window.screen?.width || window.innerWidth,
+            window.screen?.height || window.innerHeight,
+          )
+        : 720;
+    if (
+      cores <= 4 ||
+      (deviceMemory !== undefined && deviceMemory <= 3) ||
+      minScreenDim <= 375
+    ) {
+      return 'low';
+    }
+    return 'medium';
+  }
 
   if (cores <= 2 || (cores <= 4 && dpr >= 2.5)) {
     return 'low';
@@ -37,11 +72,24 @@ function detectInitialQuality(config: QualityConfig): QualityLevel {
   return 'high';
 }
 
+function getEffectivePreset(config: QualityConfig, level: QualityLevel, isCoarse: boolean): QualityPreset {
+  const effectiveLevel: QualityLevel = isCoarse && level === 'high' ? 'medium' : level;
+  const base = config.levels[effectiveLevel];
+  if (!isCoarse || base.pixelRatioMax <= 1.5) {
+    return base;
+  }
+  return {
+    ...base,
+    pixelRatioMax: 1.5,
+  };
+}
+
 export function createQualityManager(
   config: QualityConfig = CONFIG.quality,
   onChange?: (level: QualityLevel, preset: QualityPreset) => void,
 ): QualityManager {
-  let currentLevel: QualityLevel = detectInitialQuality(config);
+  const isCoarse = isCoarsePointerDevice();
+  let currentLevel: QualityLevel = detectInitialQuality(config, isCoarse);
   let lowestAutoLevel: QualityLevel = currentLevel;
 
   let warmupRemaining: number = config.warmupSec;
@@ -78,15 +126,16 @@ export function createQualityManager(
   }
 
   function applyLevel(nextLevel: QualityLevel, isAutoDowngrade: boolean): void {
-    if (nextLevel === currentLevel) {
+    const resolvedLevel: QualityLevel = isCoarse && nextLevel === 'high' ? 'medium' : nextLevel;
+    if (resolvedLevel === currentLevel) {
       return;
     }
-    currentLevel = nextLevel;
+    currentLevel = resolvedLevel;
     if (isAutoDowngrade) {
-      const idx = QUALITY_ORDER.indexOf(nextLevel);
+      const idx = QUALITY_ORDER.indexOf(resolvedLevel);
       const minIdx = QUALITY_ORDER.indexOf(lowestAutoLevel);
       if (idx < minIdx) {
-        lowestAutoLevel = nextLevel;
+        lowestAutoLevel = resolvedLevel;
       }
     }
     sampleTime = 0;
@@ -94,7 +143,7 @@ export function createQualityManager(
     lowFpsAccum = 0;
     warmupRemaining = 1.5;
     refreshDebugBadge();
-    onChange?.(currentLevel, config.levels[currentLevel]);
+    onChange?.(currentLevel, getEffectivePreset(config, currentLevel, isCoarse));
   }
 
   function setLevel(level: QualityLevel): void {
@@ -106,7 +155,7 @@ export function createQualityManager(
   }
 
   function getPreset(): QualityPreset {
-    return config.levels[currentLevel];
+    return getEffectivePreset(config, currentLevel, isCoarse);
   }
 
   function getAverageFps(): number {

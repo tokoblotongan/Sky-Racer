@@ -105,6 +105,14 @@ function createNoiseBuffer(ctx: AudioContext, type: NoiseType): AudioBuffer {
   return buffer;
 }
 
+const activeAudioManagers = new Set<{ setExternalPaused: (paused: boolean) => void }>();
+
+export function setAudioPaused(paused: boolean): void {
+  activeAudioManagers.forEach((mgr) => {
+    mgr.setExternalPaused(paused);
+  });
+}
+
 export function createAudioManager(): AudioManager {
   let ctx: AudioContext | null = null;
   let buses: AudioBuses | null = null;
@@ -115,6 +123,7 @@ export function createAudioManager(): AudioManager {
   let initialized = false;
   let disposed = false;
   let unlocked = false;
+  let externalPaused = false;
   let unlockListenersAttached = false;
 
   const prefs = loadAudioPrefs();
@@ -141,6 +150,8 @@ export function createAudioManager(): AudioManager {
     }
     window.removeEventListener('keydown', handleFirstInteraction, true);
     window.removeEventListener('pointerdown', handleFirstInteraction, true);
+    window.removeEventListener('touchend', handleFirstInteraction, true);
+    window.removeEventListener('click', handleFirstInteraction, true);
     unlockListenersAttached = false;
   }
 
@@ -148,7 +159,12 @@ export function createAudioManager(): AudioManager {
     if (!ctx || disposed) {
       return;
     }
-    if (ctx.state === 'suspended') {
+    if (ctx.state === 'running') {
+      unlocked = true;
+      removeUnlockListeners();
+      return;
+    }
+    if (ctx.state === 'suspended' && !externalPaused && !document.hidden) {
       ctx
         .resume()
         .then(() => {
@@ -158,11 +174,8 @@ export function createAudioManager(): AudioManager {
           }
         })
         .catch(() => {
-          // Ignore autoplay restriction errors until next user gesture
+          // Keep unlock listeners attached until a valid gesture succeeds
         });
-    } else if (ctx.state === 'running') {
-      unlocked = true;
-      removeUnlockListeners();
     }
   }
 
@@ -174,22 +187,29 @@ export function createAudioManager(): AudioManager {
     if (!initialized) {
       init();
     }
-    unlocked = true;
     resumeContext();
-    removeUnlockListeners();
   }
 
-  function handleVisibilityChange(): void {
+  function syncContextPlaybackState(): void {
     if (!ctx || disposed) {
       return;
     }
-    if (document.hidden) {
+    if (document.hidden || externalPaused) {
       if (ctx.state === 'running') {
         ctx.suspend().catch(() => {});
       }
     } else if (unlocked && ctx.state === 'suspended') {
       ctx.resume().catch(() => {});
     }
+  }
+
+  function setExternalPaused(paused: boolean): void {
+    externalPaused = Boolean(paused);
+    syncContextPlaybackState();
+  }
+
+  function handleVisibilityChange(): void {
+    syncContextPlaybackState();
   }
 
   function init(): void {
@@ -247,6 +267,7 @@ export function createAudioManager(): AudioManager {
 
       if (ctx.state === 'running') {
         unlocked = true;
+        removeUnlockListeners();
       }
 
       document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -256,6 +277,9 @@ export function createAudioManager(): AudioManager {
       limiter = null;
     }
   }
+
+  const instanceRegistration = { setExternalPaused };
+  activeAudioManagers.add(instanceRegistration);
 
   function unlock(): void {
     if (disposed) {
@@ -275,6 +299,8 @@ export function createAudioManager(): AudioManager {
     if (!unlockListenersAttached) {
       window.addEventListener('keydown', handleFirstInteraction, { capture: true, passive: true });
       window.addEventListener('pointerdown', handleFirstInteraction, { capture: true, passive: true });
+      window.addEventListener('touchend', handleFirstInteraction, { capture: true, passive: true });
+      window.addEventListener('click', handleFirstInteraction, { capture: true, passive: true });
       unlockListenersAttached = true;
     }
     // Also attempt resume immediately in case unlock() was invoked from a gesture
@@ -343,6 +369,7 @@ export function createAudioManager(): AudioManager {
       return;
     }
     disposed = true;
+    activeAudioManagers.delete(instanceRegistration);
     removeUnlockListeners();
     document.removeEventListener('visibilitychange', handleVisibilityChange);
 

@@ -593,3 +593,153 @@
 .sr-audio-btn.sr-audio-muted .sr-audio-icon-off {
   display: block;
 }
+
+/* Title & finish touch-specific text visibility */
+.sr-title-prompt-touch,
+.sr-title-touch-controls,
+.sr-finish-prompt-touch {
+  display: none;
+}
+
+.sr-title-touch-controls {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 14px;
+  max-width: 440px;
+}
+
+/* Mobile Touch HUD mode (hud--touch) */
+.sr-hud.hud--touch .sr-hud-bottom-left,
+.sr-hud.hud--touch .sr-title-controls,
+.sr-hud.hud--touch .sr-title-prompt-key,
+.sr-hud.hud--touch .sr-finish-prompt-key,
+.sr-hud.hud--touch .sr-audio-btn {
+  display: none !important;
+}
+
+.sr-hud.hud--touch .sr-title-prompt-touch,
+.sr-hud.hud--touch .sr-finish-prompt-touch {
+  display: inline;
+}
+
+.sr-hud.hud--touch .sr-title-touch-controls {
+  display: flex;
+}
+
+/* Move speedometer & boost gauge to top-left & scale down so thumbs never cover it */
+.sr-hud.hud--touch .sr-hud-bottom-right {
+  top: max(10px, env(safe-area-inset-top, 0px));
+  left: max(12px, env(safe-area-inset-left, 0px));
+  right: auto;
+  bottom: auto;
+  padding: 6px 10px;
+  gap: 4px;
+  border-radius: 14px;
+}
+
+.sr-hud.hud--touch .sr-speedo {
+  width: clamp(74px, 11vw, 94px);
+  height: clamp(64px, 9.5vw, 82px);
+}
+
+.sr-hud.hud--touch .sr-speedo-readout {
+  padding-top: 6px;
+}
+
+.sr-hud.hud--touch .sr-speedo-value {
+  font-size: clamp(19px, 2.7vw, 25px);
+}
+
+.sr-hud.hud--touch .sr-speedo-unit {
+  font-size: 9px;
+}
+
+.sr-hud.hud--touch .sr-boost-header {
+  font-size: 8px;
+}
+
+.sr-hud.hud--touch .sr-boost-state {
+  font-size: 8px;
+}
+
+.sr-hud.hud--touch .sr-boost-bar {
+  height: 6px;
+}
+
+/* Keep center timer + CP compact & overlap-free on 640x360 landscape screens */
+.sr-hud.hud--touch .sr-hud-top {
+  top: max(10px, env(safe-area-inset-top, 0px));
+  gap: 8px;
+}
+
+.sr-hud.hud--touch .sr-timer-card {
+  padding: 6px 10px;
+  gap: 6px;
+  border-radius: 12px;
+}
+
+.sr-hud.hud--touch .sr-timer-label {
+  font-size: 9px;
+}
+
+.sr-hud.hud--touch .sr-timer-value {
+  font-size: clamp(16px, 2.5vw, 22px);
+}
+
+.sr-hud.hud--touch .sr-checkpoint-slot {
+  padding: 6px 10px;
+  font-size: clamp(13px, 1.9vw, 17px);
+  border-radius: 12px;
+}
+
+.sr-hud.hud--touch .sr-split-slot {
+  top: clamp(54px, 16dvh, 84px);
+  padding: 5px 14px;
+  font-size: clamp(13px, 2vw, 18px);
+}
+
+.sr-hud.hud--touch .sr-airtime-slot {
+  top: clamp(92px, 27dvh, 134px);
+  padding: 5px 14px;
+  font-size: clamp(14px, 2.2vw, 20px);
+}
+
+@media (max-height: 440px) {
+  .sr-hud.hud--touch .sr-title-card {
+    padding: 14px 24px;
+    gap: 6px;
+    max-height: calc(100dvh - 20px);
+    overflow-y: auto;
+  }
+
+  .sr-hud.hud--touch .sr-title-logo {
+    font-size: clamp(32px, 7vw, 52px);
+  }
+
+  .sr-hud.hud--touch .sr-finish-card {
+    padding: 12px 18px;
+    gap: 8px;
+    max-height: calc(100dvh - 20px);
+    overflow-y: auto;
+  }
+
+  .sr-hud.hud--touch .sr-finish-stat {
+    padding: 6px 10px;
+  }
+
+  .sr-hud.hud--touch .sr-finish-stat-value {
+    font-size: 18px;
+  }
+
+  .sr-hud.hud--touch .sr-finish-splits {
+    padding: 6px 10px;
+    gap: 3px;
+  }
+
+  .sr-hud.hud--touch .sr-finish-split-row {
+    font-size: 12px;
+  }
+}

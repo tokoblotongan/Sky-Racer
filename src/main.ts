@@ -1,6 +1,7 @@
 // src/main.ts
 
 import * as THREE from 'three';
+import { setAudioPaused } from './audio/audioManager';
 import { createSound, type SoundSnapshot } from './audio/sound';
 import { CONFIG } from './config';
 import { Course } from './core/course';
@@ -25,6 +26,7 @@ import {
   type RaceState,
 } from './core/state';
 import { createKeyboardControls } from './input/controls';
+import { createTouchControls } from './input/touch';
 import { buildCarMesh } from './render/car';
 import { ChaseCamera } from './render/chaseCamera';
 import { buildGates } from './render/gates';
@@ -155,9 +157,13 @@ function bootstrap(): void {
   sound.init();
   sound.unlock();
 
+  const touchControls = createTouchControls(container, CONFIG.touch);
+  touchControls.setMutedVisual(sound.getMuted());
+
   function handleAudioButtonClick(): void {
     sound.unlock();
-    sound.toggleMute();
+    const nextMuted = sound.toggleMute();
+    touchControls.setMutedVisual(nextMuted);
     hud.audioBtnEl.blur();
   }
   hud.audioBtnEl.addEventListener('click', handleAudioButtonClick);
@@ -194,7 +200,7 @@ function bootstrap(): void {
   sceneCtx.scene.add(carVisual.group);
 
   const chaseCamera = new ChaseCamera(sceneCtx.camera);
-  const controls = createKeyboardControls();
+  const controls = createKeyboardControls(touchControls);
 
   let particles: ReturnType<typeof createParticles>;
   let postfx: ReturnType<typeof createPostFx>;
@@ -274,6 +280,7 @@ function bootstrap(): void {
     cpTotal: raceState.totalCheckpoints,
     bestTime: raceState.bestTime,
     muted: sound.getMuted(),
+    touchActive: touchControls.isEnabled(),
   };
 
   const soundSnapshot: SoundSnapshot = {
@@ -308,7 +315,32 @@ function bootstrap(): void {
   let frameHandle = 0;
   let disposed = false;
 
+  touchControls.setPhase(raceState.phase);
+
+  let paused = false;
+  function setPaused(nextPaused: boolean): void {
+    const resolved = Boolean(nextPaused);
+    if (resolved === paused) {
+      return;
+    }
+    paused = resolved;
+    setAudioPaused(paused);
+    if (!paused) {
+      lastFrameMs = performance.now();
+      accumulator = 0;
+    }
+  }
+
+  function syncPauseState(): void {
+    setPaused(document.hidden || touchControls.isPortraitBlocked());
+  }
+
+  const unbindTouchStatus = touchControls.onStatusChange(syncPauseState);
+  document.addEventListener('visibilitychange', syncPauseState);
+  syncPauseState();
+
   function handleRaceEvents(events: readonly RaceEvent[]): void {
+    touchControls.setPhase(raceState.phase);
     sound.setPhase(raceState.phase);
     sound.handleEvents(events);
     for (const ev of events) {
@@ -373,10 +405,12 @@ function bootstrap(): void {
     const input = controls.sample(step);
 
     if (input.mutePressed) {
-      sound.toggleMute();
+      sound.unlock();
+      const nextMuted = sound.toggleMute();
+      touchControls.setMutedVisual(nextMuted);
     }
 
-    if (input.confirmPressed) {
+    if (input.confirmPressed || (input.restartPressed && raceState.phase !== 'TITLE')) {
       lastThrottle = 0;
       handleConfirmAction();
       return;
@@ -398,6 +432,7 @@ function bootstrap(): void {
     });
 
     for (const ev of physicsEvents) {
+      touchControls.onHaptic(ev);
       if (ev.type === 'landed') {
         particles.emit({
           type: 'landed',
@@ -515,6 +550,7 @@ function bootstrap(): void {
     hudViewModel.cpTotal = raceState.totalCheckpoints;
     hudViewModel.bestTime = raceState.bestTime;
     hudViewModel.muted = sound.getMuted();
+    hudViewModel.touchActive = touchControls.isEnabled();
     updateHud(hud, hudViewModel);
 
     postfx.render(realDt);
@@ -553,24 +589,31 @@ function bootstrap(): void {
     const rawDt = (nowMs - lastFrameMs) / 1000;
     lastFrameMs = nowMs;
 
-    const frameDt = Math.min(Math.max(rawDt, 0), maxFrameDt);
-    accumulator += frameDt;
+    if (!paused) {
+      const frameDt = Math.min(Math.max(rawDt, 0), maxFrameDt);
+      accumulator += frameDt;
 
-    while (accumulator >= fixedStep) {
-      update(fixedStep);
-      accumulator -= fixedStep;
+      while (accumulator >= fixedStep) {
+        update(fixedStep);
+        accumulator -= fixedStep;
+      }
+
+      const alpha = accumulator / fixedStep;
+      render(alpha, frameDt);
+      qualityManager.update(frameDt);
+      debugOverlay?.update(nowMs, currState, raceState, course, qualityManager.getLevel());
     }
-
-    const alpha = accumulator / fixedStep;
-    render(alpha, frameDt);
-    qualityManager.update(frameDt);
-    debugOverlay?.update(nowMs, currState, raceState, course, qualityManager.getLevel());
 
     if (sceneCtx.isSoftwareGl) {
       scheduleAfterSoftwareDraw(() => tick(performance.now()));
     } else {
       frameHandle = window.requestAnimationFrame(tick);
     }
+  }
+
+  if (paused) {
+    updateHud(hud, hudViewModel);
+    postfx.render(0);
   }
 
   if (sceneCtx.isSoftwareGl) {
@@ -584,8 +627,11 @@ function bootstrap(): void {
     window.cancelAnimationFrame(frameHandle);
     window.clearTimeout(frameHandle);
     window.removeEventListener('resize', handleWindowResize);
+    document.removeEventListener('visibilitychange', syncPauseState);
+    unbindTouchStatus();
     hud.audioBtnEl.removeEventListener('click', handleAudioButtonClick);
     controls.dispose();
+    touchControls.dispose();
     sound.dispose();
     disposeHud(hud);
     debugOverlay?.dispose();
