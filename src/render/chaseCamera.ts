@@ -103,8 +103,9 @@ function computeCourseCameraTargets(
   course.getFrameAt(trackS, _camFrame);
   const widthRatio = _camFrame.width / CONFIG.course.defaultWidth;
   const widthScale = 1 + Math.max(0, widthRatio - 1) * cfg.widthScale;
-  const camDistance = cfg.distance * widthScale;
-  const camHeight = cfg.height * widthScale;
+  const carScale = CONFIG.car.visualScale;
+  const camDistance = cfg.distance * widthScale * carScale;
+  const camHeight = cfg.height * widthScale * carScale;
 
   let lateral = carState.lateral;
   let extraAirHeight = 0;
@@ -137,7 +138,7 @@ function computeCourseCameraTargets(
       _targetLook.addScaledVector(_lookFrame.tangent, lookS - totalLen);
     }
     _targetLook
-      .addScaledVector(_lookFrame.up, cfg.lookHeightOffset)
+      .addScaledVector(_lookFrame.up, cfg.lookHeightOffset * carScale)
       .addScaledVector(_lookFrame.right, lateral * cfg.lateralFollowFactor * 0.5);
   } else {
     const lookS = trackS + cfg.lookAheadDistance * 0.65;
@@ -147,7 +148,7 @@ function computeCourseCameraTargets(
       _targetLook.addScaledVector(_lookFrame.tangent, lookS - totalLen);
     }
     _targetLook
-      .addScaledVector(_lookFrame.up, cfg.lookHeightOffset)
+      .addScaledVector(_lookFrame.up, cfg.lookHeightOffset * carScale)
       .lerp(pose.position, 0.55);
   }
 }
@@ -194,25 +195,27 @@ export class ChaseCamera {
   }
 
   private computeTitleOrbitTargets(pose: CarPose): void {
-    const orbitR = CONFIG.race.titleOrbitRadius;
-    const orbitH = CONFIG.race.titleOrbitHeight;
+    const carScale = CONFIG.car.visualScale;
+    const orbitR = CONFIG.race.titleOrbitRadius * carScale;
+    const orbitH = CONFIG.race.titleOrbitHeight * carScale;
     _targetPos.set(
       pose.position.x + Math.sin(this.titleOrbitAngle) * orbitR,
       pose.position.y + orbitH,
       pose.position.z + Math.cos(this.titleOrbitAngle) * orbitR,
     );
-    _targetLook.copy(pose.position).addScaledVector(_worldUp, 0.72);
+    _targetLook.copy(pose.position).addScaledVector(_worldUp, 0.72 * carScale);
   }
 
   private computeFinishOrbitTargets(pose: CarPose): void {
-    const orbitR = CONFIG.camera.finishOrbitRadius;
-    const orbitH = CONFIG.camera.finishOrbitHeight;
+    const carScale = CONFIG.car.visualScale;
+    const orbitR = CONFIG.camera.finishOrbitRadius * carScale;
+    const orbitH = CONFIG.camera.finishOrbitHeight * carScale;
     _targetPos.set(
       pose.position.x + Math.sin(this.finishOrbitAngle) * orbitR,
       pose.position.y + orbitH,
       pose.position.z + Math.cos(this.finishOrbitAngle) * orbitR,
     );
-    _targetLook.copy(pose.position).addScaledVector(_worldUp, 0.85);
+    _targetLook.copy(pose.position).addScaledVector(_worldUp, 0.85 * carScale);
   }
 
   snapTo(pose: CarPose, carState: CarState, course: Route): void {

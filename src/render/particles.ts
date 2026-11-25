@@ -254,6 +254,7 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
   const dustTex = createRadialSpriteTexture(0.45);
   const trailTex = createRadialSpriteTexture(0.32);
 
+  const carScale = CONFIG.car.visualScale;
   let particleScale: number = CONFIG.quality.levels[quality].particleScale;
   const dpr = Math.min(window.devicePixelRatio || 1, CONFIG.quality.levels[quality].pixelRatioMax);
 
@@ -326,16 +327,16 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
       if (pose) {
         tmpPos
           .copy(position)
-          .addScaledVector(pose.right, Math.cos(ang) * 0.85)
-          .addScaledVector(pose.tangent, Math.sin(ang) * 0.9)
-          .addScaledVector(pose.up, 0.18);
+          .addScaledVector(pose.right, Math.cos(ang) * 0.85 * carScale)
+          .addScaledVector(pose.tangent, Math.sin(ang) * 0.9 * carScale)
+          .addScaledVector(pose.up, 0.18 * carScale);
         tmpVel
           .copy(pose.right)
           .multiplyScalar(Math.cos(ang) * radialSpeed)
           .addScaledVector(pose.tangent, Math.sin(ang) * radialSpeed)
           .addScaledVector(pose.up, upSpeed);
       } else {
-        tmpPos.set(position.x, position.y + 0.18, position.z);
+        tmpPos.set(position.x, position.y + 0.18 * carScale, position.z);
         tmpVel.set(Math.cos(ang) * radialSpeed, upSpeed, Math.sin(ang) * radialSpeed);
       }
 
@@ -348,8 +349,8 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
         tmpVel.y,
         tmpVel.z,
         fx.dust.lifetime * (0.75 + Math.random() * 0.45),
-        0.7,
-        1.95,
+        0.7 * carScale,
+        1.95 * carScale,
         0.96,
         0.93,
         0.86,
@@ -363,15 +364,15 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
         const ang = Math.random() * Math.PI * 2;
         spawnParticle(
           sparksPool,
-          position.x + Math.cos(ang) * 0.6,
-          position.y + 0.18,
-          position.z + Math.sin(ang) * 0.6,
+          position.x + Math.cos(ang) * 0.6 * carScale,
+          position.y + 0.18 * carScale,
+          position.z + Math.sin(ang) * 0.6 * carScale,
           Math.cos(ang) * (3 + Math.random() * 4),
           2 + Math.random() * 4,
           Math.sin(ang) * (3 + Math.random() * 4),
           fx.sparks.lifetime * 0.75,
-          0.42,
-          0.08,
+          0.42 * carScale,
+          0.08 * carScale,
           1.0,
           0.86,
           0.4,
@@ -392,9 +393,9 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
       const side = i % 2 === 0 ? -1 : 1;
       tmpPos
         .copy(position)
-        .addScaledVector(forward, -CONFIG.car.bodyLength * 0.52)
-        .addScaledVector(right, side * CONFIG.car.bodyWidth * 0.22)
-        .addScaledVector(up, CONFIG.car.bodyClearance + 0.1);
+        .addScaledVector(forward, -CONFIG.car.bodyLength * 0.52 * carScale)
+        .addScaledVector(right, side * CONFIG.car.bodyWidth * 0.22 * carScale)
+        .addScaledVector(up, (CONFIG.car.bodyClearance + 0.1) * carScale);
       tmpVel
         .copy(forward)
         .multiplyScalar(-(9 + Math.random() * 7))
@@ -411,8 +412,8 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
         tmpVel.y,
         tmpVel.z,
         fx.boostTrail.length * (0.85 + Math.random() * 0.4),
-        0.85,
-        0.15,
+        0.85 * carScale,
+        0.15 * carScale,
         tmpColor.r,
         tmpColor.g,
         tmpColor.b,
@@ -457,9 +458,9 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
         for (const side of [-1, 1]) {
           tmpPos
             .copy(carPose.position)
-            .addScaledVector(carPose.tangent, -CONFIG.car.wheelBaseHalfLength)
-            .addScaledVector(carPose.right, side * CONFIG.car.wheelTrackHalfWidth)
-            .addScaledVector(carPose.up, 0.14);
+            .addScaledVector(carPose.tangent, -CONFIG.car.wheelBaseHalfLength * carScale)
+            .addScaledVector(carPose.right, side * CONFIG.car.wheelTrackHalfWidth * carScale)
+            .addScaledVector(carPose.up, 0.14 * carScale);
           tmpVel
             .copy(carPose.tangent)
             .multiplyScalar(-1.8 + (Math.random() - 0.5) * 1.4)
@@ -475,8 +476,8 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
             tmpVel.y,
             tmpVel.z,
             fx.dust.lifetime * (0.7 + Math.random() * 0.4),
-            0.55,
-            1.65,
+            0.55 * carScale,
+            1.65 * carScale,
             0.96,
             0.94,
             0.88,
@@ -496,9 +497,9 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
         for (const side of [-1, 1]) {
           tmpPos
             .copy(carPose.position)
-            .addScaledVector(carPose.tangent, -(CONFIG.car.bodyLength * 0.5 + 0.18))
-            .addScaledVector(carPose.right, side * CONFIG.car.bodyWidth * 0.22)
-            .addScaledVector(carPose.up, CONFIG.car.bodyClearance + 0.09);
+            .addScaledVector(carPose.tangent, -(CONFIG.car.bodyLength * 0.5 + 0.18) * carScale)
+            .addScaledVector(carPose.right, side * CONFIG.car.bodyWidth * 0.22 * carScale)
+            .addScaledVector(carPose.up, (CONFIG.car.bodyClearance + 0.09) * carScale);
           tmpVel
             .copy(carPose.tangent)
             .multiplyScalar(-(6.5 + Math.random() * 4.5))
@@ -515,8 +516,8 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
             tmpVel.y,
             tmpVel.z,
             fx.boostTrail.length * (0.75 + Math.random() * 0.35),
-            0.72,
-            0.12,
+            0.72 * carScale,
+            0.12 * carScale,
             tmpColor.r,
             tmpColor.g,
             tmpColor.b,

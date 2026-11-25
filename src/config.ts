@@ -1014,6 +1014,7 @@ export const CONFIG = {
   car: {
     startS: 8,
     startLateral: 0,
+    visualScale: 1.10, // faktor skala visual mobil saja (tanpa mengubah footprint fisika)
     // Footprint fisika (carHalfWidth = 0.85 m, carHalfLength = 1.675 m) tidak diubah; seluruh desain model 3D prosedural harus muat di dalam kotak ini.
     bodyLength: CAR_BODY_LENGTH, // panjang bodi mobil (naik = bodi lebih panjang)
     bodyWidth: CAR_BODY_WIDTH, // lebar bodi mobil (naik = bodi lebih lebar)
@@ -1125,5 +1126,68 @@ export const CONFIG = {
     },
     orientationHint: true, // tampilkan overlay imbauan landscape saat perangkat sentuh berada dalam mode potret
     storageKey: 'sky-racer-touch-v1', // kunci localStorage khusus preferensi kontrol sentuh (terpisah dari best time dan audio)
+  },
+  fantasy: {
+    minClearance: 12,
+    overTrackClearance: 25,
+    jumpExclusionMargin: 28,
+    gateExclusionMargin: 24,
+    updateDistance: 460,
+    zoneStartBanner: {
+      title: 'ISTANA PELANGI',
+      startS: 10,
+      endS: 45,
+    },
+    budgets: {
+      high: { drawCalls: 220, triangles: 600000 },
+      medium: { drawCalls: 160, triangles: 350000 },
+      mobile: { drawCalls: 90, triangles: 160000 },
+      low: { drawCalls: 90, triangles: 160000 },
+    },
+    counts: {
+      floatingIslands: { high: 5, medium: 3, mobile: 3, low: 3 },
+      balloons: { high: 20, medium: 12, mobile: 8, low: 8 },
+      crystalDensity: { high: 1.0, medium: 0.6, mobile: 0.4, low: 0.4 },
+      lampSpacing: { high: 48, medium: 68, mobile: 92, low: 92 },
+      flagSpacing: { high: 64, medium: 90, mobile: 120, low: 120 },
+      flowerPatches: { high: 28, medium: 16, mobile: 0, low: 0 },
+    },
+    palette: {
+      castleWall: '#FFF6E0',
+      castleTrim: '#E7D8BA',
+      castleRoofPurple: '#7E22CE',
+      castleRoofRed: '#E11D48',
+      castleRoofBlue: '#0A5CFF',
+      castleGold: '#FFD000',
+      castleFlagColors: ['#FF2D3D', '#0A5CFF', '#FFD000', '#00E5FF'],
+      crystalCyan: '#00E5FF',
+      crystalMagenta: '#FF2FD0',
+      crystalYellow: '#FFD000',
+      islandRock: '#7C4A26',
+      islandGrass: '#24B859',
+      islandTree: '#15803D',
+      waterfall: '#38BDF8',
+      rainbowBands: ['#FF2D3D', '#FF7A00', '#FFD000', '#22C55E', '#00E5FF', '#0A5CFF', '#8B5CF6'],
+      wheelFrame: '#F1F5F9',
+      wheelHub: '#FFD000',
+      gondolaColors: ['#FF2D3D', '#0A5CFF', '#FFD000', '#00E5FF', '#FF2FD0', '#22C55E'],
+      balloonColors: ['#FF2D3D', '#0A5CFF', '#FFD000', '#00E5FF', '#FF2FD0', '#F97316', '#10B981', '#8B5CF6'],
+      balloonBasket: '#7C4A26',
+      lampPost: '#1E293B',
+      lampGlow: '#FFE699',
+      flowerColors: ['#FFD000', '#FF2FD0', '#00E5FF', '#FFF6E0', '#FB7185'],
+      mountainColors: ['#4B7FD1', '#5D6FD9', '#3E8EC7', '#6E74D4'],
+      cloudTint: '#FFFDF7',
+    },
+    animSpeeds: {
+      wheelRadPerSec: 0.08,
+      balloonBobSpeed: 0.72,
+      balloonDriftSpeed: 0.24,
+      islandBobSpeed: 0.52,
+      waterfallScrollSpeed: 0.85,
+      rainbowPulseSpeed: 1.35,
+      crystalPulseSpeed: 1.85,
+      flagWaveSpeed: 2.75,
+    },
   },
 } as const;

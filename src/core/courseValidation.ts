@@ -10,6 +10,11 @@ import { createCarState, stepCar } from './physics';
 import type { BranchRoute } from './routes';
 import { updateRouteTransitions } from './routeTransitions';
 import { createRaceState, getRespawnTarget, updateRace } from './state';
+import {
+  buildFantasyLandDecorPlan,
+  estimateFantasyDecorBudgets,
+  type DecorTierEstimate,
+} from '../courses/fantasyLandDecor';
 
 export interface LoopValidationResult {
   segmentIndex: number;
@@ -83,6 +88,17 @@ export interface BranchValidationResult {
   ok: boolean;
 }
 
+export interface DecorValidationResult {
+  checked: boolean;
+  placementCount: number;
+  minLateralClearanceM: number | null;
+  minOverTrackClearanceM: number | null;
+  rainbowApexAboveTrackM: number | null;
+  blockedJumpOrGateCount: number;
+  budgets: DecorTierEstimate[];
+  ok: boolean;
+}
+
 export interface CourseValidationReport {
   ok: boolean;
   closed: boolean;
@@ -102,6 +118,7 @@ export interface CourseValidationReport {
   jumps: JumpValidationResult[];
   zones: ZoneValidationResult[];
   branches: BranchValidationResult[];
+  decor: DecorValidationResult | null;
   railHits: number;
   stuckEvents: number;
   falls: number;
@@ -637,7 +654,7 @@ export function validateCourse(
   const hasTunnel = styleRuns.some((r) => r.style === 'tunnel');
   const widthRatio = trackWidth / CONFIG.course.defaultWidth;
   const widthScale = 1 + Math.max(0, widthRatio - 1) * CONFIG.camera.widthScale;
-  const cameraHeightM = CONFIG.camera.height * widthScale;
+  const cameraHeightM = CONFIG.camera.height * widthScale * CONFIG.car.visualScale;
   const requiredHeightM = cameraHeightM + 6;
   const interiorHeightM = CONFIG.styles.tunnel.interiorHeight;
   const tunnelOk = !hasTunnel || interiorHeightM >= requiredHeightM;
@@ -1140,6 +1157,192 @@ export function validateCourse(
     });
   }
 
+  // (i) FantasyLand decor clearance & render budget validation
+  let decorReport: DecorValidationResult | null = null;
+  if (course.getId() === 'fantasy-land') {
+    const decorPlan = buildFantasyLandDecorPlan(course, 'high');
+    const decorBudgets = estimateFantasyDecorBudgets(course);
+    const minReqClear = CONFIG.fantasy.minClearance;
+    const minOverReqClear = CONFIG.fantasy.overTrackClearance;
+    const jumpMargin = CONFIG.fantasy.jumpExclusionMargin;
+    const gateMargin = CONFIG.fantasy.gateExclusionMargin;
+
+    interface DecorCheckPt {
+      x: number;
+      y: number;
+      z: number;
+      hw: number;
+      isJumpZone: boolean;
+      isGateZone: boolean;
+    }
+    const routePts: DecorCheckPt[] = [];
+    const checkFrame: TrackFrame = {
+      s: 0,
+      position: new THREE.Vector3(),
+      tangent: new THREE.Vector3(),
+      up: new THREE.Vector3(),
+      right: new THREE.Vector3(),
+      width: trackWidth,
+      bank: 0,
+    };
+    for (const r of course.getAllRoutes()) {
+      const rLen = r.getLength();
+      const rSegs = r.getSegmentList();
+      const jRanges = rSegs
+        .filter((sg) => sg.type === 'gap')
+        .map((sg) => ({ a: sg.startS - jumpMargin, b: sg.endS + 32 + jumpMargin }));
+      const gRanges: Array<{ a: number; b: number }> = [];
+      if (r.routeId === 'main') {
+        for (const br of branchRoutes) {
+          gRanges.push({ a: br.fromS - gateMargin, b: br.fromS + br.entryGapLength + gateMargin });
+          gRanges.push({ a: br.toS - br.mergeGapLength - gateMargin, b: br.toS + gateMargin });
+        }
+      } else {
+        const br = branchRoutes.find((b) => b.routeId === r.routeId);
+        if (br) {
+          gRanges.push({ a: 0, b: br.entryGapLength + gateMargin });
+          gRanges.push({ a: rLen - br.mergeGapLength - gateMargin, b: rLen });
+        }
+      }
+      for (let s = 0; s <= rLen; s += 2.5) {
+        r.getFrameAt(s, checkFrame);
+        routePts.push({
+          x: checkFrame.position.x,
+          y: checkFrame.position.y,
+          z: checkFrame.position.z,
+          hw: checkFrame.width * 0.5,
+          isJumpZone: jRanges.some((rg) => s >= rg.a && s <= rg.b),
+          isGateZone: gRanges.some((rg) => s >= rg.a && s <= rg.b),
+        });
+      }
+    }
+
+    let minLateralClearance = Infinity;
+    let minOverTrackClearance = Infinity;
+    let rainbowApexAboveTrack: number | null = null;
+    let blockedJumpOrGateCount = 0;
+    const decorErrorsBefore = errors.length;
+
+    for (const p of decorPlan.placements) {
+      if (p.spec.type === 'rainbow' && p.legs && p.halfSpan) {
+        rainbowApexAboveTrack = p.apexHeightAboveTrack ?? null;
+        if (rainbowApexAboveTrack !== null && rainbowApexAboveTrack < 35) {
+          errors.push(
+            `Pelangi '${p.id}' memiliki puncak ${rainbowApexAboveTrack.toFixed(1)} m di atas lintasan (< 35 m).`,
+          );
+        }
+        for (const leg of p.legs) {
+          for (const pt of routePts) {
+            const edgeClear = Math.hypot(leg.x - pt.x, leg.z - pt.z) - pt.hw - leg.radius;
+            if (edgeClear < minLateralClearance) {
+              minLateralClearance = edgeClear;
+            }
+            if (edgeClear < minReqClear) {
+              errors.push(
+                `Kaki pelangi '${p.id}' terlalu dekat lintasan (${edgeClear.toFixed(1)} m < ${minReqClear} m).`,
+              );
+              break;
+            }
+            if ((pt.isJumpZone || pt.isGateZone) && edgeClear < minReqClear + 4) {
+              blockedJumpOrGateCount++;
+              errors.push(
+                `Kaki pelangi '${p.id}' mengganggu zona pendaratan lompatan atau gerbang pintas.`,
+              );
+              break;
+            }
+          }
+        }
+
+        // Verify overhead arch height over track corridors
+        const rRight = new THREE.Vector3(p.right.x, 0, p.right.z).normalize();
+        const rFwd = new THREE.Vector3(-rRight.z, 0, rRight.x).normalize();
+        const innerR = Math.max(10, p.halfSpan - 4.8);
+        const innerH = Math.max(10, p.position.y - 4.8);
+        for (const pt of routePts) {
+          const dx = pt.x - p.position.x;
+          const dz = pt.z - p.position.z;
+          const alongFwd = Math.abs(dx * rFwd.x + dz * rFwd.z);
+          if (alongFwd > pt.hw + 3) continue;
+          const alongRight = Math.abs(dx * rRight.x + dz * rRight.z);
+          if (alongRight >= innerR) continue;
+          const u = Math.min(1, alongRight / innerR);
+          const archBottomY = innerH * Math.sqrt(Math.max(0, 1 - u * u));
+          const vertGap = archBottomY - pt.y;
+          if (vertGap < minOverTrackClearance) {
+            minOverTrackClearance = vertGap;
+          }
+          if (vertGap < minOverReqClear) {
+            errors.push(
+              `Lengkungan pelangi '${p.id}' melintas terlalu rendah (${vertGap.toFixed(1)} m < ${minOverReqClear} m).`,
+            );
+            break;
+          }
+        }
+        continue;
+      }
+
+      for (const pt of routePts) {
+        const edgeClear = Math.hypot(p.position.x - pt.x, p.position.z - pt.z) - pt.hw - p.footprintRadius;
+        const vertClear = Math.abs(p.position.y - pt.y) - p.halfHeight;
+        if (edgeClear < minReqClear) {
+          if (p.isOverhead) {
+            if (vertClear < minOverTrackClearance) {
+              minOverTrackClearance = vertClear;
+            }
+            if (vertClear < minOverReqClear) {
+              errors.push(
+                `Dekor '${p.id}' melintas terlalu rendah di atas lintasan (${vertClear.toFixed(1)} m < ${minOverReqClear} m).`,
+              );
+              break;
+            }
+          } else {
+            if (edgeClear < minLateralClearance) {
+              minLateralClearance = edgeClear;
+            }
+            errors.push(
+              `Dekor '${p.id}' (${p.spec.type}) melanggar jarak aman lintasan (${edgeClear.toFixed(1)} m < ${minReqClear} m).`,
+            );
+            break;
+          }
+        } else {
+          if (edgeClear < minLateralClearance) {
+            minLateralClearance = edgeClear;
+          }
+          if (!p.isOverhead && (pt.isJumpZone || pt.isGateZone) && edgeClear < minReqClear) {
+            blockedJumpOrGateCount++;
+            errors.push(
+              `Dekor '${p.id}' menghalangi zona pendaratan lompatan atau gerbang pintas.`,
+            );
+            break;
+          }
+        }
+      }
+    }
+
+    for (const est of decorBudgets) {
+      if (!est.withinBudget) {
+        warnings.push(
+          `Anggaran dekor FantasyLand tier '${est.tier}' melebihi batas: drawCalls=${est.drawCalls}/${est.budgetDrawCalls}, tris=${est.triangles}/${est.budgetTriangles}.`,
+        );
+      }
+    }
+
+    decorReport = {
+      checked: true,
+      placementCount: decorPlan.placements.length,
+      minLateralClearanceM: Number.isFinite(minLateralClearance)
+        ? Number(minLateralClearance.toFixed(2))
+        : null,
+      minOverTrackClearanceM: Number.isFinite(minOverTrackClearance)
+        ? Number(minOverTrackClearance.toFixed(2))
+        : null,
+      rainbowApexAboveTrackM: rainbowApexAboveTrack,
+      blockedJumpOrGateCount,
+      budgets: decorBudgets,
+      ok: errors.length === decorErrorsBefore && blockedJumpOrGateCount === 0,
+    };
+  }
+
   return {
     ok: errors.length === 0,
     closed: isClosed,
@@ -1186,6 +1389,7 @@ export function validateCourse(
     })),
     zones,
     branches: branchResults,
+    decor: decorReport,
     railHits,
     stuckEvents,
     falls,

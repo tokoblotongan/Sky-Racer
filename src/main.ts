@@ -702,10 +702,12 @@ export async function bootstrap(): Promise<void> {
   let zoneStarts = course.getZoneStarts();
   const enteredZonesInLap = new Set<number>();
   let lastZoneLap = raceState.currentLap;
+  let shownStartBannerInLap = false;
 
   function resetZoneTracking(): void {
     enteredZonesInLap.clear();
     lastZoneLap = raceState.currentLap;
+    shownStartBannerInLap = false;
     hideZoneToast(hud);
   }
 
@@ -1289,14 +1291,23 @@ export async function bootstrap(): Promise<void> {
     if (
       raceState.phase === 'RACING' &&
       currState.routeId === 'main' &&
-      zoneStarts.length > 0 &&
       !wrongWayActive
     ) {
       if (raceState.currentLap !== lastZoneLap) {
         enteredZonesInLap.clear();
+        shownStartBannerInLap = false;
         lastZoneLap = raceState.currentLap;
       }
       const wrappedZoneS = isClosedCourse ? course.wrapDistance(activeZoneS) : activeZoneS;
+      if (
+        !shownStartBannerInLap &&
+        course.getId() === 'fantasy-land' &&
+        wrappedZoneS >= CONFIG.fantasy.zoneStartBanner.startS &&
+        wrappedZoneS <= CONFIG.fantasy.zoneStartBanner.endS
+      ) {
+        shownStartBannerInLap = true;
+        showZoneToast(hud, CONFIG.fantasy.zoneStartBanner.title);
+      }
       for (let zi = 0; zi < zoneStarts.length; zi++) {
         if (enteredZonesInLap.has(zi)) continue;
         const zone = zoneStarts[zi];

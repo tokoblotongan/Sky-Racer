@@ -215,6 +215,7 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
 
   const root = new THREE.Group();
   root.name = `PlayerCar_${designId}`;
+  root.scale.setScalar(cfg.visualScale);
 
   const sprungBody = new THREE.Group();
   root.add(sprungBody);

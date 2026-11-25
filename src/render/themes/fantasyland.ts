@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CONFIG, type VisualPresetName } from '../../config';
 import type { Course } from '../../core/course';
+import { createFantasyDecorManager } from '../fantasy/decorManager';
 import type { QualityLevel } from '../quality';
 import type { ThemeInstance, ThemeLightingConfig, ThemeSkyColors, WorldTheme } from './index';
 
@@ -334,7 +335,6 @@ export const fantasyLandTheme: WorldTheme = {
     // 3. Spatial Track Clearance Grid (avoid touching track, rails & start view)
     // ---------------------------------------------------------------------
     const allRoutes = course.getAllRoutes();
-    const samples = course.getSamples();
     const clearanceCell = 12;
     const trackClearRadius = 18;
     const trackGrid = new Map<string, Array<{ x: number; y: number; z: number; hw: number }>>();
@@ -360,12 +360,17 @@ export const fantasyLandTheme: WorldTheme = {
       }
     }
 
+    const decorManager = createFantasyDecorManager(course, quality, maxAnisotropy);
+    group.add(decorManager.group);
+
     const startSlot = course.getGridSlots(1)[0];
     const startFrame = course.getFrameAt(startSlot.s);
     const startCamAreaX = startFrame.position.x;
     const startCamAreaZ = startFrame.position.z;
 
-    const placedCircles: Array<{ x: number; z: number; r: number }> = [];
+    const placedCircles: Array<{ x: number; z: number; r: number }> = [
+      ...decorManager.getExclusionCircles(),
+    ];
 
     const isClearOfTrack = (x: number, z: number, radius: number): boolean => {
       if (Math.hypot(x - cx, z - cz) > islandRadius - radius - 8) {
@@ -649,100 +654,55 @@ export const fantasyLandTheme: WorldTheme = {
       group.add(trunkInst, canopyInst);
     }
 
-    const flagCount = Math.max(4, Math.round(18 * densityScale));
-    const flagSpots: Array<{ x: number; z: number; scale: number; yaw: number; color: string }> = [];
-    const flagPalette = ['#FF2D3D', '#FFD000', '#00E5FF', '#0A5CFF', '#FF5A00'];
-
-    for (let attempt = 0; attempt < flagCount * 35 && flagSpots.length < flagCount; attempt++) {
-      const sample = samples[Math.floor(rand() * samples.length)];
-      if (sample.isGap) continue;
-      const side = rand() > 0.5 ? 1 : -1;
-      const lateralOffset = sample.width * 0.5 + 14 + rand() * 14;
-      const x = sample.position.x + sample.right.x * side * lateralOffset;
-      const z = sample.position.z + sample.right.z * side * lateralOffset;
-      const scale = 0.9 + rand() * 0.35;
-      if (!isClearOfTrack(x, z, 2.8 * scale)) continue;
-      placedCircles.push({ x, z, r: 2.8 * scale });
-      flagSpots.push({
-        x,
-        z,
-        scale,
-        yaw: rand() * Math.PI * 2,
-        color: flagPalette[flagSpots.length % flagPalette.length],
-      });
-    }
-
-    if (flagSpots.length > 0) {
-      const poleCylinder = new THREE.CylinderGeometry(0.18, 0.24, 9.5, 10);
-      poleCylinder.translate(0, 4.75, 0);
-      const baseCone = new THREE.CylinderGeometry(0.55, 0.75, 0.7, 12);
-      baseCone.translate(0, 0.35, 0);
-      const finial = new THREE.SphereGeometry(0.32, 10, 8);
-      finial.translate(0, 9.65, 0);
-      const poleGeom = trackGeom(mergeWithCleanup([poleCylinder, baseCone, finial]));
-      const poleMat = trackMat(
-        new THREE.MeshStandardMaterial({
-          color: '#E2E8F0',
-          roughness: 0.28,
-          metalness: 0.72,
-        }),
-      );
-
-      const bannerShape = new THREE.Shape();
-      bannerShape.moveTo(0, 0);
-      bannerShape.lineTo(3.4, -0.75);
-      bannerShape.lineTo(0, -1.55);
-      bannerShape.closePath();
-      const bannerGeom = trackGeom(
-        new THREE.ExtrudeGeometry(bannerShape, {
-          depth: 0.08,
-          bevelEnabled: false,
-        }),
-      );
-      bannerGeom.translate(0.16, 9.2, -0.04);
-      const bannerMat = trackMat(
-        new THREE.MeshStandardMaterial({
-          color: 0xffffff,
-          roughness: 0.42,
-          metalness: 0.05,
-        }),
-      );
-
-      const poleInst = new THREE.InstancedMesh(poleGeom, poleMat, flagSpots.length);
-      const bannerInst = new THREE.InstancedMesh(bannerGeom, bannerMat, flagSpots.length);
-      poleInst.castShadow = shadowsEnabled;
-      bannerInst.castShadow = shadowsEnabled;
-
+    // ---------------------------------------------------------------------
+    // 6b. Distant Horizon Mountain Ridges (crisp multi-layered backdrop)
+    // ---------------------------------------------------------------------
+    const mountainCount = Math.max(8, Math.round(24 * densityScale));
+    const mountainGeom = trackGeom(new THREE.ConeGeometry(1, 1, 6));
+    mountainGeom.translate(0, 0.5, 0);
+    const mountainMat = trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.88,
+        metalness: 0.0,
+      }),
+    );
+    const mountainInst = new THREE.InstancedMesh(mountainGeom, mountainMat, mountainCount);
+    mountainInst.castShadow = false;
+    mountainInst.receiveShadow = false;
+    {
       const mtx = new THREE.Matrix4();
       const pos = new THREE.Vector3();
       const quat = new THREE.Quaternion();
       const scl = new THREE.Vector3();
       const upAxis = new THREE.Vector3(0, 1, 0);
       const color = new THREE.Color();
+      const mPalette = CONFIG.fantasy.palette.mountainColors;
 
-      flagSpots.forEach((f, i) => {
-        pos.set(f.x, 0, f.z);
-        quat.setFromAxisAngle(upAxis, f.yaw);
-        scl.set(f.scale, f.scale, f.scale);
+      for (let i = 0; i < mountainCount; i++) {
+        const ang = (i / mountainCount) * Math.PI * 2 + (rand() - 0.5) * 0.14;
+        const ringDist = waterRadius - 32 + (i % 2) * 24 + rand() * 18;
+        const mx = cx + Math.cos(ang) * ringDist;
+        const mz = cz + Math.sin(ang) * ringDist;
+        const rad = 55 + rand() * 48;
+        const h = 48 + (i % 3) * 26 + rand() * 28;
+        pos.set(mx, -3.0, mz);
+        quat.setFromAxisAngle(upAxis, rand() * Math.PI * 2);
+        scl.set(rad, h, rad * (0.75 + rand() * 0.4));
         mtx.compose(pos, quat, scl);
-        poleInst.setMatrixAt(i, mtx);
-        bannerInst.setMatrixAt(i, mtx);
-        color.set(f.color);
-        bannerInst.setColorAt(i, color);
-      });
-
-      poleInst.instanceMatrix.needsUpdate = true;
-      poleInst.computeBoundingSphere();
-      bannerInst.instanceMatrix.needsUpdate = true;
-      if (bannerInst.instanceColor) bannerInst.instanceColor.needsUpdate = true;
-      bannerInst.computeBoundingSphere();
-      freezeStatic(poleInst);
-      freezeStatic(bannerInst);
-      group.add(poleInst, bannerInst);
+        mountainInst.setMatrixAt(i, mtx);
+        color.set(mPalette[i % mPalette.length]);
+        mountainInst.setColorAt(i, color);
+      }
+      mountainInst.instanceMatrix.needsUpdate = true;
+      if (mountainInst.instanceColor) mountainInst.instanceColor.needsUpdate = true;
+      mountainInst.computeBoundingSphere();
+      freezeStatic(mountainInst);
+      group.add(mountainInst);
     }
 
     // ---------------------------------------------------------------------
-    // 7. Drifting Procedural Clouds + Warm Sun Orb
+    // 7. Multi-Tier Drifting Procedural Clouds + Warm Sun Orb
     // ---------------------------------------------------------------------
     const cloudTex = trackTex(createCloudTexture());
     const cloudMat = trackMat(
@@ -756,16 +716,30 @@ export const fantasyLandTheme: WorldTheme = {
       }),
     );
     const cloudGeom = trackGeom(new THREE.PlaneGeometry(54, 27));
-    const cloudCount = Math.max(4, Math.round(14 * cloudDensityScale));
+    const cloudCount = Math.max(6, Math.round(20 * cloudDensityScale));
     const clouds: CloudDriftItem[] = [];
-    const cloudSpan = islandRadius * 1.45;
+    const cloudSpan = islandRadius * 1.55;
 
     for (let i = 0; i < cloudCount; i++) {
       const cloudMesh = new THREE.Mesh(cloudGeom, cloudMat);
-      const baseX = cx + (rand() - 0.5) * cloudSpan * 2;
-      const baseY = 108 + rand() * 58;
-      const baseZ = cz + (rand() - 0.5) * cloudSpan * 2;
-      const scale = 0.8 + rand() * 0.9;
+      const isHorizonTier = i % 3 === 0;
+      let baseX: number;
+      let baseY: number;
+      let baseZ: number;
+      let scale: number;
+      if (isHorizonTier) {
+        const ang = (i / cloudCount) * Math.PI * 2 + rand() * 0.35;
+        const rDist = islandRadius + 65 + rand() * 90;
+        baseX = cx + Math.cos(ang) * rDist;
+        baseY = 58 + rand() * 34;
+        baseZ = cz + Math.sin(ang) * rDist;
+        scale = 1.25 + rand() * 0.9;
+      } else {
+        baseX = cx + (rand() - 0.5) * cloudSpan * 2;
+        baseY = 112 + rand() * 64;
+        baseZ = cz + (rand() - 0.5) * cloudSpan * 2;
+        scale = 0.85 + rand() * 0.95;
+      }
       cloudMesh.position.set(baseX, baseY, baseZ);
       cloudMesh.scale.setScalar(scale);
       cloudMesh.renderOrder = -10;
@@ -775,7 +749,7 @@ export const fantasyLandTheme: WorldTheme = {
         baseX,
         baseY,
         baseZ,
-        speed: 2.2 + rand() * 2.4,
+        speed: isHorizonTier ? 1.2 + rand() * 1.4 : 2.2 + rand() * 2.4,
         span: cloudSpan,
         phase: rand() * Math.PI * 2,
       });
@@ -815,6 +789,7 @@ export const fantasyLandTheme: WorldTheme = {
       waterTex.offset.x = (waterTex.offset.x + dt * 0.04) % 1;
       waterTex.offset.y = (waterTex.offset.y + dt * 0.025) % 1;
 
+      decorManager.update(cameraPos, dt);
       sunMesh.lookAt(cameraPos);
 
       for (let i = 0; i < clouds.length; i++) {
@@ -837,6 +812,7 @@ export const fantasyLandTheme: WorldTheme = {
     }
 
     function dispose(): void {
+      decorManager.dispose();
       for (const g of geometries) g.dispose();
       for (const t of textures) t.dispose();
       for (const m of materials) m.dispose();

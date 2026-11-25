@@ -123,6 +123,16 @@ function main(): void {
     ]);
   }
 
+  if (report.decor && report.decor.checked) {
+    const budgetOk = report.decor.budgets.every((b) => b.withinBudget);
+    const highBudget = report.decor.budgets.find((b) => b.tier === 'high');
+    rows.push([
+      'Dekor FantasyLand',
+      report.decor.ok ? (budgetOk ? 'OK' : 'WARN') : 'FAIL',
+      `objek=${report.decor.placementCount}, minLat=${report.decor.minLateralClearanceM !== null ? `${report.decor.minLateralClearanceM.toFixed(1)}m` : 'n/a'}, minAtas=${report.decor.minOverTrackClearanceM !== null ? `${report.decor.minOverTrackClearanceM.toFixed(1)}m` : 'n/a'}, pelangi=${report.decor.rainbowApexAboveTrackM !== null ? `${report.decor.rainbowApexAboveTrackM.toFixed(1)}m` : 'n/a'}, high=${highBudget ? `${highBudget.drawCalls}dc/${highBudget.triangles}tris` : 'n/a'}`,
+    ]);
+  }
+
   console.log('');
   console.log(
     `=== VALIDASI LINTASAN: ${courseDef.name} (${courseDef.id}) [${report.closed ? `TERTUTUP ${report.laps} LAP` : 'SATU ARAH'}] ===`,
@@ -139,6 +149,16 @@ function main(): void {
     console.log(
       `Waktu Per Lap  : ${report.lapTimes.map((t, idx) => `Lap ${idx + 1}: ${t.toFixed(2)}s`).join(' | ')}${report.bestLap !== null ? ` (Best: ${report.bestLap.toFixed(2)}s)` : ''}`,
     );
+  }
+
+  if (report.decor && report.decor.checked) {
+    console.log('');
+    console.log('Anggaran Dekor FantasyLand (per level kualitas):');
+    for (const b of report.decor.budgets) {
+      console.log(
+        `  - ${b.tier.padEnd(6)} | drawCalls=${String(b.drawCalls).padStart(3)}/${b.budgetDrawCalls} | triangles=${String(b.triangles).padStart(6)}/${b.budgetTriangles} | ${b.withinBudget ? 'OK' : 'WARN'}`,
+      );
+    }
   }
 
   if (report.branches.length > 0) {
