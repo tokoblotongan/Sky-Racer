@@ -71,6 +71,29 @@ export const CONFIG = {
     courseFrameStepMeters: 8,
     courseFrameArrowLength: 2.6,
   },
+  visual: {
+    exposure: 0.9, // eksposur ACES renderer (naik = adegan lebih terang, turun = warna lebih pekat & bayangan lebih dalam)
+    skyTop: '#4DB3FF', // warna biru puncak kubah langit (naik kecerahan = langit lebih pucat, turun = biru langit lebih pekat)
+    skyHorizon: '#BFE3FF', // warna biru terang di garis horizon langit (naik = horizon lebih cerah, turun = transisi ke kabut lebih gelap)
+    fogColor: '#A9D8F5', // warna kabut jauh sedikit lebih biru & gelap dari horizon (naik = kabut lebih pucat, turun = siluet jauh lebih gelap)
+    fogType: 'linear' as 'linear' | 'exp2', // mode kabut linear agar area bermain dekat tetap bersih bebas kabut
+    fogNear: 90, // jarak mulai kabut dalam meter di luar jarak kamera ke lintasan (naik = area bebas kabut makin jauh, turun = kabut mulai mendekat)
+    fogFar: 420, // jarak kabut penuh dalam meter di batas ruangan (naik = dinding jauh lebih terlihat, turun = cepat memudar)
+    hemisphereIntensity: 0.55, // intensitas cahaya pantulan langit-lantai (naik = sisi gelap objek lebih terang/datar, turun = kontras bayangan lebih kuat)
+    hemisphereSkyColor: '#BFE3FF', // warna cahaya langit hemisphere dari atas
+    hemisphereGroundColor: '#8B5A2B', // warna pantulan kayu hangat dari bawah (naik kecerahan = bagian bawah objek lebih terang)
+    envIntensity: 0.5, // intensitas environment map global pada material reflektif (naik = pantulan lingkungan lebih kuat, turun = warna asli material lebih dominan)
+    sunIntensity: 2.8, // intensitas matahari utama (naik = sorotan & kontras cahaya-bayangan lebih kuat, turun = pencahayaan lebih redup)
+    sunColor: '#FFE2B8', // warna cahaya matahari hangat
+    trackEnvIntensity: 0.35, // intensitas pantulan lingkungan pada aspal & pagar lintasan (naik = kilau lingkungan makin kuat/berisiko pucat, turun = warna oranye & biru makin jenuh)
+    trackClearcoatRoughness: 0.2, // kekasaran lapisan clearcoat lintasan & pagar (naik = pantulan lebih tersebar tanpa bercak susu, turun = kilau cermin makin tajam)
+    grade: {
+      saturation: 1.12, // pengali kejenuhan warna akhir (naik = warna makin menyala, turun = makin kalem)
+      contrast: 1.08, // pengali kontras akhir di sekitar mid-gray (naik = gelap-terang makin tegas, turun = lebih lembut)
+      vignette: 0.18, // penggelapan halus di tepi layar (naik = bingkai tepi makin gelap, turun = merata ke sudut)
+    },
+    debugKeys: true, // aktifkan tombol uji visual F3 (fog), F4 (bloom), [ dan ] (exposure)
+  },
   colors: {
     track: '#FF6A00',
     trackEdge: '#FF963D',
@@ -80,18 +103,18 @@ export const CONFIG = {
     railHighlight: '#5594FF',
     boost: '#35D4FF',
     boostStripeLight: '#E0FAFF',
-    skyTop: '#89C7FF',
+    skyTop: '#4DB3FF',
     skyHorizon: '#BFE3FF',
-    skyFogHex: 0xbfe3ff,
+    skyFogHex: 0xa9d8f5,
     accent: '#FFD23F',
     jumpStripeDark: '#1E293B',
-    sunLightHex: 0xfff0d4,
+    sunLightHex: 0xffe2b8,
     hemiSkyHex: 0xbfe3ff,
-    hemiGroundHex: 0xd9b892,
-    woodBase: '#D9B384',
-    woodPlankAlt: '#CFA675',
-    woodGrain: '#BC8E5B',
-    woodSeam: '#9E7344',
+    hemiGroundHex: 0x8b5a2b,
+    woodBase: '#B9783A',
+    woodPlankAlt: '#A36530',
+    woodGrain: '#7E471E',
+    woodSeam: '#5D3112',
     debugCenterLineHex: 0xffd23f,
     debugTangentHex: 0x35d4ff,
     debugUpHex: 0x22c55e,
@@ -99,15 +122,15 @@ export const CONFIG = {
   },
   renderer: {
     maxPixelRatio: 2,
-    toneMappingExposure: 1.04,
+    toneMappingExposure: 0.9,
     envBlur: 0.04,
-    envIntensity: 0.78,
+    envIntensity: 0.5,
     shadowMapSize: 2048,
     softwareGlFramePauseMs: 80,
     softwareGlPollMs: 5,
   },
   lighting: {
-    sunIntensity: 2.5,
+    sunIntensity: 2.8,
     sunOffset: { x: 95, y: 140, z: 80 },
     sunShadowExtent: 90,
     sunShadowNear: 10,
@@ -115,7 +138,7 @@ export const CONFIG = {
     sunShadowBias: -0.0004,
     sunShadowNormalBias: 0.04,
     sunShadowRadius: 3,
-    hemiIntensity: 0.85,
+    hemiIntensity: 0.55,
     fogDensity: 0.0011,
   },
   camera: {
@@ -171,7 +194,7 @@ export const CONFIG = {
     size: 680,
     textureSize: 512,
     textureRepeat: 54,
-    roughness: 0.72,
+    roughness: 0.5, // kekasaran lantai kayu agar ada kilau lembut (naik = makin matte, turun = makin mengilap)
     metalness: 0.02,
   },
   props: {
@@ -181,39 +204,52 @@ export const CONFIG = {
     supportSpacing: 22,
     supportLandingExclusion: 22,
     shadowDistance: 145,
+    wallColor: '#8FD8D0', // warna dinding depan & belakang mint jenuh sedang (naik kecerahan = makin pucat, turun = makin teduh)
+    sideWallColor: '#7FC4F0', // warna dinding samping biru pastel jenuh sedang (naik kecerahan = makin pucat, turun = makin pekat)
+    baseboardColor: '#B59670', // warna plint dinding krem hangat gelap agar memisah dari dinding & lantai
+    floorColor: {
+      light: '#B9783A', // warna papan kayu hangat terang (naik = lantai lebih cerah, turun = lebih gelap)
+      mid: '#A36530', // warna papan kayu hangat sedang
+      dark: '#8E5427', // warna papan & serat kayu gelap (turun = kontras serat makin tajam)
+    },
     roomSize: {
       width: 520,
       depth: 520,
       height: 175,
     },
     palette: {
-      wallBase: '#EBE3D5',
-      wallStripe: '#E2D8C5',
-      baseboard: '#C7A67E',
-      windowFrame: '#F4EFE6',
-      windowSky: '#E6F2FF',
-      sunbeamColor: '#FFF0C8',
-      rugBase: '#D9CFC1',
-      rugBorder: '#A9BAC6',
-      rugPattern: '#C8B29B',
-      woodLight: '#D4B288',
-      woodDark: '#B99164',
-      pastelBlue: '#9BB5C9',
-      pastelMint: '#A7C2B1',
-      pastelRose: '#CFA39D',
-      pastelSand: '#DCC79E',
-      pastelLavender: '#B9AECB',
-      pastelSlate: '#8D9AA6',
-      paperCream: '#F4EFE4',
-      lampMetal: '#9BA4AD',
-      lampShade: '#E8DEC8',
+      wallBase: '#8FD8D0',
+      wallStripe: '#7CC6BE',
+      sideWallBase: '#7FC4F0',
+      sideWallStripe: '#6FB4E0',
+      baseboard: '#B59670',
+      windowFrame: '#C9C2B6',
+      windowSky: '#7CC6F8',
+      sunbeamColor: '#FFE8B8',
+      rugBase: '#C2B39C',
+      rugBorder: '#79A0BA',
+      rugPattern: '#A18264',
+      woodLight: '#C28A54',
+      woodDark: '#8E582C',
+      pastelBlue: '#6CA6CC',
+      pastelMint: '#76B898',
+      pastelRose: '#CC7F78',
+      pastelSand: '#CEAC6B',
+      pastelLavender: '#9B8CC2',
+      pastelSlate: '#6C7F91',
+      paperCream: '#CFC8BC',
+      lampMetal: '#7E8A96',
+      lampShade: '#C8BFA9',
     },
   },
   fx: {
     bloom: {
-      strength: 0.36,
-      radius: 0.4,
-      threshold: 1.08,
+      strength: 0.3, // kekuatan pendar bloom hanya pada elemen emissive (naik = halo makin tebal, turun = makin tipis)
+      radius: 0.4, // radius sebaran bloom (naik = sebaran lebih lebar, turun = lebih rapat)
+      threshold: 1.0, // ambang kecerahan linear sebelum bloom aktif (naik = lebih selektif hanya emissive kuat, turun = permukaan terang ikut berpendar)
+    },
+    windowShaft: {
+      opacity: 0.1, // kepekatan sinar jendela aditif di dekat kaca (naik = sinar makin terlihat, turun = lebih samar)
     },
     speedLines: {
       maxIntensity: 0.62,

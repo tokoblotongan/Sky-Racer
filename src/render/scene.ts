@@ -32,23 +32,54 @@ function detectSoftwareWebGL(): boolean {
   return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
 }
 
-function createSkyGradientTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 4;
-  canvas.height = 512;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    gradient.addColorStop(0, CONFIG.colors.skyTop);
-    gradient.addColorStop(0.62, CONFIG.colors.skyHorizon);
-    gradient.addColorStop(1, CONFIG.colors.skyHorizon);
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.needsUpdate = true;
-  return texture;
+function createSkyDome(): {
+  mesh: THREE.Mesh;
+  geometry: THREE.BufferGeometry;
+  material: THREE.ShaderMaterial;
+} {
+  const geometry = new THREE.SphereGeometry(960, 32, 24);
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uSkyTop: { value: new THREE.Color(CONFIG.visual.skyTop) },
+      uSkyHorizon: { value: new THREE.Color(CONFIG.visual.skyHorizon) },
+      uGroundBounce: { value: new THREE.Color(CONFIG.props.floorColor.dark) },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vLocalDir;
+      void main() {
+        vLocalDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uSkyTop;
+      uniform vec3 uSkyHorizon;
+      uniform vec3 uGroundBounce;
+      varying vec3 vLocalDir;
+
+      void main() {
+        float h = vLocalDir.y;
+        vec3 color;
+        if (h >= 0.0) {
+          float t = smoothstep(0.0, 0.55, h);
+          color = mix(uSkyHorizon, uSkyTop, pow(t, 0.78));
+        } else {
+          float g = smoothstep(0.0, 0.28, -h);
+          color = mix(uSkyHorizon, uGroundBounce * 0.85, g);
+        }
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `,
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+  });
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'SkyDome';
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -1000;
+  return { mesh, geometry, material };
 }
 
 function createWoodFloorTextures(maxAnisotropy: number): {
@@ -56,6 +87,7 @@ function createWoodFloorTextures(maxAnisotropy: number): {
   roughnessMap: THREE.CanvasTexture;
 } {
   const size = CONFIG.floor.textureSize;
+  const fc = CONFIG.props.floorColor;
 
   const colorCanvas = document.createElement('canvas');
   colorCanvas.width = size;
@@ -69,33 +101,39 @@ function createWoodFloorTextures(maxAnisotropy: number): {
 
   const plankCount = 8;
   const plankHeight = size / plankCount;
+  const plankShades = [fc.light, fc.mid, fc.dark, fc.mid];
 
   if (cCtx && rCtx) {
     for (let row = 0; row < plankCount; row++) {
       const y = row * plankHeight;
-      const isAlt = row % 2 === 1;
-      cCtx.fillStyle = isAlt ? CONFIG.colors.woodPlankAlt : CONFIG.colors.woodBase;
+      const baseColor = plankShades[row % plankShades.length];
+      cCtx.fillStyle = baseColor;
       cCtx.fillRect(0, y, size, plankHeight);
 
-      const roughBase = isAlt ? 195 : 175;
+      // Subtle warm highlight band near top of each plank for board depth
+      cCtx.fillStyle = 'rgba(255, 224, 180, 0.08)';
+      cCtx.fillRect(0, y + 2, size, 4);
+
+      const roughBase = 216 + (row % 3) * 12;
       rCtx.fillStyle = `rgb(${roughBase},${roughBase},${roughBase})`;
       rCtx.fillRect(0, y, size, plankHeight);
 
-      for (let g = 0; g < 26; g++) {
-        const gy = y + 3 + ((g * 7 + row * 11) % (plankHeight - 6));
-        cCtx.strokeStyle = CONFIG.colors.woodGrain;
-        cCtx.globalAlpha = 0.14 + (g % 3) * 0.05;
-        cCtx.lineWidth = 1 + (g % 2);
+      // Rich wood grain fibers with higher contrast
+      for (let g = 0; g < 32; g++) {
+        const gy = y + 3 + ((g * 6 + row * 11) % (plankHeight - 6));
+        cCtx.strokeStyle = g % 3 === 0 ? fc.light : CONFIG.colors.woodGrain;
+        cCtx.globalAlpha = g % 3 === 0 ? 0.18 : 0.26 + (g % 3) * 0.08;
+        cCtx.lineWidth = 1 + (g % 2) * 0.75;
         cCtx.beginPath();
         cCtx.moveTo(0, gy);
         for (let x = 0; x <= size; x += 32) {
-          const wave = Math.sin((x / size) * Math.PI * 4 + row * 1.3 + g * 0.7) * 2.2;
+          const wave = Math.sin((x / size) * Math.PI * 4 + row * 1.3 + g * 0.7) * 2.4;
           cCtx.lineTo(x, gy + wave);
         }
         cCtx.stroke();
 
-        rCtx.strokeStyle = `rgb(${roughBase + 25},${roughBase + 25},${roughBase + 25})`;
-        rCtx.globalAlpha = 0.2;
+        rCtx.strokeStyle = `rgb(${Math.min(255, roughBase + 22)},${Math.min(255, roughBase + 22)},${Math.min(255, roughBase + 22)})`;
+        rCtx.globalAlpha = 0.24;
         rCtx.lineWidth = 1;
         rCtx.beginPath();
         rCtx.moveTo(0, gy);
@@ -106,18 +144,19 @@ function createWoodFloorTextures(maxAnisotropy: number): {
       cCtx.globalAlpha = 1;
       rCtx.globalAlpha = 1;
 
+      // Crisp plank seam & end joint
       cCtx.fillStyle = CONFIG.colors.woodSeam;
-      cCtx.globalAlpha = 0.55;
-      cCtx.fillRect(0, y, size, 2);
+      cCtx.globalAlpha = 0.85;
+      cCtx.fillRect(0, y, size, 2.5);
       cCtx.globalAlpha = 1;
 
-      rCtx.fillStyle = 'rgb(235,235,235)';
-      rCtx.fillRect(0, y, size, 2);
+      rCtx.fillStyle = 'rgb(255,255,255)';
+      rCtx.fillRect(0, y, size, 2.5);
 
       const jointX = ((row * 197 + 90) % (size - 40)) + 20;
       cCtx.fillStyle = CONFIG.colors.woodSeam;
-      cCtx.globalAlpha = 0.45;
-      cCtx.fillRect(jointX, y, 2, plankHeight);
+      cCtx.globalAlpha = 0.75;
+      cCtx.fillRect(jointX, y, 2.5, plankHeight);
       cCtx.globalAlpha = 1;
     }
   }
@@ -166,6 +205,7 @@ function disposeObjectResources(root: THREE.Object3D): void {
 
 export function createSceneContext(container: HTMLElement): SceneContext {
   const isSoftwareGl = detectSoftwareWebGL();
+  const vis = CONFIG.visual;
 
   const renderer = new THREE.WebGLRenderer({
     antialias: !isSoftwareGl,
@@ -173,7 +213,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = CONFIG.renderer.toneMappingExposure;
+  renderer.toneMappingExposure = vis.exposure;
   renderer.setPixelRatio(
     isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, CONFIG.renderer.maxPixelRatio),
   );
@@ -186,15 +226,22 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const skyTexture = createSkyGradientTexture();
-  scene.background = skyTexture;
-  scene.fog = new THREE.FogExp2(CONFIG.colors.skyFogHex, CONFIG.lighting.fogDensity);
+  scene.background = new THREE.Color(vis.skyHorizon);
+
+  const skyDome = createSkyDome();
+  scene.add(skyDome.mesh);
+
+  const activeFog: THREE.Fog | THREE.FogExp2 =
+    vis.fogType === 'linear'
+      ? new THREE.Fog(vis.fogColor, vis.fogNear, vis.fogFar)
+      : new THREE.FogExp2(vis.fogColor, CONFIG.lighting.fogDensity);
+  scene.fog = activeFog;
 
   const pmremGenerator = new THREE.PMREMGenerator(renderer);
   const roomEnvironment = new RoomEnvironment();
   const envRenderTarget = pmremGenerator.fromScene(roomEnvironment, CONFIG.renderer.envBlur);
   scene.environment = envRenderTarget.texture;
-  scene.environmentIntensity = CONFIG.renderer.envIntensity;
+  scene.environmentIntensity = vis.envIntensity;
   roomEnvironment.dispose();
   pmremGenerator.dispose();
 
@@ -223,10 +270,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   let currentShadowMapSize: number = CONFIG.renderer.shadowMapSize;
   let currentShadowFollowRadius: number = CONFIG.lighting.sunShadowExtent;
 
-  const sunLight = new THREE.DirectionalLight(
-    CONFIG.colors.sunLightHex,
-    CONFIG.lighting.sunIntensity,
-  );
+  const sunLight = new THREE.DirectionalLight(vis.sunColor, vis.sunIntensity);
   sunLight.position.copy(sunOffsetVec);
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(currentShadowMapSize, currentShadowMapSize);
@@ -243,9 +287,9 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   scene.add(sunLight.target);
 
   const hemiLight = new THREE.HemisphereLight(
-    CONFIG.colors.hemiSkyHex,
-    CONFIG.colors.hemiGroundHex,
-    CONFIG.lighting.hemiIntensity,
+    vis.hemisphereSkyColor,
+    vis.hemisphereGroundColor,
+    vis.hemisphereIntensity,
   );
   hemiLight.position.set(0, 120, 0);
   scene.add(hemiLight);
@@ -265,6 +309,75 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   const floorMesh = new THREE.Mesh(floorGeometry, floorMaterial);
   floorMesh.receiveShadow = true;
   scene.add(floorMesh);
+
+  // Visual debug keys (F3 fog, F4 bloom, [ / ] exposure) & compact bottom-center status badge
+  let fogEnabled = true;
+  let bloomDebugEnabled = true;
+  let currentExposure: number = vis.exposure;
+  scene.userData.visualDebugBloomEnabled = bloomDebugEnabled;
+
+  let debugPanel: HTMLDivElement | null = null;
+  const updateVisualDebugOverlay = (): void => {
+    if (!debugPanel) return;
+    const fogLabel = fogEnabled ? `ON (${vis.fogNear}-${vis.fogFar}m)` : 'OFF';
+    const bloomLabel = bloomDebugEnabled ? 'ON' : 'OFF';
+    debugPanel.textContent =
+      `FOG [F3]: ${fogLabel} | BLOOM [F4]: ${bloomLabel} | EXP [[ / ]]: ${currentExposure.toFixed(2)}`;
+  };
+
+  const handleDebugKeyDown = (event: KeyboardEvent): void => {
+    if (!vis.debugKeys) return;
+    if (event.code === 'F3') {
+      event.preventDefault();
+      fogEnabled = !fogEnabled;
+      scene.fog = fogEnabled ? activeFog : null;
+      updateVisualDebugOverlay();
+    } else if (event.code === 'F4') {
+      event.preventDefault();
+      bloomDebugEnabled = !bloomDebugEnabled;
+      scene.userData.visualDebugBloomEnabled = bloomDebugEnabled;
+      updateVisualDebugOverlay();
+    } else if (event.code === 'BracketLeft') {
+      currentExposure = THREE.MathUtils.clamp(
+        Math.round((currentExposure - 0.05) * 100) / 100,
+        0.2,
+        2.5,
+      );
+      renderer.toneMappingExposure = currentExposure;
+      updateVisualDebugOverlay();
+    } else if (event.code === 'BracketRight') {
+      currentExposure = THREE.MathUtils.clamp(
+        Math.round((currentExposure + 0.05) * 100) / 100,
+        0.2,
+        2.5,
+      );
+      renderer.toneMappingExposure = currentExposure;
+      updateVisualDebugOverlay();
+    }
+  };
+
+  if (vis.debugKeys) {
+    debugPanel = document.createElement('div');
+    debugPanel.style.position = 'fixed';
+    debugPanel.style.bottom = '12px';
+    debugPanel.style.left = '50%';
+    debugPanel.style.transform = 'translateX(-50%)';
+    debugPanel.style.padding = '5px 10px';
+    debugPanel.style.borderRadius = '6px';
+    debugPanel.style.background = 'rgba(15, 23, 42, 0.78)';
+    debugPanel.style.color = '#FFD23F';
+    debugPanel.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+    debugPanel.style.fontSize = '11px';
+    debugPanel.style.fontWeight = '700';
+    debugPanel.style.letterSpacing = '0.03em';
+    debugPanel.style.pointerEvents = 'none';
+    debugPanel.style.userSelect = 'none';
+    debugPanel.style.whiteSpace = 'nowrap';
+    debugPanel.style.zIndex = '30';
+    container.appendChild(debugPanel);
+    updateVisualDebugOverlay();
+    window.addEventListener('keydown', handleDebugKeyDown);
+  }
 
   const orbitTarget = new THREE.Vector3(0, 6, 0);
   let orbitRadius: number = CONFIG.camera.orbitMinRadius;
@@ -296,6 +409,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     orbitHeight = height;
 
     floorMesh.position.set(target.x, 0, target.z);
+    skyDome.mesh.position.set(target.x, 0, target.z);
     updateSunShadowTarget(target);
   }
 
@@ -364,8 +478,15 @@ export function createSceneContext(container: HTMLElement): SceneContext {
 
   function dispose(): void {
     window.removeEventListener('resize', handleResize);
+    if (vis.debugKeys) {
+      window.removeEventListener('keydown', handleDebugKeyDown);
+    }
+    if (debugPanel && debugPanel.parentElement === container) {
+      container.removeChild(debugPanel);
+    }
     disposeObjectResources(scene);
-    skyTexture.dispose();
+    skyDome.geometry.dispose();
+    skyDome.material.dispose();
     envRenderTarget.dispose();
     renderer.dispose();
 

@@ -53,33 +53,61 @@ function mergeWithCleanup(geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return merged;
 }
 
-function createWallTexture(maxAnisotropy: number): THREE.CanvasTexture {
-  const size = 256;
+function createWallTexture(
+  baseHex: string,
+  stripeHex: string,
+  maxAnisotropy: number,
+): THREE.CanvasTexture {
+  const width = 512;
+  const height = 256;
   const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    ctx.fillStyle = CONFIG.props.palette.wallBase;
-    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = baseHex;
+    ctx.fillRect(0, 0, width, height);
 
-    ctx.fillStyle = CONFIG.props.palette.wallStripe;
-    const stripeCount = 4;
-    const stripeW = size / (stripeCount * 2);
+    // Subtle vertical wallpaper stripes
+    ctx.fillStyle = stripeHex;
+    ctx.globalAlpha = 0.38;
+    const stripeCount = 24;
+    const stripeW = width / (stripeCount * 2);
     for (let i = 0; i < stripeCount; i++) {
-      ctx.fillRect(i * stripeW * 2, 0, stripeW, size);
+      ctx.fillRect(i * stripeW * 2, 0, stripeW, height);
+    }
+    ctx.globalAlpha = 1;
+
+    // Subtle horizontal plaster lines (capped low-contrast, no pure white)
+    ctx.fillStyle = 'rgba(15, 42, 58, 0.045)';
+    for (let y = 0; y < height; y += 8) {
+      ctx.fillRect(0, y, width, 1);
     }
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-    for (let y = 0; y < size; y += 8) {
-      ctx.fillRect(0, y, size, 1);
-    }
+    // Bottom darkening gradient for depth above the baseboard & floor
+    const bottomGrad = ctx.createLinearGradient(0, height * 0.56, 0, height);
+    bottomGrad.addColorStop(0.0, 'rgba(12, 34, 48, 0.0)');
+    bottomGrad.addColorStop(1.0, 'rgba(12, 34, 48, 0.25)');
+    ctx.fillStyle = bottomGrad;
+    ctx.fillRect(0, height * 0.56, width, height * 0.44);
+
+    // Corner ambient darkening on left & right wall edges
+    const leftGrad = ctx.createLinearGradient(0, 0, width * 0.14, 0);
+    leftGrad.addColorStop(0.0, 'rgba(10, 28, 42, 0.24)');
+    leftGrad.addColorStop(1.0, 'rgba(10, 28, 42, 0.0)');
+    ctx.fillStyle = leftGrad;
+    ctx.fillRect(0, 0, width * 0.14, height);
+
+    const rightGrad = ctx.createLinearGradient(width * 0.86, 0, width, 0);
+    rightGrad.addColorStop(0.0, 'rgba(10, 28, 42, 0.0)');
+    rightGrad.addColorStop(1.0, 'rgba(10, 28, 42, 0.24)');
+    ctx.fillStyle = rightGrad;
+    ctx.fillRect(width * 0.86, 0, width * 0.14, height);
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(14, 4);
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.anisotropy = maxAnisotropy;
   return tex;
 }
@@ -369,43 +397,71 @@ export function buildProps(
   // =========================================================================
   // 1. Giant Room Walls + Baseboards + Sunlit Window + Sunbeams
   // =========================================================================
-  const wallTex = trackTex(createWallTexture(maxAnisotropy));
-  const wallMat = trackMat(
+  const backWallTex = trackTex(
+    createWallTexture(cfg.wallColor, pal.wallStripe, maxAnisotropy),
+  );
+  const backWallMat = trackMat(
     new THREE.MeshStandardMaterial({
-      map: wallTex,
-      roughness: 0.92,
+      map: backWallTex,
+      roughness: 0.9,
+      metalness: 0.0,
+    }),
+  );
+
+  const sideWallTex = trackTex(
+    createWallTexture(cfg.sideWallColor, pal.sideWallStripe, maxAnisotropy),
+  );
+  const sideWallMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      map: sideWallTex,
+      roughness: 0.9,
       metalness: 0.0,
     }),
   );
 
   const wallThickness = 4;
-  const wallDefs = [
+  const backFrontWallDefs = [
     { w: cfg.roomSize.width + wallThickness * 2, d: wallThickness, x: roomCenterX, z: roomCenterZ - halfD },
     { w: cfg.roomSize.width + wallThickness * 2, d: wallThickness, x: roomCenterX, z: roomCenterZ + halfD },
+  ];
+  const sideWallDefs = [
     { w: wallThickness, d: cfg.roomSize.depth, x: roomCenterX - halfW, z: roomCenterZ },
     { w: wallThickness, d: cfg.roomSize.depth, x: roomCenterX + halfW, z: roomCenterZ },
   ];
 
-  const wallGeomsToMerge: THREE.BufferGeometry[] = [];
+  const backWallGeoms: THREE.BufferGeometry[] = [];
+  const sideWallGeoms: THREE.BufferGeometry[] = [];
   const baseboardGeomsToMerge: THREE.BufferGeometry[] = [];
-  for (const wd of wallDefs) {
+
+  for (const wd of backFrontWallDefs) {
     const wg = new THREE.BoxGeometry(wd.w, roomH, wd.d);
     wg.translate(wd.x, roomH * 0.5, wd.z);
-    wallGeomsToMerge.push(wg);
+    backWallGeoms.push(wg);
 
-    const bb = new THREE.BoxGeometry(
-      wd.w - 1,
-      4.5,
-      wd.d + 1.2,
-    );
+    const bb = new THREE.BoxGeometry(wd.w - 1, 4.5, wd.d + 1.2);
     bb.translate(wd.x, 2.25, wd.z);
     baseboardGeomsToMerge.push(bb);
   }
 
-  const wallsMesh = new THREE.Mesh(trackGeom(mergeWithCleanup(wallGeomsToMerge)), wallMat);
-  wallsMesh.castShadow = false;
-  wallsMesh.receiveShadow = true;
-  group.add(wallsMesh);
+  for (const wd of sideWallDefs) {
+    const wg = new THREE.BoxGeometry(wd.w, roomH, wd.d);
+    wg.translate(wd.x, roomH * 0.5, wd.z);
+    sideWallGeoms.push(wg);
+
+    const bb = new THREE.BoxGeometry(wd.w + 1.2, 4.5, wd.d - 1);
+    bb.translate(wd.x, 2.25, wd.z);
+    baseboardGeomsToMerge.push(bb);
+  }
+
+  const backWallsMesh = new THREE.Mesh(trackGeom(mergeWithCleanup(backWallGeoms)), backWallMat);
+  backWallsMesh.castShadow = false;
+  backWallsMesh.receiveShadow = true;
+  group.add(backWallsMesh);
+
+  const sideWallsMesh = new THREE.Mesh(trackGeom(mergeWithCleanup(sideWallGeoms)), sideWallMat);
+  sideWallsMesh.castShadow = false;
+  sideWallsMesh.receiveShadow = true;
+  group.add(sideWallsMesh);
 
   const woodDarkMat = trackMat(
     new THREE.MeshStandardMaterial({
@@ -421,10 +477,17 @@ export function buildProps(
       metalness: 0.02,
     }),
   );
+  const baseboardMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: cfg.baseboardColor,
+      roughness: 0.66,
+      metalness: 0.02,
+    }),
+  );
 
   const baseboardsMesh = new THREE.Mesh(
     trackGeom(mergeWithCleanup(baseboardGeomsToMerge)),
-    woodDarkMat,
+    baseboardMat,
   );
   baseboardsMesh.castShadow = false;
   baseboardsMesh.receiveShadow = true;
@@ -440,6 +503,7 @@ export function buildProps(
   const windowSkyMat = trackMat(
     new THREE.MeshBasicMaterial({
       color: pal.windowSky,
+      fog: false,
     }),
   );
   const windowPaneGeom = trackGeom(new THREE.PlaneGeometry(windowW - 6, windowH - 6));
@@ -483,16 +547,17 @@ export function buildProps(
   windowFrameMesh.receiveShadow = false;
   group.add(windowFrameMesh);
 
-  // Diagonal additive sunbeam planes streaming softly from the window
+  // Diagonal additive sunbeam planes kept strictly near the sunlit window
   const sunbeamTex = trackTex(createSunbeamTexture());
   const sunbeamMat = trackMat(
     new THREE.MeshBasicMaterial({
       map: sunbeamTex,
       color: pal.sunbeamColor,
       transparent: true,
-      opacity: 0.085,
+      opacity: CONFIG.fx.windowShaft.opacity,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
+      fog: false,
       side: THREE.DoubleSide,
     }),
   );
@@ -507,14 +572,14 @@ export function buildProps(
     beamDir.clone().negate(),
     beamPlaneNormal,
   );
-  const beamGeom = trackGeom(new THREE.PlaneGeometry(54, 210));
-  const beamOffsets = [-42, -14, 14, 42];
+  const beamGeom = trackGeom(new THREE.PlaneGeometry(46, 110));
+  const beamOffsets = [-40, -14, 14, 40];
   for (const dz of beamOffsets) {
     const beam = new THREE.Mesh(beamGeom, sunbeamMat);
     beam.setRotationFromMatrix(beamBasis);
     beam.position
-      .set(windowX - 6, windowCenterY - 2, windowZ + dz)
-      .addScaledVector(beamDir, 95);
+      .set(windowX - 5, windowCenterY - 2, windowZ + dz)
+      .addScaledVector(beamDir, 52);
     beam.castShadow = false;
     beam.receiveShadow = false;
     group.add(beam);
@@ -714,7 +779,7 @@ export function buildProps(
       new THREE.MeshStandardMaterial({
         color: pal.sunbeamColor,
         emissive: pal.sunbeamColor,
-        emissiveIntensity: 0.85,
+        emissiveIntensity: 1.4,
         roughness: 0.25,
       }),
     );

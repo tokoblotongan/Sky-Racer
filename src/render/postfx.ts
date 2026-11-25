@@ -77,6 +77,49 @@ const SpeedLinesShader = {
   `,
 };
 
+const ColorGradeShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uSaturation: { value: CONFIG.visual.grade.saturation },
+    uContrast: { value: CONFIG.visual.grade.contrast },
+    uVignette: { value: CONFIG.visual.grade.vignette },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float uSaturation;
+    uniform float uContrast;
+    uniform float uVignette;
+    varying vec2 vUv;
+
+    void main() {
+      vec4 base = texture2D(tDiffuse, vUv);
+      vec3 rgb = max(base.rgb, vec3(0.0));
+
+      // Saturation in linear space
+      float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+      rgb = max(vec3(0.0), mix(vec3(luma), rgb, uSaturation));
+
+      // Gentle contrast pivot around linear mid-gray (0.18) without crushing blacks or clipping HDR
+      rgb = pow(max(rgb / 0.18, vec3(0.0)), vec3(uContrast)) * 0.18;
+
+      // Subtle radial vignette
+      vec2 centered = vUv - 0.5;
+      float vigDist = dot(centered, centered) * 2.0;
+      float vigFactor = 1.0 - clamp(vigDist * uVignette, 0.0, 0.45);
+      rgb *= vigFactor;
+
+      gl_FragColor = vec4(rgb, base.a);
+    }
+  `,
+};
+
 export function createPostFx(
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
@@ -87,7 +130,12 @@ export function createPostFx(
   const initialW = renderer.domElement.clientWidth || window.innerWidth || 1280;
   const initialH = renderer.domElement.clientHeight || window.innerHeight || 720;
 
-  const composer = new EffectComposer(renderer);
+  const composerTarget = new THREE.WebGLRenderTarget(initialW, initialH, {
+    type: THREE.HalfFloatType,
+    samples: isSoftwareGl ? 0 : 4,
+  });
+
+  const composer = new EffectComposer(renderer, composerTarget);
   composer.setPixelRatio(
     isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, CONFIG.quality.levels[quality].pixelRatioMax),
   );
@@ -108,11 +156,15 @@ export function createPostFx(
   speedLinesPass.uniforms.uAspect.value = initialW / Math.max(1, initialH);
   composer.addPass(speedLinesPass);
 
+  const colorGradePass = new ShaderPass(ColorGradeShader);
+  composer.addPass(colorGradePass);
+
   const outputPass = new OutputPass();
   composer.addPass(outputPass);
 
   let bloomEnabled = false;
   let speedLinesEnabled = false;
+  let colorGradeEnabled = false;
   let targetIntensity = 0;
   let currentIntensity = 0;
   let elapsed = 0;
@@ -121,9 +173,11 @@ export function createPostFx(
     const preset = CONFIG.quality.levels[level];
     bloomEnabled = !isSoftwareGl && preset.bloomEnabled;
     speedLinesEnabled = !isSoftwareGl && preset.speedLinesEnabled;
+    colorGradeEnabled = !isSoftwareGl && level !== 'low';
 
-    bloomPass.enabled = bloomEnabled;
+    bloomPass.enabled = bloomEnabled && scene.userData.visualDebugBloomEnabled !== false;
     speedLinesPass.enabled = speedLinesEnabled;
+    colorGradePass.enabled = colorGradeEnabled;
 
     composer.setPixelRatio(
       isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, preset.pixelRatioMax),
@@ -152,7 +206,10 @@ export function createPostFx(
       Math.max(dt, 1 / 120),
     );
 
-    if (isSoftwareGl || (!bloomEnabled && !speedLinesEnabled)) {
+    const effectiveBloom = bloomEnabled && scene.userData.visualDebugBloomEnabled !== false;
+    bloomPass.enabled = effectiveBloom;
+
+    if (isSoftwareGl || (!effectiveBloom && !speedLinesEnabled && !colorGradeEnabled)) {
       renderer.render(scene, camera);
       return;
     }
@@ -165,7 +222,9 @@ export function createPostFx(
   function dispose(): void {
     bloomPass.dispose();
     speedLinesPass.dispose();
+    colorGradePass.dispose();
     outputPass.dispose();
+    composerTarget.dispose();
     composer.dispose();
   }
 

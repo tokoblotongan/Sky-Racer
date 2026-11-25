@@ -947,7 +947,8 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
   const trackMaterial = new THREE.MeshPhysicalMaterial({
     map: trackTexture,
     clearcoat: cfg.trackClearcoat,
-    clearcoatRoughness: cfg.trackClearcoatRoughness,
+    clearcoatRoughness: CONFIG.visual.trackClearcoatRoughness,
+    envMapIntensity: CONFIG.visual.trackEnvIntensity,
     roughness: cfg.trackRoughness,
     metalness: cfg.trackMetalness,
     ior: cfg.trackIor,
@@ -962,7 +963,8 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
   const railMaterial = new THREE.MeshPhysicalMaterial({
     map: railTexture,
     clearcoat: cfg.railClearcoat,
-    clearcoatRoughness: cfg.railClearcoatRoughness,
+    clearcoatRoughness: CONFIG.visual.trackClearcoatRoughness,
+    envMapIntensity: CONFIG.visual.trackEnvIntensity,
     roughness: cfg.railRoughness,
     metalness: cfg.railMetalness,
     ior: cfg.trackIor,
@@ -1016,7 +1018,8 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
   const jumpStripMaterial = new THREE.MeshPhysicalMaterial({
     map: jumpStripTexture,
     clearcoat: cfg.trackClearcoat,
-    clearcoatRoughness: cfg.trackClearcoatRoughness,
+    clearcoatRoughness: CONFIG.visual.trackClearcoatRoughness,
+    envMapIntensity: CONFIG.visual.trackEnvIntensity,
     roughness: 0.2,
     metalness: 0.04,
     polygonOffset: true,
