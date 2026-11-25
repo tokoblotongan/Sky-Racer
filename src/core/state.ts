@@ -1,7 +1,15 @@
 // src/core/state.ts
 
 import { CONFIG } from '../config';
+import {
+  determineMedal,
+  getRecords,
+  submitRun,
+  type MedalType,
+  type RaceStats,
+} from '../services/records';
 import type { Course } from './course';
+import type { PhysicsEvent } from './physics';
 
 export type RacePhase = 'TITLE' | 'COUNTDOWN' | 'RACING' | 'FINISH';
 
@@ -9,10 +17,25 @@ export interface CarRaceSnapshot {
   s: number;
   sApprox: number;
   mode: 'grounded' | 'airborne' | 'falling';
+  speedKmh?: number;
+}
+
+export interface FinishResultData {
+  time: number;
+  medal: MedalType;
+  isNewBest: boolean;
+  rank: number | null;
+  deltaToBest: number | null;
+  splits: number[];
+  splitDeltas: Array<number | null>;
+  isNewSplitBest: boolean[];
+  stats: RaceStats;
 }
 
 export interface RaceState {
   phase: RacePhase;
+  resultReady: boolean;
+  finishDelayTimer: number;
   countdownTimer: number;
   countdownDisplayNumber: number;
   goHoldTimer: number;
@@ -25,84 +48,64 @@ export interface RaceState {
   bestSplits: number[] | null;
   newBest: boolean;
   totalCheckpoints: number;
+  stats: RaceStats;
+  lastFinish: FinishResultData | null;
+  persistRecords: boolean;
 }
 
 export type RaceEvent =
   | { type: 'countdownTick'; n: number }
   | { type: 'go' }
   | { type: 'checkpoint'; index: number; total: number; time: number; delta: number | null }
-  | { type: 'finish'; time: number; newBest: boolean }
-  | { type: 'restart' };
+  | ({ type: 'finish' } & FinishResultData)
+  | { type: 'resultReady' }
+  | { type: 'restart' }
+  | { type: 'toTitle' };
 
-interface StoredBestRecord {
-  bestTime: number;
-  bestSplits: number[];
+export interface CreateRaceStateOptions {
+  persistRecords?: boolean;
 }
 
-function loadBestRecord(): StoredBestRecord | null {
-  try {
-    if (typeof window === 'undefined' || !window.localStorage) {
-      return null;
-    }
-    const raw = window.localStorage.getItem(CONFIG.storage.key);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw) as Partial<StoredBestRecord>;
-    if (
-      typeof parsed.bestTime !== 'number' ||
-      !Number.isFinite(parsed.bestTime) ||
-      parsed.bestTime <= 0
-    ) {
-      return null;
-    }
-    const bestSplits = Array.isArray(parsed.bestSplits)
-      ? parsed.bestSplits.filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
-      : [];
-    return {
-      bestTime: parsed.bestTime,
-      bestSplits,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function saveBestRecord(bestTime: number, bestSplits: number[]): void {
-  try {
-    if (typeof window === 'undefined' || !window.localStorage) {
-      return;
-    }
-    const payload: StoredBestRecord = {
-      bestTime,
-      bestSplits,
-    };
-    window.localStorage.setItem(CONFIG.storage.key, JSON.stringify(payload));
-  } catch {
-    // Ignore storage quota or private browsing errors
-  }
+function createEmptyStats(): RaceStats {
+  return {
+    topSpeedKmh: 0,
+    totalAirtime: 0,
+    longestAirtime: 0,
+    boostCount: 0,
+    railHits: 0,
+    resets: 0,
+    falls: 0,
+    checkpointsHit: 0,
+  };
 }
 
 function resetProgressFields(state: RaceState): void {
+  state.resultReady = false;
+  state.finishDelayTimer = 0;
   state.timer = 0;
   state.nextCheckpointIndex = 0;
   state.passedCheckpoints = [];
   state.splits = Array<number | null>(state.totalCheckpoints).fill(null);
   state.lastCheckpointIndex = null;
   state.newBest = false;
+  state.lastFinish = null;
+  state.stats = createEmptyStats();
   state.countdownTimer = CONFIG.race.countdownSeconds;
   state.countdownDisplayNumber = Math.max(1, Math.ceil(CONFIG.race.countdownSeconds));
   state.goHoldTimer = 0;
 }
 
-export function createRaceState(course: Course): RaceState {
+export function createRaceState(course: Course, options?: CreateRaceStateOptions): RaceState {
   const totalCheckpoints = course.getCheckpoints().length;
-  const stored = loadBestRecord();
+  const persistRecords = options?.persistRecords ?? true;
+  const records = persistRecords ? getRecords(course.getId(), course.getMedals()) : null;
   const bestSplits =
-    stored && stored.bestSplits.length === totalCheckpoints ? stored.bestSplits : null;
+    records && records.bestSplits.length === totalCheckpoints ? [...records.bestSplits] : null;
 
   return {
     phase: 'TITLE',
+    resultReady: false,
+    finishDelayTimer: 0,
     countdownTimer: 0,
     countdownDisplayNumber: 0,
     goHoldTimer: 0,
@@ -111,11 +114,26 @@ export function createRaceState(course: Course): RaceState {
     passedCheckpoints: [],
     splits: Array<number | null>(totalCheckpoints).fill(null),
     lastCheckpointIndex: null,
-    bestTime: stored ? stored.bestTime : null,
+    bestTime: records?.best ? records.best.time : null,
     bestSplits,
     newBest: false,
     totalCheckpoints,
+    stats: createEmptyStats(),
+    lastFinish: null,
+    persistRecords,
   };
+}
+
+export function refreshRaceRecords(state: RaceState, course: Course): void {
+  if (!state.persistRecords) {
+    state.bestTime = null;
+    state.bestSplits = null;
+    return;
+  }
+  const records = getRecords(course.getId(), course.getMedals());
+  state.bestTime = records.best ? records.best.time : null;
+  state.bestSplits =
+    records.bestSplits.length === state.totalCheckpoints ? [...records.bestSplits] : null;
 }
 
 export function startCountdown(state: RaceState): RaceEvent[] {
@@ -133,6 +151,15 @@ export function restartRace(state: RaceState): RaceEvent[] {
   ];
 }
 
+export function returnToTitle(state: RaceState, course: Course): RaceEvent[] {
+  resetProgressFields(state);
+  refreshRaceRecords(state, course);
+  state.phase = 'TITLE';
+  state.countdownTimer = 0;
+  state.countdownDisplayNumber = 0;
+  return [{ type: 'toTitle' }];
+}
+
 export function getRespawnTarget(
   state: RaceState,
   course: Course,
@@ -145,8 +172,30 @@ export function getRespawnTarget(
 }
 
 export function applyManualResetPenalty(state: RaceState): void {
-  if (state.phase === 'RACING' && CONFIG.race.resetPenaltySeconds > 0) {
-    state.timer += CONFIG.race.resetPenaltySeconds;
+  if (state.phase === 'RACING') {
+    state.stats.resets++;
+    if (CONFIG.race.resetPenaltySeconds > 0) {
+      state.timer += CONFIG.race.resetPenaltySeconds;
+    }
+  }
+}
+
+function recordPhysicsStats(state: RaceState, physicsEvents: readonly PhysicsEvent[]): void {
+  for (let i = 0; i < physicsEvents.length; i++) {
+    const ev = physicsEvents[i];
+    if (ev.type === 'boost') {
+      state.stats.boostCount++;
+    } else if (ev.type === 'railHit') {
+      state.stats.railHits++;
+    } else if (ev.type === 'fell') {
+      state.stats.falls++;
+    } else if (ev.type === 'landed') {
+      const air = Math.max(0, ev.airtime);
+      state.stats.totalAirtime += air;
+      if (air > state.stats.longestAirtime) {
+        state.stats.longestAirtime = air;
+      }
+    }
   }
 }
 
@@ -155,6 +204,7 @@ export function updateRace(
   car: CarRaceSnapshot,
   course: Course,
   dt: number,
+  physicsEvents?: readonly PhysicsEvent[],
 ): RaceEvent[] {
   const events: RaceEvent[] = [];
 
@@ -179,6 +229,18 @@ export function updateRace(
     return events;
   }
 
+  if (state.phase === 'FINISH') {
+    if (!state.resultReady) {
+      state.finishDelayTimer -= dt;
+      if (state.finishDelayTimer <= 0) {
+        state.finishDelayTimer = 0;
+        state.resultReady = true;
+        events.push({ type: 'resultReady' });
+      }
+    }
+    return events;
+  }
+
   if (state.phase !== 'RACING') {
     return events;
   }
@@ -186,6 +248,16 @@ export function updateRace(
   state.timer += dt;
   if (state.goHoldTimer > 0) {
     state.goHoldTimer = Math.max(0, state.goHoldTimer - dt);
+  }
+
+  if (typeof car.speedKmh === 'number' && Number.isFinite(car.speedKmh)) {
+    if (car.speedKmh > state.stats.topSpeedKmh) {
+      state.stats.topSpeedKmh = car.speedKmh;
+    }
+  }
+
+  if (physicsEvents && physicsEvents.length > 0) {
+    recordPhysicsStats(state, physicsEvents);
   }
 
   const activeS = car.mode === 'grounded' ? car.s : car.sApprox;
@@ -205,6 +277,7 @@ export function updateRace(
 
       state.splits[idx] = splitTime;
       state.passedCheckpoints.push(idx);
+      state.stats.checkpointsHit = state.passedCheckpoints.length;
       state.lastCheckpointIndex = idx;
       state.nextCheckpointIndex++;
 
@@ -223,21 +296,70 @@ export function updateRace(
   if (activeS >= course.getFinishS()) {
     state.phase = 'FINISH';
     state.goHoldTimer = 0;
+    state.resultReady = CONFIG.race.resultDelay <= 0;
+    state.finishDelayTimer = Math.max(0, CONFIG.race.resultDelay);
 
-    const isNewBest = state.bestTime === null || state.timer < state.bestTime;
-    if (isNewBest) {
-      state.newBest = true;
-      state.bestTime = state.timer;
-      const completedSplits = state.splits.map((sVal) => sVal ?? state.timer);
-      state.bestSplits = completedSplits;
-      saveBestRecord(state.bestTime, completedSplits);
+    const finalTime = state.timer;
+    const completedSplits = state.splits.map((sVal) => sVal ?? finalTime);
+    const medal = determineMedal(finalTime, course.getMedals());
+    const prevBestSplits = state.bestSplits ? [...state.bestSplits] : null;
+    const splitDeltas = completedSplits.map((val, idx) => {
+      const prev =
+        prevBestSplits && idx < prevBestSplits.length ? prevBestSplits[idx] : null;
+      return prev !== null && Number.isFinite(prev) ? val - prev : null;
+    });
+
+    const statsSnapshot: RaceStats = { ...state.stats };
+    let isNewBest = state.bestTime === null || finalTime < state.bestTime;
+    let rank: number | null = 1;
+    let deltaToBest: number | null =
+      state.bestTime !== null ? finalTime - state.bestTime : null;
+    let isNewSplitBest = completedSplits.map((val, idx) => {
+      const prev =
+        prevBestSplits && idx < prevBestSplits.length ? prevBestSplits[idx] : null;
+      return prev === null || !Number.isFinite(prev) || val < prev;
+    });
+
+    if (state.persistRecords) {
+      const submitted = submitRun(course.getId(), {
+        time: finalTime,
+        splits: completedSplits,
+        medal,
+        stats: statsSnapshot,
+      });
+      isNewBest = submitted.isNewBest;
+      rank = submitted.rank;
+      deltaToBest = submitted.deltaToBest;
+      isNewSplitBest = submitted.isNewSplitBest;
+      state.bestTime = submitted.records.best ? submitted.records.best.time : finalTime;
+      state.bestSplits = [...submitted.records.bestSplits];
+    } else if (isNewBest) {
+      state.bestTime = finalTime;
+      state.bestSplits = [...completedSplits];
     }
+
+    state.newBest = isNewBest;
+
+    const finishData: FinishResultData = {
+      time: finalTime,
+      medal,
+      isNewBest,
+      rank,
+      deltaToBest,
+      splits: completedSplits,
+      splitDeltas,
+      isNewSplitBest,
+      stats: statsSnapshot,
+    };
+    state.lastFinish = finishData;
 
     events.push({
       type: 'finish',
-      time: state.timer,
-      newBest: state.newBest,
+      ...finishData,
     });
+    if (state.resultReady) {
+      events.push({ type: 'resultReady' });
+    }
   }
 
   return events;

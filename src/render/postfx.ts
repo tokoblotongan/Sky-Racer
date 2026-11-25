@@ -6,6 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 import { CONFIG } from '../config';
 import type { QualityLevel } from './quality';
 
@@ -127,25 +128,44 @@ export function createPostFx(
   quality: QualityLevel,
   isSoftwareGl = false,
 ): PostFxHandle {
-  const initialW = renderer.domElement.clientWidth || window.innerWidth || 1280;
-  const initialH = renderer.domElement.clientHeight || window.innerHeight || 720;
+  const isWebGL2 = renderer.capabilities.isWebGL2;
+  let currentWidth = renderer.domElement.clientWidth || window.innerWidth || 1280;
+  let currentHeight = renderer.domElement.clientHeight || window.innerHeight || 720;
 
-  const composerTarget = new THREE.WebGLRenderTarget(initialW, initialH, {
-    type: THREE.HalfFloatType,
-    samples: isSoftwareGl ? 0 : 4,
-  });
+  const getDesiredSamples = (level: QualityLevel): number => {
+    if (isSoftwareGl || !isWebGL2) {
+      return 0;
+    }
+    return CONFIG.render.antialias.composerSamples[level];
+  };
 
-  const composer = new EffectComposer(renderer, composerTarget);
-  composer.setPixelRatio(
-    isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, CONFIG.quality.levels[quality].pixelRatioMax),
-  );
-  composer.setSize(initialW, initialH);
+  const getPixelRatioForLevel = (level: QualityLevel): number => {
+    if (isSoftwareGl) {
+      return 1;
+    }
+    return Math.min(window.devicePixelRatio || 1, CONFIG.quality.levels[level].pixelRatioMax);
+  };
 
+  let currentSamples = getDesiredSamples(quality);
+  let currentPixelRatio = getPixelRatioForLevel(quality);
+
+  const createComposerTarget = (w: number, h: number, pr: number, samples: number): THREE.WebGLRenderTarget =>
+    new THREE.WebGLRenderTarget(Math.max(1, Math.round(w * pr)), Math.max(1, Math.round(h * pr)), {
+      type: THREE.HalfFloatType,
+      samples,
+    });
+
+  const initialTarget = createComposerTarget(currentWidth, currentHeight, currentPixelRatio, currentSamples);
+  const composer = new EffectComposer(renderer, initialTarget);
+  composer.setPixelRatio(currentPixelRatio);
+  composer.setSize(currentWidth, currentHeight);
+
+  // Pass chain order preserved identically so ACES + sRGB output color stays consistent
   const renderPass = new RenderPass(scene, camera);
   composer.addPass(renderPass);
 
   const bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(initialW, initialH),
+    new THREE.Vector2(currentWidth, currentHeight),
     CONFIG.fx.bloom.strength,
     CONFIG.fx.bloom.radius,
     CONFIG.fx.bloom.threshold,
@@ -153,7 +173,7 @@ export function createPostFx(
   composer.addPass(bloomPass);
 
   const speedLinesPass = new ShaderPass(SpeedLinesShader);
-  speedLinesPass.uniforms.uAspect.value = initialW / Math.max(1, initialH);
+  speedLinesPass.uniforms.uAspect.value = currentWidth / Math.max(1, currentHeight);
   composer.addPass(speedLinesPass);
 
   const colorGradePass = new ShaderPass(ColorGradeShader);
@@ -162,26 +182,57 @@ export function createPostFx(
   const outputPass = new OutputPass();
   composer.addPass(outputPass);
 
+  // Lightweight FXAA in sRGB space after OutputPass when composer runs without MSAA samples (e.g. WebGL1)
+  const fxaaPass = new ShaderPass(FXAAShader);
+  composer.addPass(fxaaPass);
+
   let bloomEnabled = false;
   let speedLinesEnabled = false;
   let colorGradeEnabled = false;
+  let fxaaEnabled = false;
   let targetIntensity = 0;
   let currentIntensity = 0;
   let elapsed = 0;
 
+  const updateFxaaResolution = (): void => {
+    const res = fxaaPass.uniforms.resolution?.value as THREE.Vector2 | undefined;
+    if (res) {
+      res.set(
+        1 / Math.max(1, currentWidth * currentPixelRatio),
+        1 / Math.max(1, currentHeight * currentPixelRatio),
+      );
+    }
+  };
+
   function setQuality(level: QualityLevel): void {
     const preset = CONFIG.quality.levels[level];
+    const nextSamples = getDesiredSamples(level);
+    currentPixelRatio = getPixelRatioForLevel(level);
+
+    if (nextSamples !== currentSamples) {
+      currentSamples = nextSamples;
+      const nextTarget = createComposerTarget(
+        currentWidth,
+        currentHeight,
+        currentPixelRatio,
+        currentSamples,
+      );
+      composer.reset(nextTarget);
+    }
+
     bloomEnabled = !isSoftwareGl && preset.bloomEnabled;
     speedLinesEnabled = !isSoftwareGl && preset.speedLinesEnabled;
     colorGradeEnabled = !isSoftwareGl && level !== 'low';
+    fxaaEnabled = !isSoftwareGl && currentSamples === 0;
 
     bloomPass.enabled = bloomEnabled && scene.userData.visualDebugBloomEnabled !== false;
     speedLinesPass.enabled = speedLinesEnabled;
     colorGradePass.enabled = colorGradeEnabled;
+    fxaaPass.enabled = fxaaEnabled;
 
-    composer.setPixelRatio(
-      isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, preset.pixelRatioMax),
-    );
+    composer.setPixelRatio(currentPixelRatio);
+    composer.setSize(currentWidth, currentHeight);
+    updateFxaaResolution();
   }
 
   function setSpeedIntensity(intensity: number): void {
@@ -189,11 +240,12 @@ export function createPostFx(
   }
 
   function resize(width: number, height: number): void {
-    const safeW = Math.max(1, width);
-    const safeH = Math.max(1, height);
-    composer.setSize(safeW, safeH);
-    bloomPass.resolution.set(safeW, safeH);
-    speedLinesPass.uniforms.uAspect.value = safeW / safeH;
+    currentWidth = Math.max(1, width);
+    currentHeight = Math.max(1, height);
+    composer.setSize(currentWidth, currentHeight);
+    bloomPass.resolution.set(currentWidth, currentHeight);
+    speedLinesPass.uniforms.uAspect.value = currentWidth / currentHeight;
+    updateFxaaResolution();
   }
 
   function render(dt: number): void {
@@ -209,7 +261,8 @@ export function createPostFx(
     const effectiveBloom = bloomEnabled && scene.userData.visualDebugBloomEnabled !== false;
     bloomPass.enabled = effectiveBloom;
 
-    if (isSoftwareGl || (!effectiveBloom && !speedLinesEnabled && !colorGradeEnabled)) {
+    const needsComposer = effectiveBloom || speedLinesEnabled || colorGradeEnabled || !isWebGL2;
+    if (isSoftwareGl || !needsComposer) {
       renderer.render(scene, camera);
       return;
     }
@@ -224,7 +277,7 @@ export function createPostFx(
     speedLinesPass.dispose();
     colorGradePass.dispose();
     outputPass.dispose();
-    composerTarget.dispose();
+    fxaaPass.dispose();
     composer.dispose();
   }
 

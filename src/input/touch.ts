@@ -328,6 +328,7 @@ export function createTouchControls(
   const brakeBtnEl = root.querySelector('.sr-touch-btn-brake') as HTMLButtonElement;
   const gasBtnEl = root.querySelector('.sr-touch-btn-gas') as HTMLButtonElement;
 
+  const topbarEl = root.querySelector('.sr-touch-topbar') as HTMLElement;
   const resetBtnEl = root.querySelector('.sr-touch-util-reset') as HTMLButtonElement;
   const restartBtnEl = root.querySelector('.sr-touch-util-restart') as HTMLButtonElement;
   const restartRingEl = root.querySelector('.sr-touch-restart-ring-fill') as SVGCircleElement;
@@ -430,13 +431,16 @@ export function createTouchControls(
     }
 
     const isDrivingPhase = phase === 'COUNTDOWN' || phase === 'RACING';
-    const isConfirmPhase = phase === 'TITLE' || phase === 'FINISH';
+    const isTitlePhase = phase === 'TITLE';
+    const isFinishPhase = phase === 'FINISH';
 
-    confirmBackdropEl.classList.toggle('sr-touch-hidden', !isConfirmPhase || portraitBlocked);
+    // Hide all touch controls when FINISH results screen is displayed so nothing overlaps it
+    topbarEl.classList.toggle('sr-touch-hidden', isFinishPhase || portraitBlocked);
+    confirmBackdropEl.classList.toggle('sr-touch-hidden', !isTitlePhase || portraitBlocked);
     steerZoneEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
     actionsEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
     resetBtnEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
-    restartBtnEl.classList.toggle('sr-touch-hidden', phase === 'TITLE');
+    restartBtnEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
 
     const isStick = steerMode === 'stick';
     stickBaseEl.classList.toggle('sr-touch-hidden', !isStick);
@@ -764,10 +768,10 @@ export function createTouchControls(
   fsBtnEl.addEventListener('pointerdown', onFullscreenPointerDown);
   fsBtnEl.addEventListener('click', onFullscreenClick);
 
-  // Tap-anywhere-to-confirm on TITLE / FINISH screens
+  // Tap-anywhere outside Title card to confirm start on TITLE screen
   function onConfirmDown(e: PointerEvent): void {
     if (confirmPointerId !== null || portraitBlocked) return;
-    if (phase !== 'TITLE' && phase !== 'FINISH') return;
+    if (phase !== 'TITLE') return;
     e.preventDefault();
     confirmPointerId = e.pointerId;
     safeCapture(confirmBackdropEl, e.pointerId);
@@ -776,7 +780,7 @@ export function createTouchControls(
     if (e.pointerId !== confirmPointerId) return;
     safeRelease(confirmBackdropEl, e.pointerId);
     confirmPointerId = null;
-    if (e.type === 'pointerup' && (phase === 'TITLE' || phase === 'FINISH') && !portraitBlocked) {
+    if (e.type === 'pointerup' && phase === 'TITLE' && !portraitBlocked) {
       queuedPresses.confirm = true;
     }
   }

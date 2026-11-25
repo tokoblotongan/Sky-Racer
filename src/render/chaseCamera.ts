@@ -146,7 +146,7 @@ function computeCourseCameraTargets(
   }
 }
 
-export type CameraMode = 'title' | 'chase';
+export type CameraMode = 'title' | 'chase' | 'finish';
 
 export class ChaseCamera {
   private readonly camera: THREE.PerspectiveCamera;
@@ -163,6 +163,8 @@ export class ChaseCamera {
   private mode: CameraMode = 'chase';
   private titleOrbitAngle = 0.55;
   private titleTransitionTimer = 0;
+  private finishOrbitAngle = 0;
+  private finishOrbitInitialized = false;
 
   constructor(camera: THREE.PerspectiveCamera) {
     this.camera = camera;
@@ -174,6 +176,9 @@ export class ChaseCamera {
       this.titleTransitionTimer = CONFIG.camera.titleToChaseBlendDuration;
       this.posVelocity.set(0, 0, 0);
       this.lookVelocity.set(0, 0, 0);
+    }
+    if (mode === 'finish' && this.mode !== 'finish') {
+      this.finishOrbitInitialized = false;
     }
     this.mode = mode;
   }
@@ -191,6 +196,17 @@ export class ChaseCamera {
       pose.position.z + Math.cos(this.titleOrbitAngle) * orbitR,
     );
     _targetLook.copy(pose.position).addScaledVector(_worldUp, 0.72);
+  }
+
+  private computeFinishOrbitTargets(pose: CarPose): void {
+    const orbitR = CONFIG.camera.finishOrbitRadius;
+    const orbitH = CONFIG.camera.finishOrbitHeight;
+    _targetPos.set(
+      pose.position.x + Math.sin(this.finishOrbitAngle) * orbitR,
+      pose.position.y + orbitH,
+      pose.position.z + Math.cos(this.finishOrbitAngle) * orbitR,
+    );
+    _targetLook.copy(pose.position).addScaledVector(_worldUp, 0.85);
   }
 
   snapTo(pose: CarPose, carState: CarState, course: Course): void {
@@ -240,6 +256,38 @@ export class ChaseCamera {
       this.currentLook.copy(_targetLook);
       this.smoothedUp.copy(_worldUp);
       _rolledUp.copy(_worldUp);
+    } else if (this.mode === 'finish') {
+      if (!this.finishOrbitInitialized) {
+        const dx = this.currentPos.x - pose.position.x;
+        const dz = this.currentPos.z - pose.position.z;
+        this.finishOrbitAngle = Math.hypot(dx, dz) > 0.2 ? Math.atan2(dx, dz) : 0.4;
+        this.finishOrbitInitialized = true;
+      }
+      this.finishOrbitAngle += cfg.finishOrbitSpeed * dt;
+      this.computeFinishOrbitTargets(pose);
+      smoothDampVector3(
+        this.currentPos,
+        _targetPos,
+        this.posVelocity,
+        cfg.finishOrbitSmoothTime,
+        dt,
+      );
+      smoothDampVector3(
+        this.currentLook,
+        _targetLook,
+        this.lookVelocity,
+        cfg.finishOrbitSmoothTime * 0.75,
+        dt,
+      );
+
+      const upBlendAlpha = 1 - Math.exp(-cfg.upBlendSpeed * dt);
+      _upDeltaQuat.setFromUnitVectors(this.smoothedUp, _worldUp);
+      _identityQuat.identity().slerp(_upDeltaQuat, upBlendAlpha);
+      this.smoothedUp.applyQuaternion(_identityQuat).normalize();
+      const currentRollRad = smoothDampScalar(this.rollSpring, 0, cfg.rollSmoothTime, dt);
+      _lookDir.subVectors(this.currentLook, this.currentPos).normalize();
+      _rollQuat.setFromAxisAngle(_lookDir, currentRollRad);
+      _rolledUp.copy(this.smoothedUp).applyQuaternion(_rollQuat).normalize();
     } else if (carState.mode === 'falling') {
       // Freeze camera at last safe height above track and keep looking at the falling car
       this.currentPos.copy(this.lastSafePos);

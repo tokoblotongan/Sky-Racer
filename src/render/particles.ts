@@ -14,6 +14,7 @@ export interface ParticlesSystem {
   emit: (event: ParticleEventSpec) => void;
   update: (dt: number, carPose: CarPose, carState: CarState) => void;
   setQuality: (level: QualityLevel) => void;
+  reset: () => void;
   dispose: () => void;
 }
 
@@ -541,6 +542,22 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
     boostPool.material.uniforms.uPixelRatio.value = nextDpr;
   }
 
+  function clearPool(pool: PoolBuffers): void {
+    pool.ages.fill(0);
+    pool.lifetimes.fill(0);
+    pool.alphas.fill(0);
+    pool.alphaAttr.needsUpdate = true;
+    pool.cursor = 0;
+  }
+
+  function reset(): void {
+    driftAccum = 0;
+    boostAccum = 0;
+    clearPool(sparksPool);
+    clearPool(dustPool);
+    clearPool(boostPool);
+  }
+
   function dispose(): void {
     scene.remove(group);
     sparkTex.dispose();
@@ -558,6 +575,7 @@ export function createParticles(scene: THREE.Scene, quality: QualityLevel): Part
     emit,
     update,
     setQuality,
+    reset,
     dispose,
   };
 }

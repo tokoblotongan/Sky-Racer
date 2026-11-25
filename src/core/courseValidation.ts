@@ -314,7 +314,7 @@ export function validateCourse(
   const maxSteps = Math.round(300 / dt);
 
   const carState = createCarState();
-  const raceState = createRaceState(course);
+  const raceState = createRaceState(course, { persistRecords: false });
   raceState.phase = 'RACING';
 
   const jumpResults: JumpValidationResult[] = segments

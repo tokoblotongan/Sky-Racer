@@ -3,6 +3,7 @@
 import { CONFIG } from '../config';
 import type { PhysicsEvent } from '../core/physics';
 import type { RaceEvent } from '../core/state';
+import type { MedalType } from '../services/records';
 import type { AudioManager } from './audioManager';
 
 export type SoundEffectEvent =
@@ -166,15 +167,24 @@ export function createSfx(manager: AudioManager): SfxAudio {
     osc2.stop(t2 + cfg.noteDuration * 1.35 + 0.015);
   }
 
-  function playFinish(newBest: boolean): void {
+  function playFinish(medal: MedalType, newBest: boolean): void {
     if (!canTrigger('finish') || !ctx || !buses) return;
     const cfg = sfxCfg.finish;
     const now = ctx.currentTime;
     const notes = cfg.notes;
 
+    const sparkleNotes: number[] = [];
+    if (medal === 'silver') {
+      sparkleNotes.push(cfg.bestPeakFreq);
+    } else if (medal === 'gold') {
+      sparkleNotes.push(cfg.bestPeakFreq, cfg.bestPeakFreq * 1.25);
+    } else if (newBest) {
+      sparkleNotes.push(cfg.bestPeakFreq);
+    }
+
     for (let i = 0; i < notes.length; i++) {
       const start = now + i * cfg.noteStep;
-      const isLast = i === notes.length - 1 && !newBest;
+      const isLast = i === notes.length - 1 && sparkleNotes.length === 0;
       const dur = isLast ? cfg.noteDuration * 1.6 : cfg.noteDuration;
 
       const osc = ctx.createOscillator();
@@ -211,9 +221,11 @@ export function createSfx(manager: AudioManager): SfxAudio {
       shimmer.stop(start + dur + 0.02);
     }
 
-    if (newBest) {
-      const peakStart = now + notes.length * cfg.noteStep;
-      const peakDur = cfg.noteDuration * 2.1;
+    for (let j = 0; j < sparkleNotes.length; j++) {
+      const sparkleStart = now + (notes.length + j) * cfg.noteStep;
+      const isFinalSparkle = j === sparkleNotes.length - 1;
+      const peakDur = isFinalSparkle ? cfg.noteDuration * 2.1 : cfg.noteDuration * 1.35;
+      const freq = sparkleNotes[j];
 
       const peakOsc = ctx.createOscillator();
       const peakSparkle = ctx.createOscillator();
@@ -221,28 +233,32 @@ export function createSfx(manager: AudioManager): SfxAudio {
       const sparkleGain = ctx.createGain();
 
       peakOsc.type = 'triangle';
-      peakOsc.frequency.setValueAtTime(cfg.bestPeakFreq, peakStart);
+      peakOsc.frequency.setValueAtTime(freq, sparkleStart);
 
       peakSparkle.type = 'sine';
-      peakSparkle.frequency.setValueAtTime(cfg.bestPeakFreq * 2, peakStart);
-      sparkleGain.gain.setValueAtTime(0.32, peakStart);
+      peakSparkle.frequency.setValueAtTime(freq * 2, sparkleStart);
+      sparkleGain.gain.setValueAtTime(newBest ? 0.36 : 0.3, sparkleStart);
 
-      peakGain.gain.setValueAtTime(0.0001, peakStart);
-      peakGain.gain.linearRampToValueAtTime(cfg.gain * 1.08, peakStart + 0.012);
-      peakGain.gain.exponentialRampToValueAtTime(0.0001, peakStart + peakDur);
+      peakGain.gain.setValueAtTime(0.0001, sparkleStart);
+      peakGain.gain.linearRampToValueAtTime(cfg.gain * (newBest ? 1.08 : 1.0), sparkleStart + 0.012);
+      peakGain.gain.exponentialRampToValueAtTime(0.0001, sparkleStart + peakDur);
 
       peakOsc.connect(peakGain);
       peakSparkle.connect(sparkleGain);
       sparkleGain.connect(peakGain);
       peakGain.connect(buses.sfx);
 
-      registerPrimaryVoice(peakOsc, [sparkleGain, peakGain]);
+      if (isFinalSparkle) {
+        registerPrimaryVoice(peakOsc, [sparkleGain, peakGain]);
+      } else {
+        registerSecondaryNode(peakOsc, [sparkleGain, peakGain]);
+      }
       registerSecondaryNode(peakSparkle, []);
 
-      peakOsc.start(peakStart);
-      peakSparkle.start(peakStart);
-      peakOsc.stop(peakStart + peakDur + 0.02);
-      peakSparkle.stop(peakStart + peakDur + 0.02);
+      peakOsc.start(sparkleStart);
+      peakSparkle.start(sparkleStart);
+      peakOsc.stop(sparkleStart + peakDur + 0.02);
+      peakSparkle.stop(sparkleStart + peakDur + 0.02);
     }
   }
 
@@ -514,7 +530,7 @@ export function createSfx(manager: AudioManager): SfxAudio {
         playCheckpoint(event.index);
         break;
       case 'finish':
-        playFinish(event.newBest);
+        playFinish(event.medal, event.isNewBest);
         break;
       case 'boost':
         playBoost();

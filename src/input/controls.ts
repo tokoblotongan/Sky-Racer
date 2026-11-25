@@ -11,11 +11,13 @@ export interface CarInput {
   resetPressed: boolean;
   restartPressed?: boolean;
   confirmPressed: boolean;
+  menuPressed?: boolean;
   mutePressed?: boolean;
 }
 
 export interface SampledCarInput extends CarInput {
   restartPressed: boolean;
+  menuPressed: boolean;
   mutePressed: boolean;
 }
 
@@ -41,6 +43,7 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
   const pressed = new Set<string>();
   let resetQueued = false;
   let confirmQueued = false;
+  let menuQueued = false;
   let muteQueued = false;
 
   let kbThrottle = 0;
@@ -64,6 +67,11 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
     if ((event.code === 'Enter' || event.code === 'NumpadEnter') && !event.repeat) {
       event.preventDefault();
       confirmQueued = true;
+    }
+
+    if (event.code === 'Escape' && !event.repeat) {
+      event.preventDefault();
+      menuQueued = true;
     }
 
     pressed.add(event.code);
@@ -118,6 +126,9 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
     const kbConfirm = confirmQueued;
     confirmQueued = false;
 
+    const kbMenu = menuQueued;
+    menuQueued = false;
+
     const kbMute = muteQueued;
     muteQueued = false;
 
@@ -146,6 +157,7 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
       resetPressed: kbReset || Boolean(touchPresses?.reset),
       restartPressed: Boolean(touchPresses?.restart),
       confirmPressed: kbConfirm || Boolean(touchPresses?.confirm),
+      menuPressed: kbMenu,
       mutePressed: kbMute || Boolean(touchPresses?.mute),
     };
   }

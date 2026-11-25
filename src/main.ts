@@ -20,9 +20,12 @@ import {
   applyManualResetPenalty,
   createRaceState,
   getRespawnTarget,
+  refreshRaceRecords,
   restartRace,
+  returnToTitle,
   startCountdown,
   updateRace,
+  type FinishResultData,
   type RaceEvent,
   type RaceState,
 } from './core/state';
@@ -38,16 +41,25 @@ import { createQualityManager, type QualityLevel } from './render/quality';
 import { createSceneContext } from './render/scene';
 import { buildTrackMesh } from './render/track';
 import {
+  clearRecords,
+  exportSummaryText,
+  getRecords,
+  type CourseRecords,
+} from './services/records';
+import {
   createHud,
   disposeHud,
   hideAirtimePopup,
+  hideCountdownOverlay,
+  hideFinishScreen,
   hideSplitPopup,
   setHudProgressCheckpoints,
+  showAirtimePopup,
   showCountdownOverlay,
   showFinishScreen,
   showSplitPopup,
-  showAirtimePopup,
   updateHud,
+  updateTitleScreen,
   type HudViewModel,
 } from './ui/hud';
 
@@ -143,6 +155,36 @@ function createDebugOverlay(container: HTMLElement): DebugOverlay | null {
   };
 }
 
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (!text) {
+    return false;
+  }
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fallback below
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 function bootstrap(): void {
   const container = document.getElementById('app');
   if (!container) {
@@ -154,13 +196,53 @@ function bootstrap(): void {
 
   const sceneCtx = createSceneContext(container);
   const debugOverlay = createDebugOverlay(container);
-  const hud = createHud(container);
   const sound = createSound();
   sound.init();
   sound.unlock();
 
   const touchControls = createTouchControls(container, CONFIG.touch);
   touchControls.setMutedVisual(sound.getMuted());
+
+  const activeCourseDef = getCourse(CONFIG.activeCourseId);
+  const course = new Course(buildCourseConfigFromDefinition(activeCourseDef));
+  const raceState = createRaceState(course);
+
+  let lastFinishData: FinishResultData | null = null;
+  let lastFinishRecords: CourseRecords | null = null;
+
+  let onConfirmFromUi: () => void = () => {};
+  let onReturnToMenuFromUi: () => void = () => {};
+  let onClearRecordsFromUi: () => void = () => {};
+
+  const hud = createHud(container, {
+    onStartRace: () => {
+      if (raceState.phase === 'TITLE') {
+        onConfirmFromUi();
+      }
+    },
+    onRetryRace: () => {
+      if (raceState.phase !== 'TITLE') {
+        onConfirmFromUi();
+      }
+    },
+    onReturnToMenu: () => {
+      onReturnToMenuFromUi();
+    },
+    onCopyResult: async () => {
+      if (!lastFinishData) {
+        return false;
+      }
+      const summary = exportSummaryText(lastFinishData, {
+        id: course.getId(),
+        name: course.getName(),
+        medals: course.getMedals(),
+      });
+      return copyTextToClipboard(summary);
+    },
+    onClearRecords: () => {
+      onClearRecordsFromUi();
+    },
+  });
 
   function handleAudioButtonClick(): void {
     sound.unlock();
@@ -170,9 +252,6 @@ function bootstrap(): void {
   }
   hud.audioBtnEl.addEventListener('click', handleAudioButtonClick);
 
-  const activeCourseDef = getCourse(CONFIG.activeCourseId);
-  const course = new Course(buildCourseConfigFromDefinition(activeCourseDef));
-
   const finishS = course.getFinishS();
   const progressSpanS = Math.max(1, finishS - CONFIG.car.startS);
   const checkpointRatios = course
@@ -180,13 +259,15 @@ function bootstrap(): void {
     .map((cp) => THREE.MathUtils.clamp((cp.s - CONFIG.car.startS) / progressSpanS, 0, 1));
   setHudProgressCheckpoints(hud, checkpointRatios);
 
+  const bounds = course.getBounds();
+  sceneCtx.setRoomBounds(bounds);
+
   const trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy);
   sceneCtx.scene.add(trackVisual.group);
 
   const gates = buildGates(course, sceneCtx.maxAnisotropy);
   sceneCtx.scene.add(gates.group);
 
-  const bounds = course.getBounds();
   const orbitRadius = Math.max(
     CONFIG.camera.orbitMinRadius,
     bounds.radius * CONFIG.camera.orbitRadiusScale,
@@ -243,11 +324,6 @@ function bootstrap(): void {
   }
   window.addEventListener('resize', handleWindowResize);
 
-  const raceState = createRaceState(course);
-  let referenceBestSplits: number[] | null = raceState.bestSplits
-    ? [...raceState.bestSplits]
-    : null;
-
   let prevState = createCarState();
   let currState = createCarState();
   const renderState = createCarState();
@@ -270,6 +346,7 @@ function bootstrap(): void {
 
   const hudViewModel: HudViewModel = {
     phase: raceState.phase,
+    resultReady: raceState.resultReady,
     speedKmh: 0,
     boost01: 0,
     progress01: 0,
@@ -313,6 +390,15 @@ function bootstrap(): void {
   let frameHandle = 0;
   let disposed = false;
 
+  function syncTitleUi(): void {
+    updateTitleScreen(hud, {
+      courseName: course.getName(),
+      medals: course.getMedals(),
+      records: getRecords(course.getId(), course.getMedals()),
+    });
+  }
+  syncTitleUi();
+
   touchControls.setPhase(raceState.phase);
 
   let paused = false;
@@ -351,15 +437,31 @@ function bootstrap(): void {
         gates.setActive(ev.index + 1);
         showSplitPopup(hud, ev);
       } else if (ev.type === 'finish') {
-        showFinishScreen(hud, raceState, referenceBestSplits);
+        lastFinishData = ev;
+        lastFinishRecords = getRecords(course.getId(), course.getMedals());
+        chaseCamera.setMode('finish');
+      } else if (ev.type === 'resultReady') {
+        if (lastFinishData) {
+          showFinishScreen(hud, {
+            courseName: course.getName(),
+            finish: lastFinishData,
+            records: lastFinishRecords ?? getRecords(course.getId(), course.getMedals()),
+          });
+        }
       }
     }
   }
 
   function handleConfirmAction(): void {
     sound.unlock();
+    lastFinishData = null;
+    lastFinishRecords = null;
+    hideFinishScreen(hud);
+
     if (raceState.phase === 'TITLE') {
       sound.handleEvents([{ type: 'uiConfirm' }]);
+      particles.reset();
+      postfx.setSpeedIntensity(0);
       const events = startCountdown(raceState);
       chaseCamera.setMode('chase');
       handleRaceEvents(events);
@@ -369,12 +471,14 @@ function bootstrap(): void {
     prevState = createCarState();
     currState = createCarState();
     gates.reset();
+    particles.reset();
+    postfx.setSpeedIntensity(0);
     hideAirtimePopup(hud);
     hideSplitPopup(hud);
+    hideCountdownOverlay(hud);
 
     sound.reset();
     const events = restartRace(raceState);
-    referenceBestSplits = raceState.bestSplits ? [...raceState.bestSplits] : null;
     chaseCamera.setMode('chase');
 
     if (CONFIG.camera.snapOnReset && !CONFIG.camera.debugOrbitMode) {
@@ -384,6 +488,46 @@ function bootstrap(): void {
 
     handleRaceEvents(events);
   }
+
+  function handleReturnToTitle(): void {
+    sound.unlock();
+    lastFinishData = null;
+    lastFinishRecords = null;
+    lastThrottle = 0;
+
+    prevState = createCarState();
+    currState = createCarState();
+    gates.reset();
+    particles.reset();
+    postfx.setSpeedIntensity(0);
+    hideAirtimePopup(hud);
+    hideSplitPopup(hud);
+    hideCountdownOverlay(hud);
+    hideFinishScreen(hud);
+
+    sound.reset();
+    const events = returnToTitle(raceState, course);
+    chaseCamera.setMode('title');
+
+    if (!CONFIG.camera.debugOrbitMode) {
+      getCarPose(currState, course, renderPose);
+      chaseCamera.snapTo(renderPose, currState, course);
+    }
+
+    handleRaceEvents(events);
+    sound.handleEvents([{ type: 'uiConfirm' }]);
+    syncTitleUi();
+  }
+
+  onConfirmFromUi = handleConfirmAction;
+  onReturnToMenuFromUi = handleReturnToTitle;
+  onClearRecordsFromUi = (): void => {
+    sound.unlock();
+    clearRecords(course.getId());
+    refreshRaceRecords(raceState, course);
+    sound.handleEvents([{ type: 'uiConfirm' }]);
+    syncTitleUi();
+  };
 
   function handleCheckpointReset(): void {
     const target = getRespawnTarget(raceState, course);
@@ -406,6 +550,12 @@ function bootstrap(): void {
       sound.unlock();
       const nextMuted = sound.toggleMute();
       touchControls.setMutedVisual(nextMuted);
+    }
+
+    if (input.menuPressed && raceState.phase === 'FINISH') {
+      lastThrottle = 0;
+      handleReturnToTitle();
+      return;
     }
 
     if (input.confirmPressed || (input.restartPressed && raceState.phase !== 'TITLE')) {
@@ -463,15 +613,21 @@ function bootstrap(): void {
 
     sound.handleEvents(physicsEvents);
 
+    const carSpeedKmh =
+      (currState.mode === 'grounded' ? Math.abs(currState.vForward) : currState.worldVel.length()) *
+      CONFIG.hud.speedScale;
+
     const raceEvents = updateRace(
       raceState,
       {
         s: currState.s,
         sApprox: currState.sApprox,
         mode: currState.mode,
+        speedKmh: carSpeedKmh,
       },
       course,
       step,
+      physicsEvents,
     );
     handleRaceEvents(raceEvents);
 
@@ -541,6 +697,7 @@ function bootstrap(): void {
     const activeProgressS =
       renderState.mode === 'grounded' ? renderState.s : renderState.sApprox;
     hudViewModel.phase = raceState.phase;
+    hudViewModel.resultReady = raceState.resultReady;
     hudViewModel.speedKmh = speedMs * CONFIG.hud.speedScale;
     hudViewModel.boost01 =
       CONFIG.boost.duration > 1e-4

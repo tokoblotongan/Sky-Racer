@@ -13,6 +13,16 @@ export const CONFIG = {
     trackChunkLength: 60,
     propsChunkLength: 100,
     chunkCullMargin: 60,
+    viewDistance: 700, // jarak pandang culling chunk & acuan camera.far tanpa fog
+    cullFadeMargin: 80, // jarak penyusutan skala halus chunk sebelum batas viewDistance
+    anisotropyMax: 8, // batas atas anisotropic filtering tekstur lantai, lintasan, dan dinding
+    antialias: {
+      composerSamples: {
+        low: 0,
+        medium: 4,
+        high: 4,
+      },
+    },
   },
   autopilot: {
     kLateral: 0.35,
@@ -32,12 +42,13 @@ export const CONFIG = {
   },
   visual: {
     exposure: 0.9, // eksposur ACES renderer (naik = adegan lebih terang, turun = warna lebih pekat & bayangan lebih dalam)
+    fogEnabled: false, // nonaktifkan fog bawaan agar lintasan jernih; tekan F3 untuk toggle debug fog
     skyTop: '#4DB3FF', // warna biru puncak kubah langit (naik kecerahan = langit lebih pucat, turun = biru langit lebih pekat)
     skyHorizon: '#BFE3FF', // warna biru terang di garis horizon langit (naik = horizon lebih cerah, turun = transisi ke kabut lebih gelap)
-    fogColor: '#A9D8F5', // warna kabut jauh sedikit lebih biru & gelap dari horizon (naik = kabut lebih pucat, turun = siluet jauh lebih gelap)
-    fogType: 'linear' as 'linear' | 'exp2', // mode kabut linear agar area bermain dekat tetap bersih bebas kabut
-    fogNear: 90, // jarak mulai kabut dalam meter di luar jarak kamera ke lintasan (naik = area bebas kabut makin jauh, turun = kabut mulai mendekat)
-    fogFar: 420, // jarak kabut penuh dalam meter di batas ruangan (naik = dinding jauh lebih terlihat, turun = cepat memudar)
+    fogColor: '#A9D8F5', // warna kabut debug (hanya aktif bila fogEnabled / F3 dinyalakan)
+    fogType: 'linear' as 'linear' | 'exp2', // mode kabut debug
+    fogNear: 90, // jarak mulai kabut debug
+    fogFar: 420, // jarak kabut penuh debug
     hemisphereIntensity: 0.55, // intensitas cahaya pantulan langit-lantai (naik = sisi gelap objek lebih terang/datar, turun = kontras bayangan lebih kuat)
     hemisphereSkyColor: '#BFE3FF', // warna cahaya langit hemisphere dari atas
     hemisphereGroundColor: '#8B5A2B', // warna pantulan kayu hangat dari bawah (naik kecerahan = bagian bawah objek lebih terang)
@@ -102,7 +113,7 @@ export const CONFIG = {
   },
   camera: {
     near: 0.3,
-    far: 1400,
+    far: 840,
     distance: 8.6,
     height: 3.35,
     lateralFollowFactor: 0.65,
@@ -122,6 +133,10 @@ export const CONFIG = {
     rollYawWeight: 0.55,
     rollSmoothTime: 0.16,
     snapOnReset: true,
+    finishOrbitSpeed: 0.42,
+    finishOrbitRadius: 10.5,
+    finishOrbitHeight: 3.6,
+    finishOrbitSmoothTime: 0.45,
     debugOrbitMode: false,
     orbitRadiusScale: 1.32,
     orbitMinRadius: 95,
@@ -163,9 +178,12 @@ export const CONFIG = {
     supportSpacing: 22,
     supportLandingExclusion: 22,
     shadowDistance: 145,
+    roomMargin: 150, // margin minimum di setiap sisi bounding box lintasan untuk dinding, lantai, dan langit-langit
     wallColor: '#8FD8D0', // warna dinding depan & belakang mint jenuh sedang (naik kecerahan = makin pucat, turun = makin teduh)
     sideWallColor: '#7FC4F0', // warna dinding samping biru pastel jenuh sedang (naik kecerahan = makin pucat, turun = makin pekat)
     baseboardColor: '#B59670', // warna plint dinding krem hangat gelap agar memisah dari dinding & lantai
+    ceilingColor: '#E8F2FC', // warna langit-langit ruangan terang agar tetap lapang tanpa celah kosong
+    ceilingSkylightColor: '#A9DCFF', // warna panel skylight langit-langit
     floorColor: {
       light: '#B9783A', // warna papan kayu hangat terang (naik = lantai lebih cerah, turun = lebih gelap)
       mid: '#A36530', // warna papan kayu hangat sedang
@@ -290,6 +308,7 @@ export const CONFIG = {
     countdownSeconds: 3,
     goHoldSeconds: 0.85,
     finishMargin: 6,
+    resultDelay: 1.2, // jeda kamera mengorbit mobil setelah finish sebelum panel hasil muncul
     resetPenaltySeconds: 0,
     resetSpeedFactor: 0.75,
     titleOrbitSpeed: 0.35,
@@ -297,7 +316,10 @@ export const CONFIG = {
     titleOrbitHeight: 4.2,
   },
   storage: {
-    key: 'sky-racer-best-v1',
+    key: 'sky-racer-best-v1', // kunci lama Tahap 6 (hanya untuk migrasi satu kali)
+    recordsKey: 'sky-racer-records-v1',
+    migratedKey: 'sky-racer-records-migrated-v1',
+    topRecordsCount: 5,
   },
   audio: {
     masterVolume: 0.75, // volume utama seluruh game (naik = semua suara lebih keras, turun = lebih pelan)

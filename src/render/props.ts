@@ -5,6 +5,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { CONFIG } from '../config';
 import type { Course } from '../core/course';
 import type { QualityLevel } from './quality';
+import { computeRoomDimensions } from './scene';
 
 export interface PropsVisual {
   group: THREE.Group;
@@ -33,6 +34,8 @@ interface CullablePropChunk {
   cx: number;
   cz: number;
   radius: number;
+  keepFar: boolean;
+  currentScale: number;
 }
 
 function mulberry32(seed: number): () => number {
@@ -72,61 +75,6 @@ function mergeWithCleanup(geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
 function freezeStatic(obj: THREE.Object3D): void {
   obj.updateMatrix();
   obj.matrixAutoUpdate = false;
-}
-
-function createWallTexture(
-  baseHex: string,
-  stripeHex: string,
-  maxAnisotropy: number,
-): THREE.CanvasTexture {
-  const width = 512;
-  const height = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = baseHex;
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.fillStyle = stripeHex;
-    ctx.globalAlpha = 0.38;
-    const stripeCount = 24;
-    const stripeW = width / (stripeCount * 2);
-    for (let i = 0; i < stripeCount; i++) {
-      ctx.fillRect(i * stripeW * 2, 0, stripeW, height);
-    }
-    ctx.globalAlpha = 1;
-
-    ctx.fillStyle = 'rgba(15, 42, 58, 0.045)';
-    for (let y = 0; y < height; y += 8) {
-      ctx.fillRect(0, y, width, 1);
-    }
-
-    const bottomGrad = ctx.createLinearGradient(0, height * 0.56, 0, height);
-    bottomGrad.addColorStop(0.0, 'rgba(12, 34, 48, 0.0)');
-    bottomGrad.addColorStop(1.0, 'rgba(12, 34, 48, 0.25)');
-    ctx.fillStyle = bottomGrad;
-    ctx.fillRect(0, height * 0.56, width, height * 0.44);
-
-    const leftGrad = ctx.createLinearGradient(0, 0, width * 0.14, 0);
-    leftGrad.addColorStop(0.0, 'rgba(10, 28, 42, 0.24)');
-    leftGrad.addColorStop(1.0, 'rgba(10, 28, 42, 0.0)');
-    ctx.fillStyle = leftGrad;
-    ctx.fillRect(0, 0, width * 0.14, height);
-
-    const rightGrad = ctx.createLinearGradient(width * 0.86, 0, width, 0);
-    rightGrad.addColorStop(0.0, 'rgba(10, 28, 42, 0.0)');
-    rightGrad.addColorStop(1.0, 'rgba(10, 28, 42, 0.24)');
-    ctx.fillStyle = rightGrad;
-    ctx.fillRect(width * 0.86, 0, width * 0.14, height);
-  }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.anisotropy = maxAnisotropy;
-  return tex;
 }
 
 function createRugTexture(maxAnisotropy: number): THREE.CanvasTexture {
@@ -332,7 +280,8 @@ export function buildProps(
   const qualityPreset = CONFIG.quality.levels[qualityLevel];
   const densityScale = cfg.density * qualityPreset.propsDensityScale;
   const propsChunkSize = Math.max(40, CONFIG.render.propsChunkLength);
-  const maxVisibleDistance = CONFIG.visual.fogFar + CONFIG.render.chunkCullMargin;
+  const viewDistance = CONFIG.render.viewDistance;
+  const fadeMargin = Math.max(1, CONFIG.render.cullFadeMargin);
 
   const group = new THREE.Group();
   group.name = 'RoomPropsGroup';
@@ -356,33 +305,27 @@ export function buildProps(
 
   const rand = mulberry32(cfg.seed);
   const bounds = course.getBounds();
-  const roomCenterX = bounds.center.x;
-  const roomCenterZ = bounds.center.z;
-  const roomW = Math.max(
-    cfg.roomSize.width,
-    Math.ceil((bounds.max.x - bounds.min.x + 120) / 20) * 20,
-  );
-  const roomD = Math.max(
-    cfg.roomSize.depth,
-    Math.ceil((bounds.max.z - bounds.min.z + 120) / 20) * 20,
-  );
+  const roomDim = computeRoomDimensions(bounds);
+  const roomCenterX = roomDim.centerX;
+  const roomCenterZ = roomDim.centerZ;
+  const roomW = roomDim.width;
+  const roomD = roomDim.depth;
   const halfW = roomW * 0.5;
   const halfD = roomD * 0.5;
-  const roomH = cfg.roomSize.height;
 
-  // Spatial chunk registry for frustum + fog-distance culling
+  // Spatial chunk registry for frustum + viewDistance culling with smooth fade margin
   const cullableChunks: CullablePropChunk[] = [];
   const chunkMap = new Map<string, CullablePropChunk>();
   const chunkRadius = propsChunkSize * 0.85;
 
-  const getChunkGroup = (x: number, z: number): THREE.Group => {
+  const getChunkGroup = (x: number, z: number, keepFar = false): THREE.Group => {
     const gx = Math.floor((x - roomCenterX) / propsChunkSize);
     const gz = Math.floor((z - roomCenterZ) / propsChunkSize);
-    const key = `${gx},${gz}`;
+    const key = `${keepFar ? 'far' : 'near'}:${gx},${gz}`;
     let entry = chunkMap.get(key);
     if (!entry) {
       const chunkGroup = new THREE.Group();
-      chunkGroup.name = `PropsChunk_${gx}_${gz}`;
+      chunkGroup.name = `PropsChunk_${keepFar ? 'Hero_' : ''}${gx}_${gz}`;
       freezeStatic(chunkGroup);
       group.add(chunkGroup);
       entry = {
@@ -390,6 +333,8 @@ export function buildProps(
         cx: roomCenterX + (gx + 0.5) * propsChunkSize,
         cz: roomCenterZ + (gz + 0.5) * propsChunkSize,
         radius: chunkRadius,
+        keepFar,
+        currentScale: 1,
       };
       chunkMap.set(key, entry);
       cullableChunks.push(entry);
@@ -493,81 +438,14 @@ export function buildProps(
   const beamUpRef = new THREE.Vector3(0, 1, 0);
 
   // =========================================================================
-  // 1. Giant Room Walls + Baseboards + Sunlit Window + Sunbeams (always present)
+  // 1. Giant Sunlit Window + Sunbeams on +X Wall (walls & baseboards are in scene.ts)
   // =========================================================================
-  const backWallTex = trackTex(
-    createWallTexture(cfg.wallColor, pal.wallStripe, maxAnisotropy),
-  );
-  const backWallMat = trackMat(
-    new THREE.MeshStandardMaterial({
-      map: backWallTex,
-      roughness: 0.9,
-      metalness: 0.0,
-    }),
-  );
-
-  const sideWallTex = trackTex(
-    createWallTexture(cfg.sideWallColor, pal.sideWallStripe, maxAnisotropy),
-  );
-  const sideWallMat = trackMat(
-    new THREE.MeshStandardMaterial({
-      map: sideWallTex,
-      roughness: 0.9,
-      metalness: 0.0,
-    }),
-  );
-
-  const wallThickness = 4;
-  const backFrontWallDefs = [
-    { w: roomW + wallThickness * 2, d: wallThickness, x: roomCenterX, z: roomCenterZ - halfD },
-    { w: roomW + wallThickness * 2, d: wallThickness, x: roomCenterX, z: roomCenterZ + halfD },
-  ];
-  const sideWallDefs = [
-    { w: wallThickness, d: roomD, x: roomCenterX - halfW, z: roomCenterZ },
-    { w: wallThickness, d: roomD, x: roomCenterX + halfW, z: roomCenterZ },
-  ];
-
-  const backWallGeoms: THREE.BufferGeometry[] = [];
-  const sideWallGeoms: THREE.BufferGeometry[] = [];
-  const baseboardGeomsToMerge: THREE.BufferGeometry[] = [];
-
-  for (const wd of backFrontWallDefs) {
-    const wg = new THREE.BoxGeometry(wd.w, roomH, wd.d);
-    wg.translate(wd.x, roomH * 0.5, wd.z);
-    backWallGeoms.push(wg);
-
-    const bb = new THREE.BoxGeometry(wd.w - 1, 4.5, wd.d + 1.2);
-    bb.translate(wd.x, 2.25, wd.z);
-    baseboardGeomsToMerge.push(bb);
-  }
-
-  for (const wd of sideWallDefs) {
-    const wg = new THREE.BoxGeometry(wd.w, roomH, wd.d);
-    wg.translate(wd.x, roomH * 0.5, wd.z);
-    sideWallGeoms.push(wg);
-
-    const bb = new THREE.BoxGeometry(wd.w + 1.2, 4.5, wd.d - 1);
-    bb.translate(wd.x, 2.25, wd.z);
-    baseboardGeomsToMerge.push(bb);
-  }
-
-  const backWallsMesh = new THREE.Mesh(trackGeom(mergeWithCleanup(backWallGeoms)), backWallMat);
-  backWallsMesh.castShadow = false;
-  backWallsMesh.receiveShadow = true;
-  freezeStatic(backWallsMesh);
-  group.add(backWallsMesh);
-
-  const sideWallsMesh = new THREE.Mesh(trackGeom(mergeWithCleanup(sideWallGeoms)), sideWallMat);
-  sideWallsMesh.castShadow = false;
-  sideWallsMesh.receiveShadow = true;
-  freezeStatic(sideWallsMesh);
-  group.add(sideWallsMesh);
-
   const woodDarkMat = trackMat(
     new THREE.MeshStandardMaterial({
       color: pal.woodDark,
       roughness: 0.68,
       metalness: 0.02,
+      fog: false,
     }),
   );
   const woodLightMat = trackMat(
@@ -575,24 +453,9 @@ export function buildProps(
       color: pal.woodLight,
       roughness: 0.64,
       metalness: 0.02,
+      fog: false,
     }),
   );
-  const baseboardMat = trackMat(
-    new THREE.MeshStandardMaterial({
-      color: cfg.baseboardColor,
-      roughness: 0.66,
-      metalness: 0.02,
-    }),
-  );
-
-  const baseboardsMesh = new THREE.Mesh(
-    trackGeom(mergeWithCleanup(baseboardGeomsToMerge)),
-    baseboardMat,
-  );
-  baseboardsMesh.castShadow = false;
-  baseboardsMesh.receiveShadow = true;
-  freezeStatic(baseboardsMesh);
-  group.add(baseboardsMesh);
 
   // Sunlit multi-pane window on the +X wall
   const windowX = roomCenterX + halfW - 2.3;
@@ -936,7 +799,7 @@ export function buildProps(
     freezeStatic(bulbMesh);
     lampGroup.add(lampMetalMesh, shadeMesh, bulbMesh);
     freezeStatic(lampGroup);
-    getChunkGroup(lampSpot.x, lampSpot.z).add(lampGroup);
+    getChunkGroup(lampSpot.x, lampSpot.z, true).add(lampGroup);
   }
 
   // Hero 2: Giant Wooden Bookshelf against back-left wall area
@@ -1004,7 +867,7 @@ export function buildProps(
     freezeStatic(shelfBooksMesh);
     shelfGroup.add(shelfMesh, shelfBooksMesh);
     freezeStatic(shelfGroup);
-    getChunkGroup(shelfSpot.x, shelfSpot.z).add(shelfGroup);
+    getChunkGroup(shelfSpot.x, shelfSpot.z, true).add(shelfGroup);
   }
 
   // =========================================================================
@@ -1390,7 +1253,34 @@ export function buildProps(
     for (let i = 0; i < cullableChunks.length; i++) {
       const chunk = cullableChunks[i];
       const dist = Math.hypot(chunk.cx - camX, chunk.cz - camZ);
-      chunk.group.visible = dist - chunk.radius <= maxVisibleDistance;
+      const edgeDist = Math.max(0, dist - chunk.radius);
+
+      if (chunk.keepFar) {
+        chunk.group.visible = edgeDist <= viewDistance + fadeMargin;
+        continue;
+      }
+
+      if (edgeDist >= viewDistance) {
+        chunk.group.visible = false;
+        continue;
+      }
+
+      chunk.group.visible = true;
+      const fadeStart = Math.max(0, viewDistance - fadeMargin);
+      let targetScale = 1;
+      if (edgeDist > fadeStart) {
+        const t = (viewDistance - edgeDist) / fadeMargin;
+        const smoothT = t * t * (3 - 2 * t);
+        targetScale = Math.max(0.02, smoothT);
+      }
+
+      if (Math.abs(targetScale - chunk.currentScale) > 0.004) {
+        chunk.currentScale = targetScale;
+        chunk.group.scale.setScalar(targetScale);
+        // Scale around chunk floor center (cx, 0, cz) so props shrink in place without sliding
+        chunk.group.position.set(chunk.cx * (1 - targetScale), 0, chunk.cz * (1 - targetScale));
+        chunk.group.updateMatrix();
+      }
     }
   }
 

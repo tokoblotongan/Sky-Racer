@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config';
 import { getCourse, type CourseDefinition } from '../courses';
-import type { CourseSegmentConfig } from '../courses/types';
+import type { CourseMedals, CourseSegmentConfig } from '../courses/types';
 
 export type CourseSegmentType = CourseSegmentConfig['type'];
 
@@ -66,6 +66,9 @@ export interface CourseBounds {
 }
 
 export interface CourseConfig {
+  id?: string;
+  name?: string;
+  medals?: CourseMedals;
   segments: readonly CourseSegmentConfig[];
   startPosition: { readonly x: number; readonly y: number; readonly z: number };
   startHeadingDeg: number;
@@ -272,6 +275,9 @@ export function buildCourseConfigFromDefinition(
     CONFIG.debug.showFps,
 ): CourseConfig {
   return {
+    id: definition.id,
+    name: definition.name,
+    medals: definition.medals,
     segments: definition.segments,
     startPosition: definition.startPosition ?? CONFIG.course.startPosition,
     startHeadingDeg: definition.startHeadingDeg ?? CONFIG.course.startHeadingDeg,
@@ -319,6 +325,9 @@ export class Course {
   private readonly segProgressTable: Float32Array;
   private readonly isGapTable: Uint8Array;
 
+  private readonly id: string;
+  private readonly name: string;
+  private readonly medals: CourseMedals;
   private cachedSamples: TrackFrame[] | null = null;
   private readonly segmentMeta: CourseSegmentMeta[];
   private readonly totalLength: number;
@@ -330,6 +339,10 @@ export class Course {
 
   constructor(inputConfig?: CourseConfig) {
     const config = inputConfig ?? buildCourseConfigFromDefinition();
+    const fallbackDef = getCourse(CONFIG.activeCourseId);
+    this.id = config.id ?? fallbackDef.id;
+    this.name = config.name ?? fallbackDef.name;
+    this.medals = config.medals ?? fallbackDef.medals;
     if (config.segments.length === 0) {
       throw new Error('Course requires at least 1 segment.');
     }
@@ -899,6 +912,18 @@ export class Course {
         `[SkyRacer Course] Peringatan: terdeteksi ${collisionWarningCount} pasangan sampel lintasan berjarak < lebar lintasan (${defaultWidth}m).`,
       );
     }
+  }
+
+  getId(): string {
+    return this.id;
+  }
+
+  getName(): string {
+    return this.name;
+  }
+
+  getMedals(): CourseMedals {
+    return this.medals;
   }
 
   getLength(): number {

@@ -2,8 +2,18 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CONFIG } from '../config';
+import type { CourseBounds } from '../core/course';
 import type { QualityLevel } from './quality';
+
+export interface RoomDimensions {
+  centerX: number;
+  centerZ: number;
+  width: number;
+  depth: number;
+  height: number;
+}
 
 export interface SceneContext {
   renderer: THREE.WebGLRenderer;
@@ -11,12 +21,33 @@ export interface SceneContext {
   camera: THREE.PerspectiveCamera;
   isSoftwareGl: boolean;
   maxAnisotropy: number;
+  setRoomBounds: (bounds: CourseBounds) => void;
   setOrbitTarget: (target: THREE.Vector3, radius: number, height: number) => void;
   setCameraOrbitAngle: (angleRad: number) => void;
   updateSunShadowTarget: (focusPos: THREE.Vector3) => void;
   setQuality: (level: QualityLevel) => void;
   getViewportSize: () => { width: number; height: number };
   dispose: () => void;
+}
+
+export function computeRoomDimensions(bounds: CourseBounds): RoomDimensions {
+  const margin = CONFIG.props.roomMargin;
+  const width = Math.max(
+    CONFIG.props.roomSize.width,
+    Math.ceil((bounds.max.x - bounds.min.x + margin * 2) / 20) * 20,
+  );
+  const depth = Math.max(
+    CONFIG.props.roomSize.depth,
+    Math.ceil((bounds.max.z - bounds.min.z + margin * 2) / 20) * 20,
+  );
+  const height = Math.max(CONFIG.props.roomSize.height, Math.ceil(bounds.max.y + 115));
+  return {
+    centerX: bounds.center.x,
+    centerZ: bounds.center.z,
+    width,
+    depth,
+    height,
+  };
 }
 
 function detectSoftwareWebGL(): boolean {
@@ -32,12 +63,33 @@ function detectSoftwareWebGL(): boolean {
   return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
 }
 
+function makeNonIndexedNormalized(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const nonIndexed = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+  if (!nonIndexed.getAttribute('normal')) {
+    nonIndexed.computeVertexNormals();
+  }
+  if (!nonIndexed.getAttribute('uv')) {
+    const pos = nonIndexed.getAttribute('position');
+    nonIndexed.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(pos.count * 2), 2));
+  }
+  return nonIndexed;
+}
+
+function mergeRoomGeoms(geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const prepared = geoms.map((g) => makeNonIndexedNormalized(g));
+  const merged = mergeGeometries(prepared, false);
+  for (const g of geoms) g.dispose();
+  for (const g of prepared) g.dispose();
+  return merged ?? new THREE.BoxGeometry(1, 1, 1);
+}
+
 function createSkyDome(): {
   mesh: THREE.Mesh;
   geometry: THREE.BufferGeometry;
   material: THREE.ShaderMaterial;
 } {
-  const geometry = new THREE.SphereGeometry(960, 32, 24);
+  const radius = Math.min(580, CONFIG.render.viewDistance * 0.8);
+  const geometry = new THREE.SphereGeometry(radius, 32, 24);
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uSkyTop: { value: new THREE.Color(CONFIG.visual.skyTop) },
@@ -48,7 +100,9 @@ function createSkyDome(): {
       varying vec3 vLocalDir;
       void main() {
         vLocalDir = normalize(position);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        vec4 clipPos = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        clipPos.z = clipPos.w * 0.9999;
+        gl_Position = clipPos;
       }
     `,
     fragmentShader: /* glsl */ `
@@ -72,6 +126,7 @@ function createSkyDome(): {
     `,
     side: THREE.BackSide,
     depthWrite: false,
+    depthTest: false,
     fog: false,
   });
 
@@ -110,7 +165,6 @@ function createWoodFloorTextures(maxAnisotropy: number): {
       cCtx.fillStyle = baseColor;
       cCtx.fillRect(0, y, size, plankHeight);
 
-      // Subtle warm highlight band near top of each plank for board depth
       cCtx.fillStyle = 'rgba(255, 224, 180, 0.08)';
       cCtx.fillRect(0, y + 2, size, 4);
 
@@ -118,7 +172,6 @@ function createWoodFloorTextures(maxAnisotropy: number): {
       rCtx.fillStyle = `rgb(${roughBase},${roughBase},${roughBase})`;
       rCtx.fillRect(0, y, size, plankHeight);
 
-      // Rich wood grain fibers with higher contrast
       for (let g = 0; g < 32; g++) {
         const gy = y + 3 + ((g * 6 + row * 11) % (plankHeight - 6));
         cCtx.strokeStyle = g % 3 === 0 ? fc.light : CONFIG.colors.woodGrain;
@@ -144,7 +197,6 @@ function createWoodFloorTextures(maxAnisotropy: number): {
       cCtx.globalAlpha = 1;
       rCtx.globalAlpha = 1;
 
-      // Crisp plank seam & end joint
       cCtx.fillStyle = CONFIG.colors.woodSeam;
       cCtx.globalAlpha = 0.85;
       cCtx.fillRect(0, y, size, 2.5);
@@ -177,6 +229,108 @@ function createWoodFloorTextures(maxAnisotropy: number): {
   roughnessMap.anisotropy = maxAnisotropy;
 
   return { colorMap, roughnessMap };
+}
+
+function createWallTexture(
+  baseHex: string,
+  stripeHex: string,
+  maxAnisotropy: number,
+): THREE.CanvasTexture {
+  const width = 512;
+  const height = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = baseHex;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = stripeHex;
+    ctx.globalAlpha = 0.36;
+    const stripeCount = 24;
+    const stripeW = width / (stripeCount * 2);
+    for (let i = 0; i < stripeCount; i++) {
+      ctx.fillRect(i * stripeW * 2, 0, stripeW, height);
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = 'rgba(15, 42, 58, 0.045)';
+    for (let y = 0; y < height; y += 8) {
+      ctx.fillRect(0, y, width, 1);
+    }
+
+    // Subtle atmospheric wall gradient so corners & baseboards stay grounded cleanly without fog
+    const topGrad = ctx.createLinearGradient(0, 0, 0, height * 0.22);
+    topGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.16)');
+    topGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
+    ctx.fillStyle = topGrad;
+    ctx.fillRect(0, 0, width, height * 0.22);
+
+    const bottomGrad = ctx.createLinearGradient(0, height * 0.56, 0, height);
+    bottomGrad.addColorStop(0.0, 'rgba(12, 34, 48, 0.0)');
+    bottomGrad.addColorStop(1.0, 'rgba(12, 34, 48, 0.22)');
+    ctx.fillStyle = bottomGrad;
+    ctx.fillRect(0, height * 0.56, width, height * 0.44);
+
+    const leftGrad = ctx.createLinearGradient(0, 0, width * 0.12, 0);
+    leftGrad.addColorStop(0.0, 'rgba(10, 28, 42, 0.2)');
+    leftGrad.addColorStop(1.0, 'rgba(10, 28, 42, 0.0)');
+    ctx.fillStyle = leftGrad;
+    ctx.fillRect(0, 0, width * 0.12, height);
+
+    const rightGrad = ctx.createLinearGradient(width * 0.88, 0, width, 0);
+    rightGrad.addColorStop(0.0, 'rgba(10, 28, 42, 0.0)');
+    rightGrad.addColorStop(1.0, 'rgba(10, 28, 42, 0.2)');
+    ctx.fillStyle = rightGrad;
+    ctx.fillRect(width * 0.88, 0, width * 0.12, height);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+function createCeilingTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = CONFIG.props.ceilingColor;
+    ctx.fillRect(0, 0, size, size);
+
+    // Subtle coffered ceiling grid & airy skylight panels
+    ctx.strokeStyle = 'rgba(148, 175, 204, 0.34)';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(5, 5, size - 10, size - 10);
+
+    const inset = 54;
+    ctx.fillStyle = CONFIG.props.ceilingSkylightColor;
+    ctx.globalAlpha = 0.42;
+    ctx.fillRect(inset, inset, size - inset * 2, size - inset * 2);
+    ctx.globalAlpha = 1;
+
+    ctx.strokeStyle = 'rgba(201, 194, 182, 0.55)';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(inset, inset, size - inset * 2, size - inset * 2);
+
+    ctx.beginPath();
+    ctx.moveTo(size * 0.5, inset);
+    ctx.lineTo(size * 0.5, size - inset);
+    ctx.moveTo(inset, size * 0.5);
+    ctx.lineTo(size - inset, size * 0.5);
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
 }
 
 function disposeObjectResources(root: THREE.Object3D): void {
@@ -225,17 +379,27 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.appendChild(renderer.domElement);
 
+  const maxAnisotropy = Math.min(
+    renderer.capabilities.getMaxAnisotropy(),
+    CONFIG.render.anisotropyMax,
+  );
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(vis.skyHorizon);
 
   const skyDome = createSkyDome();
   scene.add(skyDome.mesh);
 
-  const activeFog: THREE.Fog | THREE.FogExp2 =
-    vis.fogType === 'linear'
-      ? new THREE.Fog(vis.fogColor, vis.fogNear, vis.fogFar)
-      : new THREE.FogExp2(vis.fogColor, CONFIG.lighting.fogDensity);
-  scene.fog = activeFog;
+  // Default path: scene.fog = null unless visual.fogEnabled === true (no FogExp2/Fog by default)
+  let debugFog: THREE.Fog | null = null;
+  const ensureDebugFog = (): THREE.Fog => {
+    if (!debugFog) {
+      debugFog = new THREE.Fog(vis.fogColor, vis.fogNear, vis.fogFar);
+    }
+    return debugFog;
+  };
+  let fogEnabled: boolean = vis.fogEnabled;
+  scene.fog = fogEnabled ? ensureDebugFog() : null;
 
   const pmremGenerator = new THREE.PMREMGenerator(renderer);
   const roomEnvironment = new RoomEnvironment();
@@ -252,7 +416,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     CONFIG.camera.fovBase,
     aspect,
     CONFIG.camera.near,
-    CONFIG.camera.far,
+    CONFIG.render.viewDistance * 1.2,
   );
 
   const sunOffsetVec = new THREE.Vector3(
@@ -294,24 +458,190 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   hemiLight.position.set(0, 120, 0);
   scene.add(hemiLight);
 
-  const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
-
+  // Room shell: seamless floor + 4 walls + baseboards + ceiling with full anisotropic textures
   const { colorMap: woodColorMap, roughnessMap: woodRoughnessMap } =
     createWoodFloorTextures(maxAnisotropy);
-  const floorGeometry = new THREE.PlaneGeometry(CONFIG.floor.size, CONFIG.floor.size);
-  floorGeometry.rotateX(-Math.PI / 2);
   const floorMaterial = new THREE.MeshStandardMaterial({
     map: woodColorMap,
     roughnessMap: woodRoughnessMap,
     roughness: CONFIG.floor.roughness,
     metalness: CONFIG.floor.metalness,
   });
-  const floorMesh = new THREE.Mesh(floorGeometry, floorMaterial);
-  floorMesh.receiveShadow = true;
-  scene.add(floorMesh);
+
+  const backWallTex = createWallTexture(
+    CONFIG.props.wallColor,
+    CONFIG.props.palette.wallStripe,
+    maxAnisotropy,
+  );
+  const backWallMat = new THREE.MeshStandardMaterial({
+    map: backWallTex,
+    roughness: 0.9,
+    metalness: 0.0,
+  });
+
+  const sideWallTex = createWallTexture(
+    CONFIG.props.sideWallColor,
+    CONFIG.props.palette.sideWallStripe,
+    maxAnisotropy,
+  );
+  const sideWallMat = new THREE.MeshStandardMaterial({
+    map: sideWallTex,
+    roughness: 0.9,
+    metalness: 0.0,
+  });
+
+  const baseboardMat = new THREE.MeshStandardMaterial({
+    color: CONFIG.props.baseboardColor,
+    roughness: 0.66,
+    metalness: 0.02,
+  });
+
+  const ceilingTex = createCeilingTexture(maxAnisotropy);
+  const ceilingMat = new THREE.MeshStandardMaterial({
+    map: ceilingTex,
+    roughness: 0.88,
+    metalness: 0.0,
+    emissive: new THREE.Color(CONFIG.props.ceilingColor),
+    emissiveIntensity: 0.24,
+  });
+
+  const roomShellGroup = new THREE.Group();
+  roomShellGroup.name = 'RoomShellGroup';
+  scene.add(roomShellGroup);
+  const roomGeometries: THREE.BufferGeometry[] = [];
+
+  function rebuildRoomShell(dim: RoomDimensions): void {
+    while (roomShellGroup.children.length > 0) {
+      roomShellGroup.remove(roomShellGroup.children[0]);
+    }
+    while (roomGeometries.length > 0) {
+      roomGeometries.pop()?.dispose();
+    }
+
+    const wallThickness = 4;
+    const floorW = dim.width + wallThickness * 4;
+    const floorD = dim.depth + wallThickness * 4;
+    const plankRepeatX = Math.max(12, Math.round(floorW / 12.5));
+    const plankRepeatZ = Math.max(12, Math.round(floorD / 12.5));
+    woodColorMap.repeat.set(plankRepeatX, plankRepeatZ);
+    woodRoughnessMap.repeat.set(plankRepeatX, plankRepeatZ);
+
+    const floorGeom = new THREE.PlaneGeometry(floorW, floorD);
+    floorGeom.rotateX(-Math.PI / 2);
+    roomGeometries.push(floorGeom);
+    const floorMesh = new THREE.Mesh(floorGeom, floorMaterial);
+    floorMesh.name = 'RoomFloor';
+    floorMesh.position.set(dim.centerX, 0, dim.centerZ);
+    floorMesh.receiveShadow = true;
+    floorMesh.castShadow = false;
+    floorMesh.updateMatrix();
+    floorMesh.matrixAutoUpdate = false;
+    roomShellGroup.add(floorMesh);
+
+    const halfW = dim.width * 0.5;
+    const halfD = dim.depth * 0.5;
+    const wallH = dim.height + 4; // extend slightly past ceiling plane so zero seam gap
+
+    const backFrontWallDefs = [
+      { w: dim.width + wallThickness * 2, d: wallThickness, x: dim.centerX, z: dim.centerZ - halfD },
+      { w: dim.width + wallThickness * 2, d: wallThickness, x: dim.centerX, z: dim.centerZ + halfD },
+    ];
+    const sideWallDefs = [
+      { w: wallThickness, d: dim.depth + wallThickness * 2, x: dim.centerX - halfW, z: dim.centerZ },
+      { w: wallThickness, d: dim.depth + wallThickness * 2, x: dim.centerX + halfW, z: dim.centerZ },
+    ];
+
+    const backWallGeoms: THREE.BufferGeometry[] = [];
+    const sideWallGeoms: THREE.BufferGeometry[] = [];
+    const trimGeoms: THREE.BufferGeometry[] = [];
+
+    for (const wd of backFrontWallDefs) {
+      const wg = new THREE.BoxGeometry(wd.w, wallH, wd.d);
+      wg.translate(wd.x, wallH * 0.5 - 1, wd.z);
+      backWallGeoms.push(wg);
+
+      // Floor baseboard (plint bawah)
+      const bb = new THREE.BoxGeometry(wd.w - 1, 4.5, wd.d + 1.2);
+      bb.translate(wd.x, 2.25, wd.z);
+      trimGeoms.push(bb);
+
+      // Ceiling crown trim (plint atas)
+      const cb = new THREE.BoxGeometry(wd.w - 1, 4.2, wd.d + 1.4);
+      cb.translate(wd.x, dim.height - 2.1, wd.z);
+      trimGeoms.push(cb);
+    }
+
+    for (const wd of sideWallDefs) {
+      const wg = new THREE.BoxGeometry(wd.w, wallH, wd.d);
+      wg.translate(wd.x, wallH * 0.5 - 1, wd.z);
+      sideWallGeoms.push(wg);
+
+      const bb = new THREE.BoxGeometry(wd.w + 1.2, 4.5, wd.d - 1);
+      bb.translate(wd.x, 2.25, wd.z);
+      trimGeoms.push(bb);
+
+      const cb = new THREE.BoxGeometry(wd.w + 1.4, 4.2, wd.d - 1);
+      cb.translate(wd.x, dim.height - 2.1, wd.z);
+      trimGeoms.push(cb);
+    }
+
+    const backGeom = mergeRoomGeoms(backWallGeoms);
+    roomGeometries.push(backGeom);
+    const backWallsMesh = new THREE.Mesh(backGeom, backWallMat);
+    backWallsMesh.name = 'RoomBackFrontWalls';
+    backWallsMesh.castShadow = false;
+    backWallsMesh.receiveShadow = true;
+    backWallsMesh.updateMatrix();
+    backWallsMesh.matrixAutoUpdate = false;
+    roomShellGroup.add(backWallsMesh);
+
+    const sideGeom = mergeRoomGeoms(sideWallGeoms);
+    roomGeometries.push(sideGeom);
+    const sideWallsMesh = new THREE.Mesh(sideGeom, sideWallMat);
+    sideWallsMesh.name = 'RoomSideWalls';
+    sideWallsMesh.castShadow = false;
+    sideWallsMesh.receiveShadow = true;
+    sideWallsMesh.updateMatrix();
+    sideWallsMesh.matrixAutoUpdate = false;
+    roomShellGroup.add(sideWallsMesh);
+
+    const trimGeom = mergeRoomGeoms(trimGeoms);
+    roomGeometries.push(trimGeom);
+    const trimMesh = new THREE.Mesh(trimGeom, baseboardMat);
+    trimMesh.name = 'RoomBaseboardsAndCrown';
+    trimMesh.castShadow = false;
+    trimMesh.receiveShadow = true;
+    trimMesh.updateMatrix();
+    trimMesh.matrixAutoUpdate = false;
+    roomShellGroup.add(trimMesh);
+
+    ceilingTex.repeat.set(
+      Math.max(4, Math.round(floorW / 95)),
+      Math.max(4, Math.round(floorD / 95)),
+    );
+    const ceilingGeom = new THREE.PlaneGeometry(floorW, floorD);
+    ceilingGeom.rotateX(Math.PI / 2);
+    roomGeometries.push(ceilingGeom);
+    const ceilingMesh = new THREE.Mesh(ceilingGeom, ceilingMat);
+    ceilingMesh.name = 'RoomCeiling';
+    ceilingMesh.position.set(dim.centerX, dim.height, dim.centerZ);
+    ceilingMesh.castShadow = false;
+    ceilingMesh.receiveShadow = false;
+    ceilingMesh.updateMatrix();
+    ceilingMesh.matrixAutoUpdate = false;
+    roomShellGroup.add(ceilingMesh);
+  }
+
+  // Initial room shell before course bounds arrive
+  rebuildRoomShell({
+    centerX: 0,
+    centerZ: 0,
+    width: CONFIG.props.roomSize.width,
+    depth: CONFIG.props.roomSize.depth,
+    height: CONFIG.props.roomSize.height,
+  });
 
   // Visual debug keys (F3 fog, F4 bloom, [ / ] exposure) & compact bottom-center status badge
-  let fogEnabled = true;
   let bloomDebugEnabled = true;
   let currentExposure: number = vis.exposure;
   scene.userData.visualDebugBloomEnabled = bloomDebugEnabled;
@@ -330,7 +660,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     if (event.code === 'F3') {
       event.preventDefault();
       fogEnabled = !fogEnabled;
-      scene.fog = fogEnabled ? activeFog : null;
+      scene.fog = fogEnabled ? ensureDebugFog() : null;
       updateVisualDebugOverlay();
     } else if (event.code === 'F4') {
       event.preventDefault();
@@ -403,12 +733,17 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     sunLight.target.updateMatrixWorld();
   }
 
+  function setRoomBounds(bounds: CourseBounds): void {
+    const dim = computeRoomDimensions(bounds);
+    rebuildRoomShell(dim);
+    skyDome.mesh.position.set(dim.centerX, 0, dim.centerZ);
+  }
+
   function setOrbitTarget(target: THREE.Vector3, radius: number, height: number): void {
     orbitTarget.copy(target);
     orbitRadius = radius;
     orbitHeight = height;
 
-    floorMesh.position.set(target.x, 0, target.z);
     skyDome.mesh.position.set(target.x, 0, target.z);
     updateSunShadowTarget(target);
   }
@@ -501,6 +836,7 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     camera,
     isSoftwareGl,
     maxAnisotropy,
+    setRoomBounds,
     setOrbitTarget,
     setCameraOrbitAngle,
     updateSunShadowTarget,
