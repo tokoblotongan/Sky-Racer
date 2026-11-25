@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { CONFIG } from '../config';
-import type { Course, TrackFrame } from '../core/course';
+import type { Course, CourseChunkRange, TrackFrame } from '../core/course';
 
 interface ProfilePoint {
   xNorm: number;
@@ -36,7 +36,6 @@ function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
   const ctx = canvas.getContext('2d');
 
   if (ctx) {
-    // Base glossy orange with brighter raised outer edges
     const grad = ctx.createLinearGradient(0, 0, size, 0);
     grad.addColorStop(0.0, CONFIG.colors.trackEdge);
     grad.addColorStop(0.085, CONFIG.colors.trackEdge);
@@ -47,7 +46,6 @@ function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
 
-    // Subtle longitudinal molded toy-track grooves
     const groovePositions = [0.22, 0.35, 0.65, 0.78];
     ctx.strokeStyle = CONFIG.colors.trackGroove;
     ctx.lineWidth = 4;
@@ -60,7 +58,6 @@ function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
       ctx.stroke();
     }
 
-    // Thin dashed center line (runs along V = track length)
     ctx.fillStyle = CONFIG.colors.trackCenterDash;
     ctx.globalAlpha = 0.85;
     const dashWidth = Math.max(6, size * 0.016);
@@ -73,7 +70,6 @@ function createTrackCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
       ctx.fillRect(dashX, y, dashWidth, dashLength);
     }
 
-    // Subtle transverse plastic mold seams
     ctx.strokeStyle = CONFIG.colors.trackEdge;
     ctx.lineWidth = 2;
     ctx.globalAlpha = 0.14;
@@ -108,7 +104,6 @@ function createRailCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
 
-    // Subtle molded rib bands along rail length
     ctx.strokeStyle = CONFIG.colors.railHighlight;
     ctx.globalAlpha = 0.24;
     ctx.lineWidth = 3;
@@ -142,7 +137,6 @@ function createJumpStripCanvasTexture(maxAnisotropy: number): THREE.CanvasTextur
     ctx.fillStyle = CONFIG.colors.accent;
     ctx.fillRect(0, 0, size, size);
 
-    // Bold diagonal hazard/chevron stripes in #FFD23F + dark contrast
     ctx.save();
     ctx.fillStyle = CONFIG.colors.jumpStripeDark;
     const stripeCount = 6;
@@ -160,7 +154,6 @@ function createJumpStripCanvasTexture(maxAnisotropy: number): THREE.CanvasTextur
     }
     ctx.restore();
 
-    // Crisp yellow border bands along front and back edge of the strip
     ctx.fillStyle = CONFIG.colors.accent;
     const borderH = Math.max(8, size * 0.11);
     ctx.fillRect(0, 0, size, borderH);
@@ -183,17 +176,14 @@ function createBoostPadCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture
   const ctx = canvas.getContext('2d');
 
   if (ctx) {
-    // Deep translucent cyan base so bright chevrons pop clearly
     ctx.fillStyle = '#093B5C';
     ctx.fillRect(0, 0, size, size);
 
-    // Glowing side rails along boost strip edges
     const borderW = size * 0.08;
     ctx.fillStyle = CONFIG.colors.boost;
     ctx.fillRect(0, 0, borderW, size);
     ctx.fillRect(size - borderW, 0, borderW, size);
 
-    // Forward-pointing glowing chevrons (UV v scrolls forward)
     const chevronCount = 3;
     const cellH = size / chevronCount;
     const midX = size * 0.5;
@@ -216,7 +206,6 @@ function createBoostPadCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture
       ctx.closePath();
       ctx.fill();
 
-      // Bright core highlight inside each chevron
       ctx.fillStyle = CONFIG.colors.boostStripeLight;
       ctx.beginPath();
       ctx.moveTo(midX, tipY + thickness * 0.22);
@@ -238,6 +227,34 @@ function createBoostPadCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture
   return texture;
 }
 
+function createStartGridCanvasTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  if (ctx) {
+    const cols = 12;
+    const rows = 3;
+    const cellW = size / cols;
+    const cellH = size / rows;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        ctx.fillStyle = (r + c) % 2 === 0 ? '#FFFDF7' : '#111827';
+        ctx.fillRect(c * cellW, r * cellH, cellW + 0.5, cellH + 0.5);
+      }
+    }
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.anisotropy = maxAnisotropy;
+  return texture;
+}
+
 function buildTrackCrossSectionProfile(): ProfilePoint[] {
   const cfg = CONFIG.course;
   const thickness = cfg.trackThickness;
@@ -248,7 +265,6 @@ function buildTrackCrossSectionProfile(): ProfilePoint[] {
 
   const points: ProfilePoint[] = [];
 
-  // Left-to-right across the top drivable deck (xNorm in [-1, 1], y = 0)
   for (let i = 0; i <= topSegs; i++) {
     const angle = Math.PI - (i / topSegs) * (Math.PI * 0.5);
     const dx = Math.cos(angle) * topR;
@@ -366,10 +382,29 @@ function splitSolidSpans(samples: readonly TrackFrame[]): TrackFrame[][] {
   return spans;
 }
 
+function sliceSpanFramesForRange(
+  course: Course,
+  spanFrames: readonly TrackFrame[],
+  startS: number,
+  endS: number,
+): TrackFrame[] {
+  const out: TrackFrame[] = [];
+  out.push(course.getFrameAt(startS));
+  for (let i = 0; i < spanFrames.length; i++) {
+    const f = spanFrames[i];
+    if (f.s > startS + 1e-4 && f.s < endS - 1e-4) {
+      out.push(f);
+    }
+  }
+  out.push(course.getFrameAt(endS));
+  return out;
+}
+
 function buildRingSequence(
   frames: readonly TrackFrame[],
   tileMeters: number,
-  bevelLength: number,
+  startBevelLength: number,
+  endBevelLength: number,
   bevelSegments: number,
   profileMidY: number,
 ): RingSpec[] {
@@ -377,12 +412,11 @@ function buildRingSequence(
   const firstFrame = frames[0];
   const lastFrame = frames[frames.length - 1];
 
-  // Rounded start bevel nose extending slightly along -tangent
-  if (bevelLength > 1e-4 && bevelSegments >= 1) {
+  if (startBevelLength > 1e-4 && bevelSegments >= 1) {
     for (let k = bevelSegments; k >= 1; k--) {
       const t = k / bevelSegments;
       const angle = t * (Math.PI * 0.46);
-      const shift = -bevelLength * Math.sin(angle);
+      const shift = -startBevelLength * Math.sin(angle);
       rings.push({
         frame: firstFrame,
         profileScale: Math.max(0.14, Math.cos(angle)),
@@ -403,12 +437,11 @@ function buildRingSequence(
     });
   }
 
-  // Rounded end bevel nose extending slightly along +tangent
-  if (bevelLength > 1e-4 && bevelSegments >= 1) {
+  if (endBevelLength > 1e-4 && bevelSegments >= 1) {
     for (let k = 1; k <= bevelSegments; k++) {
       const t = k / bevelSegments;
       const angle = t * (Math.PI * 0.46);
-      const shift = bevelLength * Math.sin(angle);
+      const shift = endBevelLength * Math.sin(angle);
       rings.push({
         frame: lastFrame,
         profileScale: Math.max(0.14, Math.cos(angle)),
@@ -428,17 +461,27 @@ function buildSweptGeometry(
   tileMeters: number,
   computeLateralOffset: (frame: TrackFrame, pt: ProfilePoint, profileScale: number) => number,
   verticalBias: number,
-  bevelLength: number,
+  startBevelLength: number,
+  endBevelLength: number,
   bevelSegments: number,
   profileMidY: number,
 ): SweptMeshResult {
-  const rings = buildRingSequence(frames, tileMeters, bevelLength, bevelSegments, profileMidY);
+  const rings = buildRingSequence(
+    frames,
+    tileMeters,
+    startBevelLength,
+    endBevelLength,
+    bevelSegments,
+    profileMidY,
+  );
   const ringCount = rings.length;
   const profCount = profile.length;
   const ringStride = profCount + 1;
 
+  const hasStartCap = startBevelLength > 1e-4;
+  const hasEndCap = endBevelLength > 1e-4;
   const sideVertexCount = ringCount * ringStride;
-  const capVertexCount = profCount * 2;
+  const capVertexCount = (hasStartCap ? profCount : 0) + (hasEndCap ? profCount : 0);
   const totalVertices = sideVertexCount + capVertexCount;
 
   const positions = new Float32Array(totalVertices * 3);
@@ -487,51 +530,59 @@ function buildSweptGeometry(
     }
   }
 
-  // Cap the outermost bevel rings cleanly
-  const startCapOffset = sideVertexCount;
-  const endCapOffset = sideVertexCount + profCount;
-  const startRing = rings[0];
-  const endRing = rings[ringCount - 1];
+  let capCursor = sideVertexCount;
 
-  for (let p = 0; p < profCount; p++) {
-    const pt = profile[p];
-
-    const startScaledY =
-      startRing.profileMidY + (pt.yOffset - startRing.profileMidY) * startRing.profileScale;
-    vPos
-      .copy(startRing.frame.position)
-      .addScaledVector(startRing.frame.tangent, startRing.tangentShift)
-      .addScaledVector(
-        startRing.frame.right,
-        computeLateralOffset(startRing.frame, pt, startRing.profileScale),
-      )
-      .addScaledVector(startRing.frame.up, startScaledY + verticalBias);
-    positions[(startCapOffset + p) * 3] = vPos.x;
-    positions[(startCapOffset + p) * 3 + 1] = vPos.y;
-    positions[(startCapOffset + p) * 3 + 2] = vPos.z;
-    uvs[(startCapOffset + p) * 2] = pt.u;
-    uvs[(startCapOffset + p) * 2 + 1] = startRing.vCoord;
-
-    const endScaledY =
-      endRing.profileMidY + (pt.yOffset - endRing.profileMidY) * endRing.profileScale;
-    vPos
-      .copy(endRing.frame.position)
-      .addScaledVector(endRing.frame.tangent, endRing.tangentShift)
-      .addScaledVector(
-        endRing.frame.right,
-        computeLateralOffset(endRing.frame, pt, endRing.profileScale),
-      )
-      .addScaledVector(endRing.frame.up, endScaledY + verticalBias);
-    positions[(endCapOffset + p) * 3] = vPos.x;
-    positions[(endCapOffset + p) * 3 + 1] = vPos.y;
-    positions[(endCapOffset + p) * 3 + 2] = vPos.z;
-    uvs[(endCapOffset + p) * 2] = pt.u;
-    uvs[(endCapOffset + p) * 2 + 1] = endRing.vCoord;
+  if (hasStartCap) {
+    const startRing = rings[0];
+    const startCapOffset = capCursor;
+    capCursor += profCount;
+    for (let p = 0; p < profCount; p++) {
+      const pt = profile[p];
+      const startScaledY =
+        startRing.profileMidY + (pt.yOffset - startRing.profileMidY) * startRing.profileScale;
+      vPos
+        .copy(startRing.frame.position)
+        .addScaledVector(startRing.frame.tangent, startRing.tangentShift)
+        .addScaledVector(
+          startRing.frame.right,
+          computeLateralOffset(startRing.frame, pt, startRing.profileScale),
+        )
+        .addScaledVector(startRing.frame.up, startScaledY + verticalBias);
+      positions[(startCapOffset + p) * 3] = vPos.x;
+      positions[(startCapOffset + p) * 3 + 1] = vPos.y;
+      positions[(startCapOffset + p) * 3 + 2] = vPos.z;
+      uvs[(startCapOffset + p) * 2] = pt.u;
+      uvs[(startCapOffset + p) * 2 + 1] = startRing.vCoord;
+    }
+    for (let p = 1; p < profCount - 1; p++) {
+      indices.push(startCapOffset, startCapOffset + p + 1, startCapOffset + p);
+    }
   }
 
-  for (let p = 1; p < profCount - 1; p++) {
-    indices.push(startCapOffset, startCapOffset + p + 1, startCapOffset + p);
-    indices.push(endCapOffset, endCapOffset + p, endCapOffset + p + 1);
+  if (hasEndCap) {
+    const endRing = rings[ringCount - 1];
+    const endCapOffset = capCursor;
+    for (let p = 0; p < profCount; p++) {
+      const pt = profile[p];
+      const endScaledY =
+        endRing.profileMidY + (pt.yOffset - endRing.profileMidY) * endRing.profileScale;
+      vPos
+        .copy(endRing.frame.position)
+        .addScaledVector(endRing.frame.tangent, endRing.tangentShift)
+        .addScaledVector(
+          endRing.frame.right,
+          computeLateralOffset(endRing.frame, pt, endRing.profileScale),
+        )
+        .addScaledVector(endRing.frame.up, endScaledY + verticalBias);
+      positions[(endCapOffset + p) * 3] = vPos.x;
+      positions[(endCapOffset + p) * 3 + 1] = vPos.y;
+      positions[(endCapOffset + p) * 3 + 2] = vPos.z;
+      uvs[(endCapOffset + p) * 2] = pt.u;
+      uvs[(endCapOffset + p) * 2 + 1] = endRing.vCoord;
+    }
+    for (let p = 1; p < profCount - 1; p++) {
+      indices.push(endCapOffset, endCapOffset + p, endCapOffset + p + 1);
+    }
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -544,22 +595,34 @@ function buildSweptGeometry(
   return { geometry };
 }
 
-function buildJumpEdgeStrips(
+function createSurfaceRibbonMesh(
   course: Course,
-  stripMaterial: THREE.Material,
-): THREE.Group {
+  startS: number,
+  endS: number,
+  lateralCenter: number,
+  ribbonWidth: number,
+  lift: number,
+  uScale: number,
+  flipV: boolean,
+  material: THREE.Material,
+): THREE.Mesh | null {
   const cfg = CONFIG.course;
-  const stripsGroup = new THREE.Group();
-  stripsGroup.name = 'JumpEdgeStrips';
-
-  const gaps = course.getGapRanges();
-  if (gaps.length === 0) {
-    return stripsGroup;
+  const totalLen = course.getLength();
+  const clampedStart = Math.max(0, startS);
+  const clampedEnd = Math.min(totalLen, endS);
+  const spanLen = clampedEnd - clampedStart;
+  if (spanLen < 0.2) {
+    return null;
   }
 
-  const totalLen = course.getLength();
-  const stripLen = cfg.jumpStripLength;
   const latSubdivs = 8;
+  const lengthSteps = Math.max(4, Math.ceil(spanLen / cfg.stepLength));
+  const cols = latSubdivs + 1;
+  const rows = lengthSteps + 1;
+  const positions = new Float32Array(rows * cols * 3);
+  const uvs = new Float32Array(rows * cols * 2);
+  const indices: number[] = [];
+
   const frame: TrackFrame = {
     s: 0,
     position: new THREE.Vector3(),
@@ -570,182 +633,65 @@ function buildJumpEdgeStrips(
     bank: 0,
   };
   const vPos = new THREE.Vector3();
+  const halfW = ribbonWidth * 0.5;
 
-  const createStripForRange = (startS: number, endS: number): THREE.Mesh | null => {
-    const clampedStart = Math.max(0, startS);
-    const clampedEnd = Math.min(totalLen, endS);
-    const spanLen = clampedEnd - clampedStart;
-    if (spanLen < 0.2) {
-      return null;
-    }
+  for (let r = 0; r < rows; r++) {
+    const vFrac = r / lengthSteps;
+    const s = THREE.MathUtils.lerp(clampedStart, clampedEnd, vFrac);
+    course.getFrameAt(s, frame);
 
-    const lengthSteps = Math.max(4, Math.ceil(spanLen / cfg.stepLength));
-    const cols = latSubdivs + 1;
-    const rows = lengthSteps + 1;
-    const positions = new Float32Array(rows * cols * 3);
-    const uvs = new Float32Array(rows * cols * 2);
-    const indices: number[] = [];
+    for (let c = 0; c < cols; c++) {
+      const uFrac = c / latSubdivs;
+      const lat = lateralCenter + THREE.MathUtils.lerp(-halfW, halfW, uFrac);
+      vPos
+        .copy(frame.position)
+        .addScaledVector(frame.right, lat)
+        .addScaledVector(frame.up, lift);
 
-    for (let r = 0; r < rows; r++) {
-      const vFrac = r / lengthSteps;
-      const s = THREE.MathUtils.lerp(clampedStart, clampedEnd, vFrac);
-      course.getFrameAt(s, frame);
-      const halfStripW = Math.max(0.5, frame.width * 0.5 - cfg.jumpStripInset);
-
-      for (let c = 0; c < cols; c++) {
-        const uFrac = c / latSubdivs;
-        const lat = THREE.MathUtils.lerp(-halfStripW, halfStripW, uFrac);
-        vPos
-          .copy(frame.position)
-          .addScaledVector(frame.right, lat)
-          .addScaledVector(frame.up, cfg.jumpStripLift);
-
-        const idx = r * cols + c;
-        positions[idx * 3] = vPos.x;
-        positions[idx * 3 + 1] = vPos.y;
-        positions[idx * 3 + 2] = vPos.z;
-        uvs[idx * 2] = uFrac * 2;
-        uvs[idx * 2 + 1] = vFrac;
-      }
-    }
-
-    for (let r = 0; r < lengthSteps; r++) {
-      for (let c = 0; c < latSubdivs; c++) {
-        const a = r * cols + c;
-        const b = a + 1;
-        const cIdx = (r + 1) * cols + c;
-        const d = cIdx + 1;
-        indices.push(a, b, cIdx);
-        indices.push(b, d, cIdx);
-      }
-    }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-    geometry.computeBoundingSphere();
-
-    const mesh = new THREE.Mesh(geometry, stripMaterial);
-    mesh.receiveShadow = true;
-    return mesh;
-  };
-
-  for (const gap of gaps) {
-    const takeoffStrip = createStripForRange(gap.startS - stripLen, gap.startS);
-    if (takeoffStrip) {
-      stripsGroup.add(takeoffStrip);
-    }
-    const landingStrip = createStripForRange(gap.endS, gap.endS + stripLen);
-    if (landingStrip) {
-      stripsGroup.add(landingStrip);
+      const idx = r * cols + c;
+      positions[idx * 3] = vPos.x;
+      positions[idx * 3 + 1] = vPos.y;
+      positions[idx * 3 + 2] = vPos.z;
+      uvs[idx * 2] = uFrac * uScale;
+      uvs[idx * 2 + 1] = flipV ? (1 - vFrac) * 2 : vFrac;
     }
   }
 
-  return stripsGroup;
+  for (let r = 0; r < lengthSteps; r++) {
+    for (let c = 0; c < latSubdivs; c++) {
+      const a = r * cols + c;
+      const b = a + 1;
+      const cIdx = (r + 1) * cols + c;
+      const d = cIdx + 1;
+      indices.push(a, b, cIdx);
+      indices.push(b, d, cIdx);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.receiveShadow = true;
+  mesh.frustumCulled = true;
+  return mesh;
 }
 
-function buildBoostPadStrips(
-  course: Course,
-  boostMaterial: THREE.Material,
-): THREE.Group {
-  const cfg = CONFIG.course;
-  const boostCfg = CONFIG.boost;
-  const boostGroup = new THREE.Group();
-  boostGroup.name = 'BoostPadsGroup';
-
-  const pads = course.getBoostPads();
-  if (pads.length === 0) {
-    return boostGroup;
-  }
-
-  const totalLen = course.getLength();
-  const latSubdivs = 6;
-  const frame: TrackFrame = {
-    s: 0,
-    position: new THREE.Vector3(),
-    tangent: new THREE.Vector3(),
-    up: new THREE.Vector3(),
-    right: new THREE.Vector3(),
-    width: cfg.trackWidth,
-    bank: 0,
-  };
-  const vPos = new THREE.Vector3();
-
-  for (const pad of pads) {
-    const startS = Math.max(0, pad.s - pad.length * 0.5);
-    const endS = Math.min(totalLen, pad.s + pad.length * 0.5);
-    const spanLen = endS - startS;
-    if (spanLen < 0.5) {
-      continue;
-    }
-
-    const lengthSteps = Math.max(6, Math.ceil(spanLen / cfg.stepLength));
-    const cols = latSubdivs + 1;
-    const rows = lengthSteps + 1;
-    const positions = new Float32Array(rows * cols * 3);
-    const uvs = new Float32Array(rows * cols * 2);
-    const indices: number[] = [];
-    const halfPadW = pad.width * 0.5;
-
-    for (let r = 0; r < rows; r++) {
-      const vFrac = r / lengthSteps;
-      const s = THREE.MathUtils.lerp(startS, endS, vFrac);
-      course.getFrameAt(s, frame);
-
-      for (let c = 0; c < cols; c++) {
-        const uFrac = c / latSubdivs;
-        const lat = pad.lateral + THREE.MathUtils.lerp(-halfPadW, halfPadW, uFrac);
-        vPos
-          .copy(frame.position)
-          .addScaledVector(frame.right, lat)
-          .addScaledVector(frame.up, boostCfg.lift);
-
-        const idx = r * cols + c;
-        positions[idx * 3] = vPos.x;
-        positions[idx * 3 + 1] = vPos.y;
-        positions[idx * 3 + 2] = vPos.z;
-        uvs[idx * 2] = uFrac;
-        uvs[idx * 2 + 1] = (1 - vFrac) * 2;
-      }
-    }
-
-    for (let r = 0; r < lengthSteps; r++) {
-      for (let c = 0; c < latSubdivs; c++) {
-        const a = r * cols + c;
-        const b = a + 1;
-        const cIdx = (r + 1) * cols + c;
-        const d = cIdx + 1;
-        indices.push(a, b, cIdx);
-        indices.push(b, d, cIdx);
-      }
-    }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-    geometry.computeBoundingSphere();
-
-    const mesh = new THREE.Mesh(geometry, boostMaterial);
-    mesh.receiveShadow = true;
-    boostGroup.add(mesh);
-  }
-
-  return boostGroup;
-}
-
-function buildRailPosts(
+function addChunkRailPosts(
+  chunkGroup: THREE.Group,
   course: Course,
   railMaterial: THREE.Material,
-  spans: readonly TrackFrame[][],
-): THREE.Group {
+  postGeometry: THREE.BufferGeometry,
+  endBodyGeom: THREE.BufferGeometry,
+  endDomeGeom: THREE.BufferGeometry,
+  postLocations: readonly number[],
+  endLocations: readonly number[],
+): void {
   const cfg = CONFIG.course;
-  const postsGroup = new THREE.Group();
-  postsGroup.name = 'RailPostsGroup';
-
   const frame: TrackFrame = {
     s: 0,
     position: new THREE.Vector3(),
@@ -759,30 +705,7 @@ function buildRailPosts(
   const pos = new THREE.Vector3();
   const negForward = new THREE.Vector3();
 
-  // 1. Intermediate posts along each solid track span
-  const postLocations: number[] = [];
-  for (const span of spans) {
-    const spanStart = span[0].s;
-    const spanEnd = span[span.length - 1].s;
-    const margin = 1.25;
-    const usableLen = spanEnd - spanStart - margin * 2;
-    if (usableLen <= 0.5) {
-      continue;
-    }
-    const count = Math.max(1, Math.floor(usableLen / cfg.railPostSpacingMeters) + 1);
-    for (let i = 0; i < count; i++) {
-      const frac = count === 1 ? 0.5 : i / (count - 1);
-      postLocations.push(spanStart + margin + frac * usableLen);
-    }
-  }
-
   if (postLocations.length > 0) {
-    const postGeometry = new THREE.CylinderGeometry(
-      cfg.railPostRadius,
-      cfg.railPostRadius,
-      cfg.railPostHeight,
-      10,
-    );
     const instanced = new THREE.InstancedMesh(
       postGeometry,
       railMaterial,
@@ -790,6 +713,7 @@ function buildRailPosts(
     );
     instanced.castShadow = true;
     instanced.receiveShadow = true;
+    instanced.frustumCulled = true;
 
     let instanceIdx = 0;
     for (const s of postLocations) {
@@ -811,31 +735,19 @@ function buildRailPosts(
 
     instanced.instanceMatrix.needsUpdate = true;
     instanced.computeBoundingSphere();
-    postsGroup.add(instanced);
-  }
-
-  // 2. Short rounded end posts capping the rails at each span start/end (including gap edges)
-  const endLocations: number[] = [];
-  for (const span of spans) {
-    endLocations.push(span[0].s, span[span.length - 1].s);
+    chunkGroup.add(instanced);
   }
 
   if (endLocations.length > 0) {
-    const endBodyGeom = new THREE.CylinderGeometry(
-      cfg.railEndPostRadius,
-      cfg.railEndPostRadius,
-      cfg.railEndPostHeight,
-      14,
-    );
-    const endDomeGeom = new THREE.SphereGeometry(cfg.railEndPostRadius, 14, 10);
-
     const totalEndPosts = endLocations.length * 2;
     const endBodies = new THREE.InstancedMesh(endBodyGeom, railMaterial, totalEndPosts);
     const endDomes = new THREE.InstancedMesh(endDomeGeom, railMaterial, totalEndPosts);
     endBodies.castShadow = true;
     endBodies.receiveShadow = true;
+    endBodies.frustumCulled = true;
     endDomes.castShadow = true;
     endDomes.receiveShadow = true;
+    endDomes.frustumCulled = true;
 
     let endIdx = 0;
     const postCenterHeight = cfg.railVerticalOffset * 0.5 + cfg.railEndPostHeight * 0.35;
@@ -871,11 +783,8 @@ function buildRailPosts(
     endBodies.computeBoundingSphere();
     endDomes.instanceMatrix.needsUpdate = true;
     endDomes.computeBoundingSphere();
-    postsGroup.add(endBodies);
-    postsGroup.add(endDomes);
+    chunkGroup.add(endBodies, endDomes);
   }
-
-  return postsGroup;
 }
 
 function buildDebugCourseFrames(course: Course): THREE.Group {
@@ -939,6 +848,7 @@ function buildDebugCourseFrames(course: Course): THREE.Group {
 export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
   const cfg = CONFIG.course;
   const spans = splitSolidSpans(course.getSamples());
+  const chunks: CourseChunkRange[] = course.getChunks(CONFIG.render.trackChunkLength);
   const group = new THREE.Group();
   group.name = 'TrackGroup';
 
@@ -970,50 +880,6 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
     ior: cfg.trackIor,
   });
 
-  // 1 & 2. Solid track deck spans and left/right guardrails (skipped inside gaps)
-  for (const spanFrames of spans) {
-    const { geometry: trackGeometry } = buildSweptGeometry(
-      spanFrames,
-      trackProfile,
-      cfg.trackTileMeters,
-      (frame, pt, scale) => {
-        const halfLat = frame.width * 0.5;
-        const innerTuck = (1 - scale) * 0.06;
-        return pt.xNorm * (halfLat - innerTuck) + pt.xOffset * scale;
-      },
-      0,
-      cfg.endCapBevelLength,
-      cfg.endCapBevelSegments,
-      -cfg.trackThickness * 0.5,
-    );
-
-    const trackMesh = new THREE.Mesh(trackGeometry, trackMaterial);
-    trackMesh.castShadow = true;
-    trackMesh.receiveShadow = true;
-    group.add(trackMesh);
-
-    for (const side of [-1, 1]) {
-      const { geometry: railGeometry } = buildSweptGeometry(
-        spanFrames,
-        railProfile,
-        cfg.railTileMeters,
-        (frame, pt, scale) =>
-          side * (frame.width * 0.5 + CONFIG.physics.railInnerOffset + cfg.railWidth * 0.5) +
-          pt.xOffset * scale,
-        cfg.railVerticalOffset,
-        cfg.endCapBevelLength * 0.75,
-        cfg.endCapBevelSegments,
-        0,
-      );
-
-      const railMesh = new THREE.Mesh(railGeometry, railMaterial);
-      railMesh.castShadow = true;
-      railMesh.receiveShadow = true;
-      group.add(railMesh);
-    }
-  }
-
-  // 3. Yellow diagonal accent strips (#FFD23F) at takeoff & landing edges
   const jumpStripTexture = createJumpStripCanvasTexture(maxAnisotropy);
   const jumpStripMaterial = new THREE.MeshPhysicalMaterial({
     map: jumpStripTexture,
@@ -1026,9 +892,7 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   });
-  group.add(buildJumpEdgeStrips(course, jumpStripMaterial));
 
-  // 4. Boost pads (#35D4FF emissive with scrolling UV chevron pattern)
   const boostTexture = createBoostPadCanvasTexture(maxAnisotropy);
   const boostColor = new THREE.Color(CONFIG.colors.boost);
   const boostMaterial = new THREE.MeshPhysicalMaterial({
@@ -1044,12 +908,221 @@ export function buildTrackMesh(course: Course, maxAnisotropy = 8): TrackVisual {
     polygonOffsetFactor: -3,
     polygonOffsetUnits: -3,
   });
-  group.add(buildBoostPadStrips(course, boostMaterial));
 
-  // 5. Support posts + short rounded end posts at gaps & ends
-  group.add(buildRailPosts(course, railMaterial, spans));
+  const startGridTexture = createStartGridCanvasTexture(maxAnisotropy);
+  const startGridMaterial = new THREE.MeshPhysicalMaterial({
+    map: startGridTexture,
+    clearcoat: 0.85,
+    clearcoatRoughness: 0.12,
+    roughness: 0.24,
+    metalness: 0.04,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
 
-  // 6. Optional debug centerline & frame arrows (still shows imaginary gap centerline)
+  const postGeometry = new THREE.CylinderGeometry(
+    cfg.railPostRadius,
+    cfg.railPostRadius,
+    cfg.railPostHeight,
+    10,
+  );
+  const endBodyGeom = new THREE.CylinderGeometry(
+    cfg.railEndPostRadius,
+    cfg.railEndPostRadius,
+    cfg.railEndPostHeight,
+    14,
+  );
+  const endDomeGeom = new THREE.SphereGeometry(cfg.railEndPostRadius, 14, 10);
+
+  // Collect global rail post & end-post S coordinates once, then assign to chunks
+  const allPostS: number[] = [];
+  const allEndPostS: number[] = [];
+  for (const span of spans) {
+    const spanStart = span[0].s;
+    const spanEnd = span[span.length - 1].s;
+    allEndPostS.push(spanStart, spanEnd);
+
+    const margin = 1.25;
+    const usableLen = spanEnd - spanStart - margin * 2;
+    if (usableLen > 0.5) {
+      const count = Math.max(1, Math.floor(usableLen / cfg.railPostSpacingMeters) + 1);
+      for (let i = 0; i < count; i++) {
+        const frac = count === 1 ? 0.5 : i / (count - 1);
+        allPostS.push(spanStart + margin + frac * usableLen);
+      }
+    }
+  }
+
+  const gaps = course.getGapRanges();
+  const boostPads = course.getBoostPads();
+  const lastChunkIdx = chunks.length - 1;
+
+  for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+    const chunk = chunks[cIdx];
+    const chunkGroup = new THREE.Group();
+    chunkGroup.name = `TrackChunk_${chunk.index}`;
+
+    const isLastChunk = cIdx === lastChunkIdx;
+    const inChunk = (s: number): boolean =>
+      s >= chunk.startS && (isLastChunk ? s <= chunk.endS + 1e-4 : s < chunk.endS);
+
+    // 1 & 2. Track deck + guardrails sliced cleanly across chunk boundaries without inner bevels/gaps
+    for (const spanFrames of spans) {
+      const spanStart = spanFrames[0].s;
+      const spanEnd = spanFrames[spanFrames.length - 1].s;
+      const subStart = Math.max(spanStart, chunk.startS);
+      const subEnd = Math.min(spanEnd, chunk.endS);
+      if (subEnd - subStart < 0.05) {
+        continue;
+      }
+
+      const chunkFrames = sliceSpanFramesForRange(course, spanFrames, subStart, subEnd);
+      const startBevel = subStart > spanStart + 1e-4 ? 0 : cfg.endCapBevelLength;
+      const endBevel = subEnd < spanEnd - 1e-4 ? 0 : cfg.endCapBevelLength;
+
+      const { geometry: trackGeometry } = buildSweptGeometry(
+        chunkFrames,
+        trackProfile,
+        cfg.trackTileMeters,
+        (frame, pt, scale) => {
+          const halfLat = frame.width * 0.5;
+          const innerTuck = (1 - scale) * 0.06;
+          return pt.xNorm * (halfLat - innerTuck) + pt.xOffset * scale;
+        },
+        0,
+        startBevel,
+        endBevel,
+        cfg.endCapBevelSegments,
+        -cfg.trackThickness * 0.5,
+      );
+
+      const trackMesh = new THREE.Mesh(trackGeometry, trackMaterial);
+      trackMesh.castShadow = true;
+      trackMesh.receiveShadow = true;
+      trackMesh.frustumCulled = true;
+      chunkGroup.add(trackMesh);
+
+      const railStartBevel = startBevel > 0 ? startBevel * 0.75 : 0;
+      const railEndBevel = endBevel > 0 ? endBevel * 0.75 : 0;
+
+      for (const side of [-1, 1]) {
+        const { geometry: railGeometry } = buildSweptGeometry(
+          chunkFrames,
+          railProfile,
+          cfg.railTileMeters,
+          (frame, pt, scale) =>
+            side * (frame.width * 0.5 + CONFIG.physics.railInnerOffset + cfg.railWidth * 0.5) +
+            pt.xOffset * scale,
+          cfg.railVerticalOffset,
+          railStartBevel,
+          railEndBevel,
+          cfg.endCapBevelSegments,
+          0,
+        );
+
+        const railMesh = new THREE.Mesh(railGeometry, railMaterial);
+        railMesh.castShadow = true;
+        railMesh.receiveShadow = true;
+        railMesh.frustumCulled = true;
+        chunkGroup.add(railMesh);
+      }
+    }
+
+    // 3. Yellow diagonal jump strips (#FFD23F) placed into matching chunk
+    for (const gap of gaps) {
+      const takeoffMid = gap.startS - cfg.jumpStripLength * 0.5;
+      if (inChunk(takeoffMid)) {
+        const takeoffFrame = course.getFrameAt(takeoffMid);
+        const stripW = Math.max(1.0, takeoffFrame.width - cfg.jumpStripInset * 2);
+        const m = createSurfaceRibbonMesh(
+          course,
+          gap.startS - cfg.jumpStripLength,
+          gap.startS,
+          0,
+          stripW,
+          cfg.jumpStripLift,
+          2,
+          false,
+          jumpStripMaterial,
+        );
+        if (m) chunkGroup.add(m);
+      }
+
+      const landingMid = gap.endS + cfg.jumpStripLength * 0.5;
+      if (inChunk(landingMid)) {
+        const landingFrame = course.getFrameAt(landingMid);
+        const stripW = Math.max(1.0, landingFrame.width - cfg.jumpStripInset * 2);
+        const m = createSurfaceRibbonMesh(
+          course,
+          gap.endS,
+          gap.endS + cfg.jumpStripLength,
+          0,
+          stripW,
+          cfg.jumpStripLift,
+          2,
+          false,
+          jumpStripMaterial,
+        );
+        if (m) chunkGroup.add(m);
+      }
+    }
+
+    // 4. Boost pads placed into matching chunk
+    for (const pad of boostPads) {
+      if (!inChunk(pad.s)) continue;
+      const m = createSurfaceRibbonMesh(
+        course,
+        pad.s - pad.length * 0.5,
+        pad.s + pad.length * 0.5,
+        pad.lateral,
+        pad.width,
+        CONFIG.boost.lift,
+        1,
+        true,
+        boostMaterial,
+      );
+      if (m) chunkGroup.add(m);
+    }
+
+    // 5. Thin checkered start strip across deck at startS
+    if (inChunk(CONFIG.car.startS)) {
+      const startFrame = course.getFrameAt(CONFIG.car.startS);
+      const startStripW = Math.max(1.2, startFrame.width - 0.55);
+      const startStrip = createSurfaceRibbonMesh(
+        course,
+        CONFIG.car.startS - 0.65,
+        CONFIG.car.startS + 0.65,
+        0,
+        startStripW,
+        0.012,
+        1,
+        false,
+        startGridMaterial,
+      );
+      if (startStrip) {
+        startStrip.name = 'StartGridStrip';
+        chunkGroup.add(startStrip);
+      }
+    }
+
+    // 6. Support posts & end posts inside this chunk
+    const chunkPosts = allPostS.filter(inChunk);
+    const chunkEndPosts = allEndPostS.filter(inChunk);
+    addChunkRailPosts(
+      chunkGroup,
+      course,
+      railMaterial,
+      postGeometry,
+      endBodyGeom,
+      endDomeGeom,
+      chunkPosts,
+      chunkEndPosts,
+    );
+
+    group.add(chunkGroup);
+  }
+
   if (CONFIG.debug.showCourseFrames) {
     group.add(buildDebugCourseFrames(course));
   }

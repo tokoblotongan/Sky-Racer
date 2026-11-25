@@ -8,6 +8,7 @@ import type { QualityLevel } from './quality';
 
 export interface PropsVisual {
   group: THREE.Group;
+  update: (cameraPos: THREE.Vector3) => void;
   dispose: () => void;
 }
 
@@ -17,6 +18,21 @@ interface Placement {
   yaw: number;
   scale: number;
   colorIndex: number;
+}
+
+interface SupportSpot {
+  x: number;
+  z: number;
+  topY: number;
+  style: number;
+  colorIndex: number;
+}
+
+interface CullablePropChunk {
+  group: THREE.Group;
+  cx: number;
+  cz: number;
+  radius: number;
 }
 
 function mulberry32(seed: number): () => number {
@@ -53,6 +69,11 @@ function mergeWithCleanup(geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return merged;
 }
 
+function freezeStatic(obj: THREE.Object3D): void {
+  obj.updateMatrix();
+  obj.matrixAutoUpdate = false;
+}
+
 function createWallTexture(
   baseHex: string,
   stripeHex: string,
@@ -68,7 +89,6 @@ function createWallTexture(
     ctx.fillStyle = baseHex;
     ctx.fillRect(0, 0, width, height);
 
-    // Subtle vertical wallpaper stripes
     ctx.fillStyle = stripeHex;
     ctx.globalAlpha = 0.38;
     const stripeCount = 24;
@@ -78,20 +98,17 @@ function createWallTexture(
     }
     ctx.globalAlpha = 1;
 
-    // Subtle horizontal plaster lines (capped low-contrast, no pure white)
     ctx.fillStyle = 'rgba(15, 42, 58, 0.045)';
     for (let y = 0; y < height; y += 8) {
       ctx.fillRect(0, y, width, 1);
     }
 
-    // Bottom darkening gradient for depth above the baseboard & floor
     const bottomGrad = ctx.createLinearGradient(0, height * 0.56, 0, height);
     bottomGrad.addColorStop(0.0, 'rgba(12, 34, 48, 0.0)');
     bottomGrad.addColorStop(1.0, 'rgba(12, 34, 48, 0.25)');
     ctx.fillStyle = bottomGrad;
     ctx.fillRect(0, height * 0.56, width, height * 0.44);
 
-    // Corner ambient darkening on left & right wall edges
     const leftGrad = ctx.createLinearGradient(0, 0, width * 0.14, 0);
     leftGrad.addColorStop(0.0, 'rgba(10, 28, 42, 0.24)');
     leftGrad.addColorStop(1.0, 'rgba(10, 28, 42, 0.0)');
@@ -314,6 +331,8 @@ export function buildProps(
   const pal = cfg.palette;
   const qualityPreset = CONFIG.quality.levels[qualityLevel];
   const densityScale = cfg.density * qualityPreset.propsDensityScale;
+  const propsChunkSize = Math.max(40, CONFIG.render.propsChunkLength);
+  const maxVisibleDistance = CONFIG.visual.fogFar + CONFIG.render.chunkCullMargin;
 
   const group = new THREE.Group();
   group.name = 'RoomPropsGroup';
@@ -339,11 +358,67 @@ export function buildProps(
   const bounds = course.getBounds();
   const roomCenterX = bounds.center.x;
   const roomCenterZ = bounds.center.z;
-  const halfW = cfg.roomSize.width * 0.5;
-  const halfD = cfg.roomSize.depth * 0.5;
+  const roomW = Math.max(
+    cfg.roomSize.width,
+    Math.ceil((bounds.max.x - bounds.min.x + 120) / 20) * 20,
+  );
+  const roomD = Math.max(
+    cfg.roomSize.depth,
+    Math.ceil((bounds.max.z - bounds.min.z + 120) / 20) * 20,
+  );
+  const halfW = roomW * 0.5;
+  const halfD = roomD * 0.5;
   const roomH = cfg.roomSize.height;
 
-  // Dense horizontal clearance sample list across the entire course + start camera zone
+  // Spatial chunk registry for frustum + fog-distance culling
+  const cullableChunks: CullablePropChunk[] = [];
+  const chunkMap = new Map<string, CullablePropChunk>();
+  const chunkRadius = propsChunkSize * 0.85;
+
+  const getChunkGroup = (x: number, z: number): THREE.Group => {
+    const gx = Math.floor((x - roomCenterX) / propsChunkSize);
+    const gz = Math.floor((z - roomCenterZ) / propsChunkSize);
+    const key = `${gx},${gz}`;
+    let entry = chunkMap.get(key);
+    if (!entry) {
+      const chunkGroup = new THREE.Group();
+      chunkGroup.name = `PropsChunk_${gx}_${gz}`;
+      freezeStatic(chunkGroup);
+      group.add(chunkGroup);
+      entry = {
+        group: chunkGroup,
+        cx: roomCenterX + (gx + 0.5) * propsChunkSize,
+        cz: roomCenterZ + (gz + 0.5) * propsChunkSize,
+        radius: chunkRadius,
+      };
+      chunkMap.set(key, entry);
+      cullableChunks.push(entry);
+    }
+    return entry.group;
+  };
+
+  function bucketByChunk<T extends { x: number; z: number }>(
+    items: readonly T[],
+  ): Map<string, { chunkGroup: THREE.Group; list: T[] }> {
+    const map = new Map<string, { chunkGroup: THREE.Group; list: T[] }>();
+    for (const item of items) {
+      const gx = Math.floor((item.x - roomCenterX) / propsChunkSize);
+      const gz = Math.floor((item.z - roomCenterZ) / propsChunkSize);
+      const key = `${gx},${gz}`;
+      let bucket = map.get(key);
+      if (!bucket) {
+        bucket = {
+          chunkGroup: getChunkGroup(item.x, item.z),
+          list: [],
+        };
+        map.set(key, bucket);
+      }
+      bucket.list.push(item);
+    }
+    return map;
+  }
+
+  // Dense horizontal clearance grid across the entire course + start camera zone
   const allSamples = course.getSamples();
   const clearancePoints: Array<{ x: number; z: number }> = [];
   const sampleStride = Math.max(1, Math.floor(2.0 / CONFIG.course.stepLength));
@@ -356,6 +431,20 @@ export function buildProps(
     z: startFrame.position.z - startFrame.tangent.z * 10,
   });
 
+  const clearanceCellSize = cfg.clearance + 16;
+  const clearanceGrid = new Map<string, Array<{ x: number; z: number }>>();
+  for (const pt of clearancePoints) {
+    const gx = Math.floor(pt.x / clearanceCellSize);
+    const gz = Math.floor(pt.z / clearanceCellSize);
+    const key = `${gx},${gz}`;
+    let cell = clearanceGrid.get(key);
+    if (!cell) {
+      cell = [];
+      clearanceGrid.set(key, cell);
+    }
+    cell.push(pt);
+  }
+
   const placedCircles: Array<{ x: number; z: number; r: number }> = [];
 
   const isClearOfTrack = (x: number, z: number, radius: number): boolean => {
@@ -366,11 +455,19 @@ export function buildProps(
       return false;
     }
     const minCourseDistSq = (cfg.clearance + radius) * (cfg.clearance + radius);
-    for (let i = 0; i < clearancePoints.length; i++) {
-      const dx = x - clearancePoints[i].x;
-      const dz = z - clearancePoints[i].z;
-      if (dx * dx + dz * dz < minCourseDistSq) {
-        return false;
+    const gx = Math.floor(x / clearanceCellSize);
+    const gz = Math.floor(z / clearanceCellSize);
+    for (let dxCell = -1; dxCell <= 1; dxCell++) {
+      for (let dzCell = -1; dzCell <= 1; dzCell++) {
+        const cell = clearanceGrid.get(`${gx + dxCell},${gz + dzCell}`);
+        if (!cell) continue;
+        for (let i = 0; i < cell.length; i++) {
+          const dx = x - cell[i].x;
+          const dz = z - cell[i].z;
+          if (dx * dx + dz * dz < minCourseDistSq) {
+            return false;
+          }
+        }
       }
     }
     for (let i = 0; i < placedCircles.length; i++) {
@@ -393,9 +490,10 @@ export function buildProps(
     pal.pastelLavender,
     pal.pastelSlate,
   ];
+  const beamUpRef = new THREE.Vector3(0, 1, 0);
 
   // =========================================================================
-  // 1. Giant Room Walls + Baseboards + Sunlit Window + Sunbeams
+  // 1. Giant Room Walls + Baseboards + Sunlit Window + Sunbeams (always present)
   // =========================================================================
   const backWallTex = trackTex(
     createWallTexture(cfg.wallColor, pal.wallStripe, maxAnisotropy),
@@ -421,12 +519,12 @@ export function buildProps(
 
   const wallThickness = 4;
   const backFrontWallDefs = [
-    { w: cfg.roomSize.width + wallThickness * 2, d: wallThickness, x: roomCenterX, z: roomCenterZ - halfD },
-    { w: cfg.roomSize.width + wallThickness * 2, d: wallThickness, x: roomCenterX, z: roomCenterZ + halfD },
+    { w: roomW + wallThickness * 2, d: wallThickness, x: roomCenterX, z: roomCenterZ - halfD },
+    { w: roomW + wallThickness * 2, d: wallThickness, x: roomCenterX, z: roomCenterZ + halfD },
   ];
   const sideWallDefs = [
-    { w: wallThickness, d: cfg.roomSize.depth, x: roomCenterX - halfW, z: roomCenterZ },
-    { w: wallThickness, d: cfg.roomSize.depth, x: roomCenterX + halfW, z: roomCenterZ },
+    { w: wallThickness, d: roomD, x: roomCenterX - halfW, z: roomCenterZ },
+    { w: wallThickness, d: roomD, x: roomCenterX + halfW, z: roomCenterZ },
   ];
 
   const backWallGeoms: THREE.BufferGeometry[] = [];
@@ -456,11 +554,13 @@ export function buildProps(
   const backWallsMesh = new THREE.Mesh(trackGeom(mergeWithCleanup(backWallGeoms)), backWallMat);
   backWallsMesh.castShadow = false;
   backWallsMesh.receiveShadow = true;
+  freezeStatic(backWallsMesh);
   group.add(backWallsMesh);
 
   const sideWallsMesh = new THREE.Mesh(trackGeom(mergeWithCleanup(sideWallGeoms)), sideWallMat);
   sideWallsMesh.castShadow = false;
   sideWallsMesh.receiveShadow = true;
+  freezeStatic(sideWallsMesh);
   group.add(sideWallsMesh);
 
   const woodDarkMat = trackMat(
@@ -491,9 +591,10 @@ export function buildProps(
   );
   baseboardsMesh.castShadow = false;
   baseboardsMesh.receiveShadow = true;
+  freezeStatic(baseboardsMesh);
   group.add(baseboardsMesh);
 
-  // Sunlit multi-pane window on the +X wall (aligned with CONFIG.lighting.sunOffset)
+  // Sunlit multi-pane window on the +X wall
   const windowX = roomCenterX + halfW - 2.3;
   const windowCenterY = 88;
   const windowZ = roomCenterZ + 18;
@@ -511,6 +612,7 @@ export function buildProps(
   const windowPane = new THREE.Mesh(windowPaneGeom, windowSkyMat);
   windowPane.position.set(windowX - 0.3, windowCenterY, windowZ);
   windowPane.castShadow = false;
+  freezeStatic(windowPane);
   group.add(windowPane);
 
   const windowFrameMat = trackMat(
@@ -524,20 +626,17 @@ export function buildProps(
   const frameGeoms: THREE.BufferGeometry[] = [];
   const barThickness = 3.6;
   const barDepth = 3.2;
-  // Top & bottom sills
   const topBar = new THREE.BoxGeometry(barDepth, barThickness, windowW + 6);
   topBar.translate(windowX - 1.0, windowCenterY + windowH * 0.5, windowZ);
   frameGeoms.push(topBar);
   const botBar = new THREE.BoxGeometry(barDepth * 1.6, barThickness * 1.2, windowW + 10);
   botBar.translate(windowX - 1.5, windowCenterY - windowH * 0.5, windowZ);
   frameGeoms.push(botBar);
-  // Vertical jambs & mullions
   for (const frac of [-0.5, -0.17, 0.17, 0.5]) {
     const vBar = new THREE.BoxGeometry(barDepth, windowH, barThickness * 0.85);
     vBar.translate(windowX - 1.0, windowCenterY, windowZ + frac * windowW);
     frameGeoms.push(vBar);
   }
-  // Horizontal mullion
   const midBar = new THREE.BoxGeometry(barDepth, barThickness * 0.75, windowW);
   midBar.translate(windowX - 1.0, windowCenterY + 6, windowZ);
   frameGeoms.push(midBar);
@@ -545,9 +644,9 @@ export function buildProps(
   const windowFrameMesh = new THREE.Mesh(trackGeom(mergeWithCleanup(frameGeoms)), windowFrameMat);
   windowFrameMesh.castShadow = false;
   windowFrameMesh.receiveShadow = false;
+  freezeStatic(windowFrameMesh);
   group.add(windowFrameMesh);
 
-  // Diagonal additive sunbeam planes kept strictly near the sunlit window
   const sunbeamTex = trackTex(createSunbeamTexture());
   const sunbeamMat = trackMat(
     new THREE.MeshBasicMaterial({
@@ -564,7 +663,6 @@ export function buildProps(
 
   const sunOffset = CONFIG.lighting.sunOffset;
   const beamDir = new THREE.Vector3(-sunOffset.x, -sunOffset.y, -sunOffset.z).normalize();
-  const beamUpRef = new THREE.Vector3(0, 1, 0);
   const beamSide = new THREE.Vector3().crossVectors(beamDir, beamUpRef).normalize();
   const beamPlaneNormal = new THREE.Vector3().crossVectors(beamSide, beamDir).normalize();
   const beamBasis = new THREE.Matrix4().makeBasis(
@@ -582,11 +680,12 @@ export function buildProps(
       .addScaledVector(beamDir, 52);
     beam.castShadow = false;
     beam.receiveShadow = false;
+    freezeStatic(beam);
     group.add(beam);
   }
 
   // =========================================================================
-  // 2. Woven Pastel Floor Rugs (prevent Z-fighting with wood floor via polygonOffset)
+  // 2. Woven Pastel Floor Rug
   // =========================================================================
   const rugTex = trackTex(createRugTexture(maxAnisotropy));
   const rugMat = trackMat(
@@ -606,14 +705,15 @@ export function buildProps(
   mainRug.position.set(roomCenterX + 8, 0.025, roomCenterZ - 12);
   mainRug.castShadow = false;
   mainRug.receiveShadow = true;
+  freezeStatic(mainRug);
   group.add(mainRug);
 
   // =========================================================================
-  // 3. Decorative Support Pillars under Straight & Curve Track Spans
+  // 3. Decorative Support Pillars grouped per spatial chunk
   // =========================================================================
   const gaps = course.getGapRanges();
   const totalLength = course.getLength();
-  const supportSpots: Array<{ x: number; z: number; topY: number; style: number }> = [];
+  const supportSpots: SupportSpot[] = [];
 
   for (let s = 14; s <= totalLength - 10; s += cfg.supportSpacing) {
     const seg = course.getSegmentAt(s);
@@ -641,15 +741,16 @@ export function buildProps(
       continue;
     }
 
-    // Skip if another distant span of the course overlaps nearby in XZ
     let overlapsOtherSpan = false;
+    const fx = frame.position.x;
+    const fz = frame.position.z;
     for (let i = 0; i < allSamples.length; i += sampleStride) {
       const other = allSamples[i];
       if (Math.abs(other.s - s) < 18) {
         continue;
       }
-      const dx = other.position.x - frame.position.x;
-      const dz = other.position.z - frame.position.z;
+      const dx = other.position.x - fx;
+      const dz = other.position.z - fz;
       if (dx * dx + dz * dz < 64) {
         overlapsOtherSpan = true;
         break;
@@ -660,15 +761,15 @@ export function buildProps(
     }
 
     supportSpots.push({
-      x: frame.position.x,
-      z: frame.position.z,
+      x: fx,
+      z: fz,
       topY,
       style: supportSpots.length % 2,
+      colorIndex: supportSpots.length % pastelColors.length,
     });
   }
 
   if (supportSpots.length > 0) {
-    // Each pillar uses a lower wood block + upper pastel toy column + crisp cap
     const baseGeom = trackGeom(new THREE.BoxGeometry(3.2, 1, 3.2));
     const colGeom = trackGeom(new THREE.CylinderGeometry(1.15, 1.35, 1, 16));
     const capGeom = trackGeom(new THREE.BoxGeometry(3.6, 0.45, 3.6));
@@ -681,62 +782,68 @@ export function buildProps(
       }),
     );
 
-    const baseInst = new THREE.InstancedMesh(baseGeom, woodLightMat, supportSpots.length);
-    const colInst = new THREE.InstancedMesh(colGeom, pillarPastelMat, supportSpots.length);
-    const capInst = new THREE.InstancedMesh(capGeom, woodDarkMat, supportSpots.length);
-
-    baseInst.castShadow = true;
-    baseInst.receiveShadow = true;
-    colInst.castShadow = true;
-    colInst.receiveShadow = true;
-    capInst.castShadow = true;
-    capInst.receiveShadow = true;
-
     const mtx = new THREE.Matrix4();
     const pos = new THREE.Vector3();
     const quat = new THREE.Quaternion();
     const scl = new THREE.Vector3();
     const tmpColor = new THREE.Color();
 
-    supportSpots.forEach((spot, i) => {
-      const capH = 0.45;
-      const usableH = Math.max(1.2, spot.topY - capH);
-      const baseH = Math.min(2.2, usableH * 0.35);
-      const colH = Math.max(0.5, usableH - baseH);
+    const pillarChunks = bucketByChunk(supportSpots);
+    for (const { chunkGroup, list } of pillarChunks.values()) {
+      const baseInst = new THREE.InstancedMesh(baseGeom, woodLightMat, list.length);
+      const colInst = new THREE.InstancedMesh(colGeom, pillarPastelMat, list.length);
+      const capInst = new THREE.InstancedMesh(capGeom, woodDarkMat, list.length);
 
-      quat.setFromAxisAngle(beamUpRef, (i * 0.47) % (Math.PI * 0.5));
+      baseInst.castShadow = true;
+      baseInst.receiveShadow = true;
+      colInst.castShadow = true;
+      colInst.receiveShadow = true;
+      capInst.castShadow = true;
+      capInst.receiveShadow = true;
 
-      pos.set(spot.x, baseH * 0.5, spot.z);
-      scl.set(1, baseH, 1);
-      mtx.compose(pos, quat, scl);
-      baseInst.setMatrixAt(i, mtx);
+      list.forEach((spot, i) => {
+        const capH = 0.45;
+        const usableH = Math.max(1.2, spot.topY - capH);
+        const baseH = Math.min(2.2, usableH * 0.35);
+        const colH = Math.max(0.5, usableH - baseH);
 
-      pos.set(spot.x, baseH + colH * 0.5, spot.z);
-      scl.set(1, colH, 1);
-      mtx.compose(pos, quat, scl);
-      colInst.setMatrixAt(i, mtx);
-      tmpColor.set(pastelColors[i % pastelColors.length]);
-      colInst.setColorAt(i, tmpColor);
+        quat.setFromAxisAngle(beamUpRef, (i * 0.47) % (Math.PI * 0.5));
 
-      pos.set(spot.x, spot.topY - capH * 0.5, spot.z);
-      scl.set(1, 1, 1);
-      mtx.compose(pos, quat, scl);
-      capInst.setMatrixAt(i, mtx);
-    });
+        pos.set(spot.x, baseH * 0.5, spot.z);
+        scl.set(1, baseH, 1);
+        mtx.compose(pos, quat, scl);
+        baseInst.setMatrixAt(i, mtx);
 
-    baseInst.instanceMatrix.needsUpdate = true;
-    baseInst.computeBoundingSphere();
-    colInst.instanceMatrix.needsUpdate = true;
-    if (colInst.instanceColor) colInst.instanceColor.needsUpdate = true;
-    colInst.computeBoundingSphere();
-    capInst.instanceMatrix.needsUpdate = true;
-    capInst.computeBoundingSphere();
+        pos.set(spot.x, baseH + colH * 0.5, spot.z);
+        scl.set(1, colH, 1);
+        mtx.compose(pos, quat, scl);
+        colInst.setMatrixAt(i, mtx);
+        tmpColor.set(pastelColors[spot.colorIndex]);
+        colInst.setColorAt(i, tmpColor);
 
-    group.add(baseInst, colInst, capInst);
+        pos.set(spot.x, spot.topY - capH * 0.5, spot.z);
+        scl.set(1, 1, 1);
+        mtx.compose(pos, quat, scl);
+        capInst.setMatrixAt(i, mtx);
+      });
+
+      baseInst.instanceMatrix.needsUpdate = true;
+      baseInst.computeBoundingSphere();
+      colInst.instanceMatrix.needsUpdate = true;
+      if (colInst.instanceColor) colInst.instanceColor.needsUpdate = true;
+      colInst.computeBoundingSphere();
+      capInst.instanceMatrix.needsUpdate = true;
+      capInst.computeBoundingSphere();
+
+      freezeStatic(baseInst);
+      freezeStatic(colInst);
+      freezeStatic(capInst);
+      chunkGroup.add(baseInst, colInst, capInst);
+    }
   }
 
   // =========================================================================
-  // 4. Hero Assemblies (Giant Desk Lamp + Giant Wooden Bookshelf)
+  // 4. Hero Assemblies (Giant Desk Lamp + Giant Wooden Bookshelf) in chunks
   // =========================================================================
   const tryPickHeroSpot = (
     targetX: number,
@@ -815,7 +922,8 @@ export function buildProps(
 
     const lampGroup = new THREE.Group();
     lampGroup.position.set(lampSpot.x, 0, lampSpot.z);
-    lampGroup.rotation.y = Math.atan2(roomCenterX - lampSpot.x, roomCenterZ - lampSpot.z) - Math.PI * 0.5;
+    lampGroup.rotation.y =
+      Math.atan2(roomCenterX - lampSpot.x, roomCenterZ - lampSpot.z) - Math.PI * 0.5;
 
     const castLampShadow =
       Math.hypot(lampSpot.x - roomCenterX, lampSpot.z - roomCenterZ) <= cfg.shadowDistance + 30;
@@ -823,8 +931,12 @@ export function buildProps(
     lampMetalMesh.receiveShadow = true;
     shadeMesh.castShadow = castLampShadow;
     shadeMesh.receiveShadow = true;
+    freezeStatic(lampMetalMesh);
+    freezeStatic(shadeMesh);
+    freezeStatic(bulbMesh);
     lampGroup.add(lampMetalMesh, shadeMesh, bulbMesh);
-    group.add(lampGroup);
+    freezeStatic(lampGroup);
+    getChunkGroup(lampSpot.x, lampSpot.z).add(lampGroup);
   }
 
   // Hero 2: Giant Wooden Bookshelf against back-left wall area
@@ -854,7 +966,6 @@ export function buildProps(
 
     const shelfMesh = new THREE.Mesh(trackGeom(mergeWithCleanup(shelfParts)), woodDarkMat);
 
-    // Merged shelf books
     const shelfBookGeoms: THREE.BufferGeometry[] = [];
     for (let row = 0; row < 3; row++) {
       const baseY = shelfHeights[row] + 1.3;
@@ -889,12 +1000,15 @@ export function buildProps(
     shelfMesh.receiveShadow = true;
     shelfBooksMesh.castShadow = false;
     shelfBooksMesh.receiveShadow = true;
+    freezeStatic(shelfMesh);
+    freezeStatic(shelfBooksMesh);
     shelfGroup.add(shelfMesh, shelfBooksMesh);
-    group.add(shelfGroup);
+    freezeStatic(shelfGroup);
+    getChunkGroup(shelfSpot.x, shelfSpot.z).add(shelfGroup);
   }
 
   // =========================================================================
-  // 5. Scattered Giant Room Props (InstancedMesh, strictly outside clearance)
+  // 5. Scattered Giant Room Props grouped by spatial chunk (InstancedMesh)
   // =========================================================================
   function generatePlacements(targetCount: number, baseRadius: number): Placement[] {
     const list: Placement[] = [];
@@ -927,11 +1041,10 @@ export function buildProps(
   const instScale = new THREE.Vector3();
   const instColor = new THREE.Color();
 
-  // 5a. Giant Book Stacks (near + far split for shadow optimization)
+  // 5a. Giant Book Stacks
   const bookStackCount = Math.max(2, Math.round(14 * densityScale));
   const bookPlacements = generatePlacements(bookStackCount, 12);
   if (bookPlacements.length > 0) {
-    // 2 stacked books per prop
     const coverParts: THREE.BufferGeometry[] = [];
     const pageParts: THREE.BufferGeometry[] = [];
 
@@ -969,33 +1082,38 @@ export function buildProps(
       }),
     );
 
-    const coverInst = new THREE.InstancedMesh(coverGeom, coverMat, bookPlacements.length);
-    const pageInst = new THREE.InstancedMesh(pageGeom, pageMat, bookPlacements.length);
-    coverInst.castShadow = true;
-    coverInst.receiveShadow = true;
-    pageInst.castShadow = false;
-    pageInst.receiveShadow = true;
+    const chunkBuckets = bucketByChunk(bookPlacements);
+    for (const { chunkGroup, list } of chunkBuckets.values()) {
+      const coverInst = new THREE.InstancedMesh(coverGeom, coverMat, list.length);
+      const pageInst = new THREE.InstancedMesh(pageGeom, pageMat, list.length);
+      coverInst.castShadow = true;
+      coverInst.receiveShadow = true;
+      pageInst.castShadow = false;
+      pageInst.receiveShadow = true;
 
-    bookPlacements.forEach((p, idx) => {
-      instPos.set(p.x, 0, p.z);
-      instQuat.setFromAxisAngle(beamUpRef, p.yaw);
-      instScale.set(p.scale, p.scale, p.scale);
-      instMtx.compose(instPos, instQuat, instScale);
-      coverInst.setMatrixAt(idx, instMtx);
-      pageInst.setMatrixAt(idx, instMtx);
-      instColor.set(pastelColors[p.colorIndex]);
-      coverInst.setColorAt(idx, instColor);
-    });
+      list.forEach((p, idx) => {
+        instPos.set(p.x, 0, p.z);
+        instQuat.setFromAxisAngle(beamUpRef, p.yaw);
+        instScale.set(p.scale, p.scale, p.scale);
+        instMtx.compose(instPos, instQuat, instScale);
+        coverInst.setMatrixAt(idx, instMtx);
+        pageInst.setMatrixAt(idx, instMtx);
+        instColor.set(pastelColors[p.colorIndex]);
+        coverInst.setColorAt(idx, instColor);
+      });
 
-    coverInst.instanceMatrix.needsUpdate = true;
-    if (coverInst.instanceColor) coverInst.instanceColor.needsUpdate = true;
-    coverInst.computeBoundingSphere();
-    pageInst.instanceMatrix.needsUpdate = true;
-    pageInst.computeBoundingSphere();
-    group.add(coverInst, pageInst);
+      coverInst.instanceMatrix.needsUpdate = true;
+      if (coverInst.instanceColor) coverInst.instanceColor.needsUpdate = true;
+      coverInst.computeBoundingSphere();
+      pageInst.instanceMatrix.needsUpdate = true;
+      pageInst.computeBoundingSphere();
+      freezeStatic(coverInst);
+      freezeStatic(pageInst);
+      chunkGroup.add(coverInst, pageInst);
+    }
   }
 
-  // 5b. Abstract Striped Cans (procedural stripes, zero brand logos)
+  // 5b. Abstract Striped Cans
   const canCount = Math.max(2, Math.round(10 * densityScale));
   const canPlacements = generatePlacements(canCount, 7.5);
   if (canPlacements.length > 0) {
@@ -1027,30 +1145,35 @@ export function buildProps(
     rimParts.push(botRim);
     const rimGeom = trackGeom(mergeWithCleanup(rimParts));
 
-    const bodyInst = new THREE.InstancedMesh(bodyGeom, canBodyMat, canPlacements.length);
-    const rimInst = new THREE.InstancedMesh(rimGeom, canRimMat, canPlacements.length);
-    bodyInst.castShadow = true;
-    bodyInst.receiveShadow = true;
-    rimInst.castShadow = false;
-    rimInst.receiveShadow = true;
+    const chunkBuckets = bucketByChunk(canPlacements);
+    for (const { chunkGroup, list } of chunkBuckets.values()) {
+      const bodyInst = new THREE.InstancedMesh(bodyGeom, canBodyMat, list.length);
+      const rimInst = new THREE.InstancedMesh(rimGeom, canRimMat, list.length);
+      bodyInst.castShadow = true;
+      bodyInst.receiveShadow = true;
+      rimInst.castShadow = false;
+      rimInst.receiveShadow = true;
 
-    canPlacements.forEach((p, idx) => {
-      instPos.set(p.x, 0, p.z);
-      instQuat.setFromAxisAngle(beamUpRef, p.yaw);
-      instScale.set(p.scale, p.scale, p.scale);
-      instMtx.compose(instPos, instQuat, instScale);
-      bodyInst.setMatrixAt(idx, instMtx);
-      rimInst.setMatrixAt(idx, instMtx);
-    });
+      list.forEach((p, idx) => {
+        instPos.set(p.x, 0, p.z);
+        instQuat.setFromAxisAngle(beamUpRef, p.yaw);
+        instScale.set(p.scale, p.scale, p.scale);
+        instMtx.compose(instPos, instQuat, instScale);
+        bodyInst.setMatrixAt(idx, instMtx);
+        rimInst.setMatrixAt(idx, instMtx);
+      });
 
-    bodyInst.instanceMatrix.needsUpdate = true;
-    bodyInst.computeBoundingSphere();
-    rimInst.instanceMatrix.needsUpdate = true;
-    rimInst.computeBoundingSphere();
-    group.add(bodyInst, rimInst);
+      bodyInst.instanceMatrix.needsUpdate = true;
+      bodyInst.computeBoundingSphere();
+      rimInst.instanceMatrix.needsUpdate = true;
+      rimInst.computeBoundingSphere();
+      freezeStatic(bodyInst);
+      freezeStatic(rimInst);
+      chunkGroup.add(bodyInst, rimInst);
+    }
   }
 
-  // 5c. Pencil Cups (pastel cup + 3 angled wooden pencils)
+  // 5c. Pencil Cups
   const cupCount = Math.max(1, Math.round(7 * densityScale));
   const cupPlacements = generatePlacements(cupCount, 7.5);
   if (cupPlacements.length > 0) {
@@ -1080,6 +1203,9 @@ export function buildProps(
       pencilTipParts.push(cone);
     }
 
+    const pencilWoodGeom = trackGeom(mergeWithCleanup(pencilWoodParts));
+    const pencilTipGeom = trackGeom(mergeWithCleanup(pencilTipParts));
+
     const cupMat = trackMat(
       new THREE.MeshStandardMaterial({
         color: 0xffffff,
@@ -1094,47 +1220,45 @@ export function buildProps(
       }),
     );
 
-    const cupInst = new THREE.InstancedMesh(cupGeom, cupMat, cupPlacements.length);
-    const pencilInst = new THREE.InstancedMesh(
-      trackGeom(mergeWithCleanup(pencilWoodParts)),
-      woodLightMat,
-      cupPlacements.length,
-    );
-    const tipInst = new THREE.InstancedMesh(
-      trackGeom(mergeWithCleanup(pencilTipParts)),
-      tipMat,
-      cupPlacements.length,
-    );
+    const chunkBuckets = bucketByChunk(cupPlacements);
+    for (const { chunkGroup, list } of chunkBuckets.values()) {
+      const cupInst = new THREE.InstancedMesh(cupGeom, cupMat, list.length);
+      const pencilInst = new THREE.InstancedMesh(pencilWoodGeom, woodLightMat, list.length);
+      const tipInst = new THREE.InstancedMesh(pencilTipGeom, tipMat, list.length);
 
-    cupInst.castShadow = true;
-    cupInst.receiveShadow = true;
-    pencilInst.castShadow = true;
-    pencilInst.receiveShadow = true;
-    tipInst.castShadow = false;
+      cupInst.castShadow = true;
+      cupInst.receiveShadow = true;
+      pencilInst.castShadow = true;
+      pencilInst.receiveShadow = true;
+      tipInst.castShadow = false;
 
-    cupPlacements.forEach((p, idx) => {
-      instPos.set(p.x, 0, p.z);
-      instQuat.setFromAxisAngle(beamUpRef, p.yaw);
-      instScale.set(p.scale, p.scale, p.scale);
-      instMtx.compose(instPos, instQuat, instScale);
-      cupInst.setMatrixAt(idx, instMtx);
-      pencilInst.setMatrixAt(idx, instMtx);
-      tipInst.setMatrixAt(idx, instMtx);
-      instColor.set(pastelColors[(p.colorIndex + 1) % pastelColors.length]);
-      cupInst.setColorAt(idx, instColor);
-    });
+      list.forEach((p, idx) => {
+        instPos.set(p.x, 0, p.z);
+        instQuat.setFromAxisAngle(beamUpRef, p.yaw);
+        instScale.set(p.scale, p.scale, p.scale);
+        instMtx.compose(instPos, instQuat, instScale);
+        cupInst.setMatrixAt(idx, instMtx);
+        pencilInst.setMatrixAt(idx, instMtx);
+        tipInst.setMatrixAt(idx, instMtx);
+        instColor.set(pastelColors[(p.colorIndex + 1) % pastelColors.length]);
+        cupInst.setColorAt(idx, instColor);
+      });
 
-    cupInst.instanceMatrix.needsUpdate = true;
-    if (cupInst.instanceColor) cupInst.instanceColor.needsUpdate = true;
-    cupInst.computeBoundingSphere();
-    pencilInst.instanceMatrix.needsUpdate = true;
-    pencilInst.computeBoundingSphere();
-    tipInst.instanceMatrix.needsUpdate = true;
-    tipInst.computeBoundingSphere();
-    group.add(cupInst, pencilInst, tipInst);
+      cupInst.instanceMatrix.needsUpdate = true;
+      if (cupInst.instanceColor) cupInst.instanceColor.needsUpdate = true;
+      cupInst.computeBoundingSphere();
+      pencilInst.instanceMatrix.needsUpdate = true;
+      pencilInst.computeBoundingSphere();
+      tipInst.instanceMatrix.needsUpdate = true;
+      tipInst.computeBoundingSphere();
+      freezeStatic(cupInst);
+      freezeStatic(pencilInst);
+      freezeStatic(tipInst);
+      chunkGroup.add(cupInst, pencilInst, tipInst);
+    }
   }
 
-  // 5d. Wooden Toy Letter Blocks (split across 3 letter textures)
+  // 5d. Wooden Toy Letter Blocks
   const blockCount = Math.max(3, Math.round(12 * densityScale));
   const blockPlacements = generatePlacements(blockCount, 8);
   if (blockPlacements.length > 0) {
@@ -1146,37 +1270,41 @@ export function buildProps(
       { letter: 'B', ink: pal.pastelBlue },
       { letter: 'C', ink: pal.pastelMint },
     ];
-    const buckets: Placement[][] = [[], [], []];
-    blockPlacements.forEach((p, idx) => {
-      buckets[idx % blockSpecs.length].push(p);
-    });
-
-    for (let b = 0; b < blockSpecs.length; b++) {
-      const list = buckets[b];
-      if (list.length === 0) continue;
-      const tex = trackTex(
-        createLetterBlockTexture(blockSpecs[b].letter, blockSpecs[b].ink, maxAnisotropy),
-      );
-      const mat = trackMat(
+    const blockMats = blockSpecs.map((spec) => {
+      const tex = trackTex(createLetterBlockTexture(spec.letter, spec.ink, maxAnisotropy));
+      return trackMat(
         new THREE.MeshStandardMaterial({
           map: tex,
           roughness: 0.65,
           metalness: 0.02,
         }),
       );
-      const inst = new THREE.InstancedMesh(blockGeom, mat, list.length);
-      inst.castShadow = true;
-      inst.receiveShadow = true;
-      list.forEach((p, idx) => {
-        instPos.set(p.x, 0, p.z);
-        instQuat.setFromAxisAngle(beamUpRef, p.yaw);
-        instScale.set(p.scale, p.scale, p.scale);
-        instMtx.compose(instPos, instQuat, instScale);
-        inst.setMatrixAt(idx, instMtx);
-      });
-      inst.instanceMatrix.needsUpdate = true;
-      inst.computeBoundingSphere();
-      group.add(inst);
+    });
+
+    const buckets: Placement[][] = [[], [], []];
+    blockPlacements.forEach((p, idx) => {
+      buckets[idx % blockSpecs.length].push(p);
+    });
+
+    for (let b = 0; b < blockSpecs.length; b++) {
+      const mat = blockMats[b];
+      const chunkBuckets = bucketByChunk(buckets[b]);
+      for (const { chunkGroup, list } of chunkBuckets.values()) {
+        const inst = new THREE.InstancedMesh(blockGeom, mat, list.length);
+        inst.castShadow = true;
+        inst.receiveShadow = true;
+        list.forEach((p, idx) => {
+          instPos.set(p.x, 0, p.z);
+          instQuat.setFromAxisAngle(beamUpRef, p.yaw);
+          instScale.set(p.scale, p.scale, p.scale);
+          instMtx.compose(instPos, instQuat, instScale);
+          inst.setMatrixAt(idx, instMtx);
+        });
+        inst.instanceMatrix.needsUpdate = true;
+        inst.computeBoundingSphere();
+        freezeStatic(inst);
+        chunkGroup.add(inst);
+      }
     }
   }
 
@@ -1194,20 +1322,25 @@ export function buildProps(
         metalness: 0.04,
       }),
     );
-    const ballInst = new THREE.InstancedMesh(ballGeom, ballMat, ballPlacements.length);
-    ballInst.castShadow = true;
-    ballInst.receiveShadow = true;
 
-    ballPlacements.forEach((p, idx) => {
-      instPos.set(p.x, 0, p.z);
-      instQuat.setFromAxisAngle(beamUpRef, p.yaw);
-      instScale.set(p.scale, p.scale, p.scale);
-      instMtx.compose(instPos, instQuat, instScale);
-      ballInst.setMatrixAt(idx, instMtx);
-    });
-    ballInst.instanceMatrix.needsUpdate = true;
-    ballInst.computeBoundingSphere();
-    group.add(ballInst);
+    const chunkBuckets = bucketByChunk(ballPlacements);
+    for (const { chunkGroup, list } of chunkBuckets.values()) {
+      const ballInst = new THREE.InstancedMesh(ballGeom, ballMat, list.length);
+      ballInst.castShadow = true;
+      ballInst.receiveShadow = true;
+
+      list.forEach((p, idx) => {
+        instPos.set(p.x, 0, p.z);
+        instQuat.setFromAxisAngle(beamUpRef, p.yaw);
+        instScale.set(p.scale, p.scale, p.scale);
+        instMtx.compose(instPos, instQuat, instScale);
+        ballInst.setMatrixAt(idx, instMtx);
+      });
+      ballInst.instanceMatrix.needsUpdate = true;
+      ballInst.computeBoundingSphere();
+      freezeStatic(ballInst);
+      chunkGroup.add(ballInst);
+    }
   }
 
   // 5f. Skewed Paper Stacks
@@ -1230,20 +1363,35 @@ export function buildProps(
         metalness: 0.0,
       }),
     );
-    const paperInst = new THREE.InstancedMesh(paperGeom, paperMat, paperPlacements.length);
-    paperInst.castShadow = false;
-    paperInst.receiveShadow = true;
 
-    paperPlacements.forEach((p, idx) => {
-      instPos.set(p.x, 0, p.z);
-      instQuat.setFromAxisAngle(beamUpRef, p.yaw);
-      instScale.set(p.scale, p.scale, p.scale);
-      instMtx.compose(instPos, instQuat, instScale);
-      paperInst.setMatrixAt(idx, instMtx);
-    });
-    paperInst.instanceMatrix.needsUpdate = true;
-    paperInst.computeBoundingSphere();
-    group.add(paperInst);
+    const chunkBuckets = bucketByChunk(paperPlacements);
+    for (const { chunkGroup, list } of chunkBuckets.values()) {
+      const paperInst = new THREE.InstancedMesh(paperGeom, paperMat, list.length);
+      paperInst.castShadow = false;
+      paperInst.receiveShadow = true;
+
+      list.forEach((p, idx) => {
+        instPos.set(p.x, 0, p.z);
+        instQuat.setFromAxisAngle(beamUpRef, p.yaw);
+        instScale.set(p.scale, p.scale, p.scale);
+        instMtx.compose(instPos, instQuat, instScale);
+        paperInst.setMatrixAt(idx, instMtx);
+      });
+      paperInst.instanceMatrix.needsUpdate = true;
+      paperInst.computeBoundingSphere();
+      freezeStatic(paperInst);
+      chunkGroup.add(paperInst);
+    }
+  }
+
+  function update(cameraPos: THREE.Vector3): void {
+    const camX = cameraPos.x;
+    const camZ = cameraPos.z;
+    for (let i = 0; i < cullableChunks.length; i++) {
+      const chunk = cullableChunks[i];
+      const dist = Math.hypot(chunk.cx - camX, chunk.cz - camZ);
+      chunk.group.visible = dist - chunk.radius <= maxVisibleDistance;
+    }
   }
 
   function dispose(): void {
@@ -1254,6 +1402,7 @@ export function buildProps(
 
   return {
     group,
+    update,
     dispose,
   };
 }

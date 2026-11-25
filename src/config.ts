@@ -1,64 +1,23 @@
 // src/config.ts
 
-export interface BoostPadSegmentConfig {
-  readonly at: number; // pecahan 0..1 di dalam segmen
-  readonly lateral: number; // offset dari tengah lintasan (meter)
-}
+import type { BoostPadSegmentConfig, CourseSegmentConfig } from './courses/types';
 
-export type CourseSegmentConfig =
-  | {
-      readonly type: 'straight';
-      readonly length: number;
-      readonly width?: number;
-      readonly checkpoint?: boolean;
-      readonly boostPads?: readonly BoostPadSegmentConfig[];
-    }
-  | {
-      readonly type: 'curve';
-      readonly radius: number;
-      readonly angleDeg: number; // + kanan, - kiri
-      readonly bankDeg: number; // + miring ke kiri, - miring ke kanan
-      readonly width?: number;
-      readonly checkpoint?: boolean;
-      readonly boostPads?: readonly BoostPadSegmentConfig[];
-    }
-  | {
-      readonly type: 'slope';
-      readonly length: number;
-      readonly pitchDeg: number; // + menanjak, - menurun
-      readonly width?: number;
-      readonly checkpoint?: boolean;
-      readonly boostPads?: readonly BoostPadSegmentConfig[];
-    }
-  | {
-      readonly type: 'pitchTo';
-      readonly length: number;
-      readonly pitchDeg: number; // transisi halus ke pitchDeg lalu ditahan
-      readonly width?: number;
-      readonly checkpoint?: boolean;
-      readonly boostPads?: readonly BoostPadSegmentConfig[];
-    }
-  | {
-      readonly type: 'gap';
-      readonly length: number;
-      readonly exitPitchDeg: number; // garis tengah tetap ada tanpa permukaan
-      readonly width?: number;
-      readonly checkpoint?: boolean;
-      readonly boostPads?: readonly BoostPadSegmentConfig[];
-    }
-  | {
-      readonly type: 'loop';
-      readonly radius: number;
-      readonly lateralOffset: number;
-      readonly width?: number;
-      readonly checkpoint?: boolean;
-      readonly boostPads?: readonly BoostPadSegmentConfig[];
-    };
+export type { BoostPadSegmentConfig, CourseSegmentConfig };
 
 const CAR_BODY_LENGTH = 3.35;
 const CAR_BODY_WIDTH = 1.7;
 
 export const CONFIG = {
+  activeCourseId: 'sky-circuit',
+  render: {
+    trackChunkLength: 60,
+    propsChunkLength: 100,
+    chunkCullMargin: 60,
+  },
+  autopilot: {
+    kLateral: 0.35,
+    kYaw: 1.55,
+  },
   sim: {
     fixedStep: 1 / 60,
     maxFrameDt: 0.1,
@@ -534,35 +493,6 @@ export const CONFIG = {
     railMetalness: 0.05,
     railTextureSize: 256,
     railTileMeters: 6,
-    segments: [
-      { type: 'straight', length: 50 },
-      { type: 'curve', radius: 42, angleDeg: 90, bankDeg: -10, checkpoint: true },
-      {
-        type: 'straight',
-        length: 30,
-        checkpoint: true,
-        boostPads: [{ at: 0.45, lateral: 0 }],
-      },
-      { type: 'loop', radius: 12, lateralOffset: 9 },
-      {
-        type: 'straight',
-        length: 20,
-        checkpoint: true,
-        boostPads: [{ at: 0.4, lateral: 0 }],
-      },
-      { type: 'pitchTo', length: 8, pitchDeg: 14 },
-      { type: 'gap', length: 16, exitPitchDeg: -12 },
-      { type: 'pitchTo', length: 10, pitchDeg: 0, checkpoint: true },
-      { type: 'straight', length: 20 },
-      { type: 'curve', radius: 34, angleDeg: -90, bankDeg: 14, checkpoint: true },
-      { type: 'slope', length: 36, pitchDeg: 14 },
-      { type: 'slope', length: 36, pitchDeg: -14 },
-      {
-        type: 'straight',
-        length: 50,
-        boostPads: [{ at: 0.35, lateral: 0 }],
-      },
-    ] as readonly CourseSegmentConfig[],
   },
   physics: {
     gravity: 28, // gravitasi skala mainan (naik = mobil menempel & jatuh lebih cepat, turun = lebih melayang)

@@ -4,7 +4,8 @@ import * as THREE from 'three';
 import { setAudioPaused } from './audio/audioManager';
 import { createSound, type SoundSnapshot } from './audio/sound';
 import { CONFIG } from './config';
-import { Course } from './core/course';
+import { buildCourseConfigFromDefinition, Course } from './core/course';
+import { getCourse } from './courses';
 import {
   copyCarState,
   createCarState,
@@ -41,6 +42,7 @@ import {
   disposeHud,
   hideAirtimePopup,
   hideSplitPopup,
+  setHudProgressCheckpoints,
   showCountdownOverlay,
   showFinishScreen,
   showSplitPopup,
@@ -168,20 +170,15 @@ function bootstrap(): void {
   }
   hud.audioBtnEl.addEventListener('click', handleAudioButtonClick);
 
-  const course = new Course({
-    segments: CONFIG.course.segments,
-    startPosition: CONFIG.course.startPosition,
-    startHeadingDeg: CONFIG.course.startHeadingDeg,
-    defaultWidth: CONFIG.course.trackWidth,
-    stepLength: CONFIG.course.stepLength,
-    bankBlendLength: CONFIG.course.bankBlendLength,
-    slopeBlendLength: CONFIG.course.slopeBlendLength,
-    curvatureSmoothWindow: CONFIG.course.curvatureSmoothWindow,
-    finishMargin: CONFIG.race.finishMargin,
-    boostPadLength: CONFIG.boost.padLength,
-    boostPadWidth: CONFIG.boost.padWidth,
-    validate: CONFIG.debug.logCourseValidation || CONFIG.debug.showCourseFrames || CONFIG.debug.showFps,
-  });
+  const activeCourseDef = getCourse(CONFIG.activeCourseId);
+  const course = new Course(buildCourseConfigFromDefinition(activeCourseDef));
+
+  const finishS = course.getFinishS();
+  const progressSpanS = Math.max(1, finishS - CONFIG.car.startS);
+  const checkpointRatios = course
+    .getCheckpoints()
+    .map((cp) => THREE.MathUtils.clamp((cp.s - CONFIG.car.startS) / progressSpanS, 0, 1));
+  setHudProgressCheckpoints(hud, checkpointRatios);
 
   const trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy);
   sceneCtx.scene.add(trackVisual.group);
@@ -275,6 +272,7 @@ function bootstrap(): void {
     phase: raceState.phase,
     speedKmh: 0,
     boost01: 0,
+    progress01: 0,
     timeSeconds: 0,
     cpPassed: 0,
     cpTotal: raceState.totalCheckpoints,
@@ -505,6 +503,7 @@ function bootstrap(): void {
       sceneCtx.updateSunShadowTarget(renderPose.position);
     }
 
+    propsVisual?.update(sceneCtx.camera.position);
     particles.update(realDt, renderPose, renderState);
 
     const speedMs =
@@ -539,12 +538,19 @@ function bootstrap(): void {
     soundSnapshot.railContact = renderState.railContactTimer > 0;
     sound.update(soundSnapshot, realDt);
 
+    const activeProgressS =
+      renderState.mode === 'grounded' ? renderState.s : renderState.sApprox;
     hudViewModel.phase = raceState.phase;
     hudViewModel.speedKmh = speedMs * CONFIG.hud.speedScale;
     hudViewModel.boost01 =
       CONFIG.boost.duration > 1e-4
         ? Math.min(1, Math.max(0, renderState.boostTimeLeft / CONFIG.boost.duration))
         : 0;
+    hudViewModel.progress01 = THREE.MathUtils.clamp(
+      (activeProgressS - CONFIG.car.startS) / progressSpanS,
+      0,
+      1,
+    );
     hudViewModel.timeSeconds = raceState.timer;
     hudViewModel.cpPassed = raceState.passedCheckpoints.length;
     hudViewModel.cpTotal = raceState.totalCheckpoints;

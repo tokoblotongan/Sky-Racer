@@ -1,0 +1,71 @@
+{
+  "courseId": "sky-circuit",
+  "courseName": "Sky Circuit",
+  "buildMs": 133.85,
+  "recommendedMedals": {
+    "gold": 28.86,
+    "silver": 34.1,
+    "bronze": 41.97
+  },
+  "ok": true,
+  "lengthM": 1186.9,
+  "referenceTime": 26.233,
+  "checkpointTimes": [
+    2.217,
+    5.05,
+    8.9,
+    11.517,
+    15.133,
+    18.283,
+    20.417,
+    22.667,
+    23.833
+  ],
+  "loops": [
+    {
+      "segmentIndex": 6,
+      "startS": 232.81,
+      "endS": 311.35,
+      "radius": 12.5,
+      "entrySpeed": 51.8,
+      "topSpeed": 43.74,
+      "minApexSpeedRequired": 18.71,
+      "completed": true
+    },
+    {
+      "segmentIndex": 25,
+      "startS": 937.24,
+      "endS": 1003.21,
+      "radius": 10.5,
+      "entrySpeed": 51.8,
+      "topSpeed": 44.65,
+      "minApexSpeedRequired": 17.15,
+      "completed": true
+    }
+  ],
+  "jumps": [
+    {
+      "segmentIndex": 12,
+      "startS": 447.34,
+      "endS": 463.34,
+      "gapLength": 16,
+      "takeoffSpeed": 51.12,
+      "landed": true,
+      "airtime": 0.933
+    },
+    {
+      "segmentIndex": 28,
+      "startS": 1041.21,
+      "endS": 1059.21,
+      "gapLength": 18,
+      "takeoffSpeed": 56.31,
+      "landed": true,
+      "airtime": 1
+    }
+  ],
+  "railHits": 0,
+  "stuckEvents": 0,
+  "falls": 0,
+  "warnings": [],
+  "errors": []
+}

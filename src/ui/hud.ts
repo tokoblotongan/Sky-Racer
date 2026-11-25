@@ -8,6 +8,7 @@ export interface HudViewModel {
   phase: RacePhase;
   speedKmh: number;
   boost01: number;
+  progress01: number;
   timeSeconds: number;
   cpPassed: number;
   cpTotal: number;
@@ -27,6 +28,10 @@ export interface HudHandle {
   root: HTMLElement;
   container: HTMLElement;
   topBarEl: HTMLElement;
+  progressWrapEl: HTMLElement;
+  progressFillEl: HTMLElement;
+  progressMarkersEl: HTMLElement;
+  progressMarkerEls: HTMLElement[];
   bottomLeftEl: HTMLElement;
   bottomRightEl: HTMLElement;
   speedValueEl: HTMLElement;
@@ -56,6 +61,8 @@ export interface HudHandle {
   lastSpeedQuantized: number;
   lastBoostQuantized: number;
   lastBoostActive: boolean;
+  lastProgressQuantized: number;
+  lastCpPassed: number;
   lastTimeText: string;
   lastCpText: string;
   lastTitleBestText: string;
@@ -101,6 +108,13 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
         <span class="sr-timer-value">00:00.00</span>
       </div>
       <div class="sr-hud-panel sr-checkpoint-slot" data-slot="checkpoint">CP 0 / 0</div>
+    </div>
+
+    <div class="sr-progress-wrap sr-hud-hidden">
+      <div class="sr-progress-track">
+        <div class="sr-progress-fill"></div>
+        <div class="sr-progress-markers"></div>
+      </div>
     </div>
 
     <button type="button" class="sr-hud-panel sr-audio-btn" aria-label="Suara aktif (M)" title="Suara (M)">
@@ -229,6 +243,10 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
     root,
     container,
     topBarEl: root.querySelector('.sr-hud-top') as HTMLElement,
+    progressWrapEl: root.querySelector('.sr-progress-wrap') as HTMLElement,
+    progressFillEl: root.querySelector('.sr-progress-fill') as HTMLElement,
+    progressMarkersEl: root.querySelector('.sr-progress-markers') as HTMLElement,
+    progressMarkerEls: [],
     bottomLeftEl: root.querySelector('.sr-hud-bottom-left') as HTMLElement,
     bottomRightEl: root.querySelector('.sr-hud-bottom-right') as HTMLElement,
     speedValueEl: root.querySelector('.sr-speedo-value') as HTMLElement,
@@ -258,12 +276,31 @@ export function createHud(container: HTMLElement = document.body): HudHandle {
     lastSpeedQuantized: 0,
     lastBoostQuantized: 0,
     lastBoostActive: false,
+    lastProgressQuantized: 0,
+    lastCpPassed: 0,
     lastTimeText: '00:00.00',
     lastCpText: 'CP 0 / 0',
     lastTitleBestText: '',
     lastMuted: null,
     lastTouchActive: null,
   };
+}
+
+export function setHudProgressCheckpoints(
+  hud: HudHandle,
+  ratios: readonly number[],
+): void {
+  hud.progressMarkersEl.textContent = '';
+  hud.progressMarkerEls = [];
+  for (const ratio of ratios) {
+    const clamped = Math.min(1, Math.max(0, ratio));
+    const marker = document.createElement('span');
+    marker.className = 'sr-progress-marker';
+    marker.style.left = `${(clamped * 100).toFixed(2)}%`;
+    hud.progressMarkersEl.appendChild(marker);
+    hud.progressMarkerEls.push(marker);
+  }
+  hud.lastCpPassed = -1;
 }
 
 export function showAirtimePopup(hud: HudHandle, airtimeSeconds: number): void {
@@ -439,6 +476,7 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     hud.titleScreenEl.classList.toggle('sr-hud-hidden', !isTitle);
     hud.finishScreenEl.classList.toggle('sr-hud-hidden', !isFinish);
     hud.topBarEl.classList.toggle('sr-hud-hidden', isTitle);
+    hud.progressWrapEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
     hud.bottomRightEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
     if (CONFIG.hud.showControlsHint) {
       hud.bottomLeftEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
@@ -497,6 +535,23 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
   if (cpText !== hud.lastCpText) {
     hud.lastCpText = cpText;
     hud.cpSlotEl.textContent = cpText;
+  }
+
+  const progClamped = Math.min(1, Math.max(0, viewModel.progress01));
+  const progQuantized = Math.round(progClamped * 500);
+  if (progQuantized !== hud.lastProgressQuantized) {
+    hud.lastProgressQuantized = progQuantized;
+    hud.progressFillEl.style.transform = `scaleX(${(progQuantized / 500).toFixed(3)})`;
+  }
+
+  if (viewModel.cpPassed !== hud.lastCpPassed) {
+    hud.lastCpPassed = viewModel.cpPassed;
+    for (let i = 0; i < hud.progressMarkerEls.length; i++) {
+      hud.progressMarkerEls[i].classList.toggle(
+        'sr-progress-marker-passed',
+        i < viewModel.cpPassed,
+      );
+    }
   }
 }
 

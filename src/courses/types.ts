@@ -1,0 +1,72 @@
+// src/courses/types.ts
+
+export interface BoostPadSegmentConfig {
+  readonly at: number; // pecahan 0..1 di dalam segmen
+  readonly lateral: number; // offset dari tengah lintasan (meter)
+}
+
+export type CourseSegmentConfig =
+  | {
+      readonly type: 'straight';
+      readonly length: number;
+      readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
+    }
+  | {
+      readonly type: 'curve';
+      readonly radius: number;
+      readonly angleDeg: number; // + kanan, - kiri
+      readonly bankDeg: number; // + miring ke kiri, - miring ke kanan
+      readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
+    }
+  | {
+      readonly type: 'slope';
+      readonly length: number;
+      readonly pitchDeg: number; // + menanjak, - menurun
+      readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
+    }
+  | {
+      readonly type: 'pitchTo';
+      readonly length: number;
+      readonly pitchDeg: number; // transisi halus ke pitchDeg lalu ditahan
+      readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
+    }
+  | {
+      readonly type: 'gap';
+      readonly length: number;
+      readonly exitPitchDeg: number; // garis tengah tetap ada tanpa permukaan
+      readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
+    }
+  | {
+      readonly type: 'loop';
+      readonly radius: number;
+      readonly lateralOffset: number;
+      readonly width?: number;
+      readonly checkpoint?: boolean;
+      readonly boostPads?: readonly BoostPadSegmentConfig[];
+    };
+
+export interface CourseMedals {
+  readonly gold: number;
+  readonly silver: number;
+  readonly bronze: number;
+}
+
+export interface CourseDefinition {
+  readonly id: string;
+  readonly name: string;
+  readonly startPosition?: { readonly x: number; readonly y: number; readonly z: number };
+  readonly startHeadingDeg?: number;
+  readonly segments: readonly CourseSegmentConfig[];
+  readonly referenceTime: number;
+  readonly medals: CourseMedals;
+}
