@@ -12,6 +12,7 @@ export const skyCircuitCourse: CourseDefinition = {
   typeLabel: 'Satu arah',
   closed: false,
   laps: 1,
+  racers: 1,
   trackWidth: 7,
   startPosition: { x: 0, y: 10, z: 145 },
   startHeadingDeg: 0,

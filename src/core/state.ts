@@ -9,7 +9,8 @@ import {
   type RaceStats,
 } from '../services/records';
 import type { Course } from './course';
-import type { PhysicsEvent } from './physics';
+import { applyGridStart, createGridCars } from './gridStart';
+import type { CarState, PhysicsEvent } from './physics';
 
 export type RacePhase = 'TITLE' | 'COUNTDOWN' | 'RACING' | 'FINISH';
 
@@ -66,6 +67,7 @@ export interface RaceState {
   stats: RaceStats;
   lastFinish: FinishResultData | null;
   persistRecords: boolean;
+  cars: CarState[];
 }
 
 export type RaceEvent =
@@ -174,6 +176,7 @@ export function createRaceState(course: Course, options?: CreateRaceStateOptions
     stats: createEmptyStats(),
     lastFinish: null,
     persistRecords,
+    cars: createGridCars(course),
   };
 }
 
@@ -192,15 +195,21 @@ export function refreshRaceRecords(state: RaceState, course: Course): void {
     records.bestSplits.length === totalSplitCount ? [...records.bestSplits] : null;
 }
 
-export function startCountdown(state: RaceState, nowMs?: number): RaceEvent[] {
+export function startCountdown(state: RaceState, nowMs?: number, course?: Course): RaceEvent[] {
   resetProgressFields(state);
+  if (course) {
+    applyGridStart(state.cars, course);
+  }
   state.phase = 'COUNTDOWN';
   state.countdownStartMs = typeof nowMs === 'number' && Number.isFinite(nowMs) ? nowMs : null;
   return [{ type: 'countdownTick', n: state.countdownDisplayNumber }];
 }
 
-export function restartRace(state: RaceState, nowMs?: number): RaceEvent[] {
+export function restartRace(state: RaceState, nowMs?: number, course?: Course): RaceEvent[] {
   resetProgressFields(state);
+  if (course) {
+    applyGridStart(state.cars, course);
+  }
   state.phase = 'COUNTDOWN';
   state.countdownStartMs = typeof nowMs === 'number' && Number.isFinite(nowMs) ? nowMs : null;
   return [
@@ -231,6 +240,7 @@ export function resumeRaceClock(state: RaceState, nowMs: number): void {
 
 export function returnToTitle(state: RaceState, course: Course): RaceEvent[] {
   resetProgressFields(state);
+  applyGridStart(state.cars, course);
   refreshRaceRecords(state, course);
   state.phase = 'TITLE';
   state.countdownTimer = 0;
@@ -250,7 +260,7 @@ export function getRespawnTarget(
   if (course.isClosed() && state.currentLap > 1) {
     return { routeId: 'main', s: (state.currentLap - 1) * course.getLength(), lateral: 0 };
   }
-  const slot0 = course.getGridSlots(1)[0];
+  const slot0 = course.getGridSlots(course.getRacers())[0];
   return { routeId: 'main', s: slot0.s, lateral: slot0.lateral };
 }
 

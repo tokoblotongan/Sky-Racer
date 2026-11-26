@@ -68,6 +68,7 @@ export interface CourseConfig {
   themeId?: ThemeId;
   closed?: boolean;
   laps?: number;
+  racers?: number;
   medals?: CourseMedals;
   segments: readonly CourseSegmentConfig[];
   routes?: readonly RouteDefinition[];
@@ -96,6 +97,7 @@ export function buildCourseConfigFromDefinition(
     themeId: definition.themeId,
     closed: Boolean(definition.closed),
     laps: Math.max(1, Math.round(definition.laps ?? 1)),
+    racers: Math.max(1, Math.round(definition.racers ?? 1)),
     medals: definition.medals,
     segments: definition.segments,
     routes: definition.routes,
@@ -117,6 +119,7 @@ export class Course extends SampledRouteBase implements Route {
   private readonly id: string;
   private readonly themeId: ThemeId;
   private readonly laps: number;
+  readonly racers: number;
   private readonly medals: CourseMedals;
   private readonly closureReport: ClosureReport | null;
   private readonly checkpoints: CheckpointData[];
@@ -131,6 +134,7 @@ export class Course extends SampledRouteBase implements Route {
     const themeId = config.themeId ?? fallbackDef.themeId ?? 'toyroom';
     const closed = Boolean(config.closed);
     const laps = Math.max(1, Math.round(config.laps ?? 1));
+    const racers = Math.max(1, Math.round(config.racers ?? fallbackDef.racers ?? 1));
     const medals = config.medals ?? fallbackDef.medals;
 
     if (config.segments.length === 0) {
@@ -191,6 +195,7 @@ export class Course extends SampledRouteBase implements Route {
     this.id = id;
     this.themeId = themeId;
     this.laps = laps;
+    this.racers = racers;
     this.medals = medals;
     this.closureReport = sampled.closureReport;
 
@@ -356,6 +361,10 @@ export class Course extends SampledRouteBase implements Route {
 
   getLaps(): number {
     return this.laps;
+  }
+
+  getRacers(): number {
+    return this.racers;
   }
 
   getClosureReport(): ClosureReport | null {

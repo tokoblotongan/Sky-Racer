@@ -9,15 +9,18 @@ import { createWrongWayDetector } from './core/wrongWay';
 import { getCourse, getLastCourseId, listCourses, setLastCourseId } from './courses';
 import {
   copyCarState,
-  createCarState,
   getCarPose,
   interpolateCarState,
   respawnAt,
   stepCar,
   type CarPose,
   type CarState,
+  type PhysicsEvent,
 } from './core/physics';
+import { resolveCarCollisions } from './core/collisions';
+import { applyGridStart, ensureCarsForCourse } from './core/gridStart';
 import { updateRouteTransitions } from './core/routeTransitions';
+import { createTestDrivers } from './core/testDrivers';
 import {
   applyManualResetPenalty,
   createRaceState,
@@ -33,10 +36,10 @@ import {
   type RaceEvent,
   type RaceState,
 } from './core/state';
-import { createKeyboardControls } from './input/controls';
+import { createKeyboardControls, type CarInput } from './input/controls';
 import { createTouchControls, requestLandscapeOrientation } from './input/touch';
 import { buildBridgeMesh, type BridgeVisual } from './render/bridge';
-import { buildCarMesh, type CarVisual } from './render/car';
+import { createCarFleet, type CarFleetVisual } from './render/carFleet';
 import type { CarDesignId } from './render/carDesigns';
 import { ChaseCamera } from './render/chaseCamera';
 import { buildGates, type GatesVisual } from './render/gates';
@@ -465,7 +468,7 @@ export async function bootstrap(): Promise<void> {
   }
   hud.audioBtnEl.addEventListener('click', handleAudioButtonClick);
 
-  let startGridSlot = course.getGridSlots(1)[0];
+  let startGridSlot = course.getGridSlots(course.getRacers())[0];
   let isClosedCourse = course.isClosed();
   let finishS = course.getFinishS();
   let lapLength = Math.max(1, course.getLength());
@@ -513,14 +516,15 @@ export async function bootstrap(): Promise<void> {
   );
   sceneCtx.setOrbitTarget(bounds.center, orbitRadius, CONFIG.camera.orbitHeight);
 
-  let carVisual: CarVisual = buildCarMesh({
-    designId: activeCarDesign,
+  let carFleet: CarFleetVisual = createCarFleet({
+    course,
+    playerDesignId: activeCarDesign,
     maxAnisotropy: sceneCtx.maxAnisotropy,
     presetName: activePreset,
     graphicsPreset,
     isMobile: isMobileDevice,
   });
-  sceneCtx.scene.add(carVisual.group);
+  sceneCtx.scene.add(carFleet.group);
 
   let chaseCamera = new ChaseCamera(sceneCtx.camera);
   const controls = createKeyboardControls(touchControls);
@@ -604,7 +608,7 @@ export async function bootstrap(): Promise<void> {
     tunnelVisual.applyPalette(name);
     trackAccentsVisual.applyPalette(name);
     shortcutGateVisual.applyPalette(name);
-    carVisual.applyPalette(name);
+    carFleet.applyPalette(name);
     postfx.applyPalette(name);
     syncHudPalette(name);
   }
@@ -652,22 +656,7 @@ export async function bootstrap(): Promise<void> {
       return;
     }
     activeCarDesign = nextDesign;
-    const prevPos = carVisual.group.position.clone();
-    const prevQuat = carVisual.group.quaternion.clone();
-    sceneCtx.scene.remove(carVisual.group);
-    carVisual.dispose();
-
-    carVisual = buildCarMesh({
-      designId: activeCarDesign,
-      maxAnisotropy: sceneCtx.maxAnisotropy,
-      presetName: activePreset,
-      graphicsPreset,
-      isMobile: isMobileDevice,
-    });
-    carVisual.group.position.copy(prevPos);
-    carVisual.group.quaternion.copy(prevQuat);
-    carVisual.update(currState, 0);
-    sceneCtx.scene.add(carVisual.group);
+    carFleet.swapPlayerDesign(nextDesign, raceState.cars[0], course);
     showDebugToast(`CAR: ${activeCarDesign.toUpperCase()} | PRESET: ${activePreset.toUpperCase()}`);
   }
 
@@ -705,12 +694,20 @@ export async function bootstrap(): Promise<void> {
   window.addEventListener('orientationchange', handleWindowOrientationChange);
   window.visualViewport?.addEventListener('resize', handleWindowResize);
 
-  const createStartCarState = (): CarState =>
-    createCarState({ s: startGridSlot.s, lateral: startGridSlot.lateral });
+  const prevCars: CarState[] = [];
+  const renderCars: CarState[] = [];
+  const testDrivers = createTestDrivers();
+  testDrivers.reset(course.getRacers());
 
-  let prevState = createStartCarState();
-  let currState = createStartCarState();
-  const renderState = createStartCarState();
+  function syncCarStateArrays(): void {
+    ensureCarsForCourse(prevCars, course);
+    ensureCarsForCourse(renderCars, course);
+    for (let i = 0; i < raceState.cars.length; i++) {
+      copyCarState(raceState.cars[i], prevCars[i]);
+      copyCarState(raceState.cars[i], renderCars[i]);
+    }
+  }
+  syncCarStateArrays();
 
   const renderPose: CarPose = {
     position: new THREE.Vector3(),
@@ -771,13 +768,11 @@ export async function bootstrap(): Promise<void> {
   };
   let lastThrottle = 0;
 
-  getCarPose(currState, course, renderPose);
-  carVisual.group.position.copy(renderPose.position);
-  carVisual.group.quaternion.copy(renderPose.quaternion);
+  carFleet.snapFromCars(raceState.cars, course, renderPose);
 
   chaseCamera.setMode('title');
   if (!CONFIG.camera.debugOrbitMode) {
-    chaseCamera.snapTo(renderPose, currState, course);
+    chaseCamera.snapTo(renderPose, raceState.cars[0], course);
   }
 
   const fixedStep = CONFIG.sim.fixedStep;
@@ -913,6 +908,19 @@ export async function bootstrap(): Promise<void> {
       return;
     }
     const status = isLoadingCourse ? 'LOADING' : raceState.phase;
+    const playerCar = raceState.cars[0];
+    const carsStatus = raceState.cars.map((car, index) => {
+      const speedMs = car.mode === 'grounded' ? Math.abs(car.vForward) : car.worldVel.length();
+      return {
+        index,
+        label: index === 0 ? 'P1' : `AI${index}`,
+        routeId: car.routeId,
+        mode: car.mode,
+        speedKmh: speedMs * CONFIG.hud.speedScale,
+        s: car.mode === 'grounded' ? car.s : car.sApprox,
+        crashed: car.crashed,
+      };
+    });
     updateDebugMetricsOverlay(
       hud,
       {
@@ -926,8 +934,10 @@ export async function bootstrap(): Promise<void> {
         countdownSec: raceState.countdownDisplayNumber,
         countdownWallMs: raceState.countdownElapsedMs,
         courseId: course.getId(),
-        routeId: currState.routeId,
+        routeId: playerCar ? playerCar.routeId : 'main',
         quality: qualityManager.getLevel(),
+        carCount: raceState.cars.length,
+        cars: carsStatus,
       },
       nowMs,
     );
@@ -1065,6 +1075,8 @@ export async function bootstrap(): Promise<void> {
     gates.dispose();
     sceneCtx.scene.remove(shortcutGateVisual.group);
     shortcutGateVisual.dispose();
+    sceneCtx.scene.remove(carFleet.group);
+    carFleet.dispose();
   }
 
   function buildCourseObjects(
@@ -1076,12 +1088,13 @@ export async function bootstrap(): Promise<void> {
     }
     course = new Course(buildCourseConfigFromDefinition(targetDef));
     raceState = createRaceState(course);
+    testDrivers.reset(course.getRacers());
     zoneStarts = course.getZoneStarts();
     resetZoneTracking();
     wrongWayDetector.reset();
     wrongWayActive = false;
 
-    startGridSlot = course.getGridSlots(1)[0];
+    startGridSlot = course.getGridSlots(course.getRacers())[0];
     isClosedCourse = course.isClosed();
     finishS = course.getFinishS();
     lapLength = Math.max(1, course.getLength());
@@ -1148,11 +1161,21 @@ export async function bootstrap(): Promise<void> {
     );
     sceneCtx.setOrbitTarget(bounds.center, orbitRadius, CONFIG.camera.orbitHeight);
 
+    carFleet = createCarFleet({
+      course,
+      playerDesignId: activeCarDesign,
+      maxAnisotropy: sceneCtx.maxAnisotropy,
+      presetName: activePreset,
+      graphicsPreset,
+      isMobile: isMobileDevice,
+    });
+    sceneCtx.scene.add(carFleet.group);
+
     lastFinishData = null;
     lastFinishRecords = null;
     lastThrottle = 0;
-    prevState = createStartCarState();
-    currState = createStartCarState();
+    applyGridStart(raceState.cars, course, prevCars);
+    syncCarStateArrays();
     particles.reset();
     postfx.setSpeedIntensity(0);
     hideAirtimePopup(hud);
@@ -1161,14 +1184,11 @@ export async function bootstrap(): Promise<void> {
     hideCountdownOverlay(hud);
     hideFinishScreen(hud);
 
-    getCarPose(currState, course, renderPose);
-    carVisual.group.position.copy(renderPose.position);
-    carVisual.group.quaternion.copy(renderPose.quaternion);
-    carVisual.update(currState, 0);
+    carFleet.snapFromCars(raceState.cars, course, renderPose);
 
     chaseCamera.setMode('title');
     if (!CONFIG.camera.debugOrbitMode) {
-      chaseCamera.snapTo(renderPose, currState, course);
+      chaseCamera.snapTo(renderPose, raceState.cars[0], course);
     }
 
     hudViewModel.phase = raceState.phase;
@@ -1345,8 +1365,6 @@ export async function bootstrap(): Promise<void> {
     unbindCanvasContextEvents(prevCanvas);
 
     disposeCurrentCourseVisuals();
-    sceneCtx.scene.remove(carVisual.group);
-    carVisual.dispose();
     particles.dispose();
     postfx.dispose();
     qualityManager.dispose();
@@ -1443,20 +1461,19 @@ export async function bootstrap(): Promise<void> {
     shortcutGateVisual.applyPalette(activePreset);
     sceneCtx.scene.add(shortcutGateVisual.group);
 
-    carVisual = buildCarMesh({
-      designId: activeCarDesign,
+    carFleet = createCarFleet({
+      course,
+      playerDesignId: activeCarDesign,
       maxAnisotropy: sceneCtx.maxAnisotropy,
       presetName: activePreset,
       graphicsPreset,
       isMobile: isMobileDevice,
     });
-    sceneCtx.scene.add(carVisual.group);
+    sceneCtx.scene.add(carFleet.group);
 
-    const activeRoute = course.getRoute(currState.routeId);
-    getCarPose(currState, activeRoute, renderPose);
-    carVisual.group.position.copy(renderPose.position);
-    carVisual.group.quaternion.copy(renderPose.quaternion);
-    carVisual.update(currState, 0);
+    const playerCar = raceState.cars[0];
+    const activeRoute = course.getRoute(playerCar.routeId);
+    carFleet.snapFromCars(raceState.cars, course, renderPose);
 
     chaseCamera = new ChaseCamera(sceneCtx.camera);
     if (raceState.phase === 'TITLE') {
@@ -1467,7 +1484,7 @@ export async function bootstrap(): Promise<void> {
       chaseCamera.setMode('chase');
     }
     if (!CONFIG.camera.debugOrbitMode) {
-      chaseCamera.snapTo(renderPose, currState, activeRoute);
+      chaseCamera.snapTo(renderPose, playerCar, activeRoute);
     }
 
     particles = createParticles(sceneCtx.scene, activeQuality);
@@ -1668,17 +1685,19 @@ export async function bootstrap(): Promise<void> {
       return;
     }
     const now = performance.now();
+    const currPlayer = raceState.cars[0];
     const carSpeedKmh =
-      (currState.mode === 'grounded' ? Math.abs(currState.vForward) : currState.worldVel.length()) *
-      CONFIG.hud.speedScale;
+      (currPlayer.mode === 'grounded'
+        ? Math.abs(currPlayer.vForward)
+        : currPlayer.worldVel.length()) * CONFIG.hud.speedScale;
     const events = updateRace(
       raceState,
       {
-        s: currState.s,
-        sApprox: currState.sApprox,
-        mode: currState.mode,
-        routeId: currState.routeId,
-        routeLapOffset: currState.routeLapOffset,
+        s: currPlayer.s,
+        sApprox: currPlayer.sApprox,
+        mode: currPlayer.mode,
+        routeId: currPlayer.routeId,
+        routeLapOffset: currPlayer.routeLapOffset,
         speedKmh: carSpeedKmh,
       },
       course,
@@ -1851,7 +1870,11 @@ export async function bootstrap(): Promise<void> {
       sound.handleEvents([{ type: 'uiConfirm' }]);
       particles.reset();
       postfx.setSpeedIntensity(0);
-      const events = startCountdown(raceState, nowMs);
+      applyGridStart(raceState.cars, course, prevCars);
+      syncCarStateArrays();
+      testDrivers.reset(course.getRacers());
+      carFleet.snapFromCars(raceState.cars, course, renderPose);
+      const events = startCountdown(raceState, nowMs, course);
       chaseCamera.setMode('chase');
       handleRaceEvents(events);
       syncGraphicsUi();
@@ -1869,8 +1892,9 @@ export async function bootstrap(): Promise<void> {
     wrongWayDetector.reset();
     wrongWayActive = false;
 
-    prevState = createStartCarState();
-    currState = createStartCarState();
+    applyGridStart(raceState.cars, course, prevCars);
+    syncCarStateArrays();
+    testDrivers.reset(course.getRacers());
     gates.reset();
     particles.reset();
     postfx.setSpeedIntensity(0);
@@ -1880,13 +1904,13 @@ export async function bootstrap(): Promise<void> {
     hideCountdownOverlay(hud);
 
     sound.reset();
-    const events = restartRace(raceState, nowMs);
+    const events = restartRace(raceState, nowMs, course);
     resetZoneTracking();
     chaseCamera.setMode('chase');
+    carFleet.snapFromCars(raceState.cars, course, renderPose);
 
     if (CONFIG.camera.snapOnReset && !CONFIG.camera.debugOrbitMode) {
-      getCarPose(currState, course, renderPose);
-      chaseCamera.snapTo(renderPose, currState, course);
+      chaseCamera.snapTo(renderPose, raceState.cars[0], course);
     }
 
     handleRaceEvents(events);
@@ -1907,8 +1931,9 @@ export async function bootstrap(): Promise<void> {
     wrongWayDetector.reset();
     wrongWayActive = false;
 
-    prevState = createStartCarState();
-    currState = createStartCarState();
+    applyGridStart(raceState.cars, course, prevCars);
+    syncCarStateArrays();
+    testDrivers.reset(course.getRacers());
     gates.reset();
     particles.reset();
     postfx.setSpeedIntensity(0);
@@ -1922,10 +1947,10 @@ export async function bootstrap(): Promise<void> {
     const events = returnToTitle(raceState, course);
     resetZoneTracking();
     chaseCamera.setMode('title');
+    carFleet.snapFromCars(raceState.cars, course, renderPose);
 
     if (!CONFIG.camera.debugOrbitMode) {
-      getCarPose(currState, course, renderPose);
-      chaseCamera.snapTo(renderPose, currState, course);
+      chaseCamera.snapTo(renderPose, raceState.cars[0], course);
     }
 
     handleRaceEvents(events);
@@ -1953,11 +1978,12 @@ export async function bootstrap(): Promise<void> {
   };
 
   function handleCheckpointReset(): void {
+    const playerCar = raceState.cars[0];
     const target = getRespawnTarget(raceState, course);
     const targetRoute = course.getRoute(target.routeId);
-    respawnAt(currState, targetRoute, target.s, target.lateral, CONFIG.race.resetSpeedFactor);
+    respawnAt(playerCar, targetRoute, target.s, target.lateral, CONFIG.race.resetSpeedFactor);
     applyManualResetPenalty(raceState);
-    copyCarState(currState, prevState);
+    copyCarState(playerCar, prevCars[0]);
     wrongWayDetector.reset();
     wrongWayActive = false;
     hideAirtimePopup(hud);
@@ -1965,8 +1991,8 @@ export async function bootstrap(): Promise<void> {
     sound.handleEvents([{ type: 'respawn' }]);
 
     if (CONFIG.camera.snapOnReset && !CONFIG.camera.debugOrbitMode) {
-      getCarPose(currState, targetRoute, renderPose);
-      chaseCamera.snapTo(renderPose, currState, targetRoute);
+      getCarPose(playerCar, targetRoute, renderPose);
+      chaseCamera.snapTo(renderPose, playerCar, targetRoute);
     }
   }
 
@@ -2011,31 +2037,66 @@ export async function bootstrap(): Promise<void> {
 
     lastThrottle = raceState.phase === 'RACING' ? input.throttle : 0;
 
-    copyCarState(currState, prevState);
-    let activeRoute = course.getRoute(currState.routeId);
-    const respawnTarget = getRespawnTarget(raceState, course);
-    const respawnRoute = course.getRoute(respawnTarget.routeId);
-    const physicsEvents = stepCar(currState, input, activeRoute, step, {
-      phase: raceState.phase,
-      respawnTarget,
-      respawnRoute,
-    });
+    ensureCarsForCourse(prevCars, course);
+    const playerRespawnTarget = getRespawnTarget(raceState, course);
+    const playerRespawnRoute = course.getRoute(playerRespawnTarget.routeId);
+    const mainRoute = course.getRoute('main');
+    let playerPhysicsEvents: PhysicsEvent[] = [];
 
-    const routeTransition = updateRouteTransitions(currState, course);
-    if (routeTransition) {
-      activeRoute = course.getRoute(currState.routeId);
-      if (routeTransition.kind === 'enter' && raceState.phase === 'RACING') {
-        showShortcutToast(hud, routeTransition.routeName);
+    for (let i = 0; i < raceState.cars.length; i++) {
+      const car = raceState.cars[i];
+      copyCarState(car, prevCars[i]);
+
+      const carInput: CarInput =
+        i === 0 ? input : testDrivers.sampleInput(i, raceState.cars, course, raceState.phase);
+      const carRoute = course.getRoute(car.routeId);
+      const carRespawnTarget =
+        i === 0
+          ? playerRespawnTarget
+          : { routeId: 'main', s: car.lastSafeS, lateral: 0 };
+      const carRespawnRoute = i === 0 ? playerRespawnRoute : mainRoute;
+
+      const stepEvents = stepCar(car, carInput, carRoute, step, {
+        phase: raceState.phase,
+        respawnTarget: carRespawnTarget,
+        respawnRoute: carRespawnRoute,
+      });
+
+      const transition = updateRouteTransitions(car, course);
+      if (i === 0) {
+        playerPhysicsEvents = stepEvents;
+        if (transition && transition.kind === 'enter' && raceState.phase === 'RACING') {
+          showShortcutToast(hud, transition.routeName);
+        }
       }
     }
 
-    for (const ev of physicsEvents) {
+    const collisionEvents = resolveCarCollisions(raceState.cars, course, step, raceState.phase);
+    for (let ci = 0; ci < collisionEvents.length; ci++) {
+      const ev = collisionEvents[ci];
+      if (ev.carIndex === 0 || ev.otherIndex === 0) {
+        const hitEvt: Extract<PhysicsEvent, { type: 'railHit' }> = {
+          type: 'railHit',
+          side: ev.carIndex === 0 ? 1 : -1,
+          intensity: ev.intensity,
+          worldPos: ev.worldPos,
+        };
+        touchControls.onHaptic(hitEvt);
+        particles.emit(hitEvt);
+        sound.handleEvents([hitEvt]);
+      }
+    }
+
+    const currPlayer = raceState.cars[0];
+    let activePlayerRoute = course.getRoute(currPlayer.routeId);
+
+    for (const ev of playerPhysicsEvents) {
       touchControls.onHaptic(ev);
       if (ev.type === 'landed') {
         particles.emit({
           type: 'landed',
           impactSpeed: ev.impactSpeed,
-          position: currState.worldPos,
+          position: currPlayer.worldPos,
         });
         if (raceState.phase === 'RACING' && ev.airtime >= CONFIG.physics.minAirtimeForBonus) {
           showAirtimePopup(hud, ev.airtime);
@@ -2043,7 +2104,7 @@ export async function bootstrap(): Promise<void> {
       } else if (ev.type === 'railHit') {
         particles.emit(ev);
       } else if (ev.type === 'boost') {
-        getCarPose(currState, activeRoute, eventPose);
+        getCarPose(currPlayer, activePlayerRoute, eventPose);
         particles.emit({
           type: 'boost',
           position: eventPose.position,
@@ -2052,46 +2113,47 @@ export async function bootstrap(): Promise<void> {
           up: eventPose.up,
         });
       } else if (ev.type === 'respawn') {
-        const currentRoute = course.getRoute(currState.routeId);
-        activeRoute = currentRoute;
-        copyCarState(currState, prevState);
+        const currentRoute = course.getRoute(currPlayer.routeId);
+        activePlayerRoute = currentRoute;
+        copyCarState(currPlayer, prevCars[0]);
         hideAirtimePopup(hud);
         if (!CONFIG.camera.debugOrbitMode) {
-          getCarPose(currState, currentRoute, renderPose);
-          chaseCamera.snapTo(renderPose, currState, currentRoute);
+          getCarPose(currPlayer, currentRoute, renderPose);
+          chaseCamera.snapTo(renderPose, currPlayer, currentRoute);
         }
       }
     }
 
-    sound.handleEvents(physicsEvents);
+    sound.handleEvents(playerPhysicsEvents);
 
     const carSpeedKmh =
-      (currState.mode === 'grounded' ? Math.abs(currState.vForward) : currState.worldVel.length()) *
-      CONFIG.hud.speedScale;
+      (currPlayer.mode === 'grounded'
+        ? Math.abs(currPlayer.vForward)
+        : currPlayer.worldVel.length()) * CONFIG.hud.speedScale;
 
     const raceEvents = updateRace(
       raceState,
       {
-        s: currState.s,
-        sApprox: currState.sApprox,
-        mode: currState.mode,
-        routeId: currState.routeId,
-        routeLapOffset: currState.routeLapOffset,
+        s: currPlayer.s,
+        sApprox: currPlayer.sApprox,
+        mode: currPlayer.mode,
+        routeId: currPlayer.routeId,
+        routeLapOffset: currPlayer.routeLapOffset,
         speedKmh: carSpeedKmh,
       },
       course,
       step,
-      physicsEvents,
+      playerPhysicsEvents,
       nowMs,
     );
     handleRaceEvents(raceEvents);
 
-    const activeWrongWayS = currState.mode === 'grounded' ? currState.s : currState.sApprox;
-    activeRoute.getFrameAt(activeWrongWayS, wrongWayFrame);
-    getCarPose(currState, activeRoute, eventPose);
+    const activeWrongWayS = currPlayer.mode === 'grounded' ? currPlayer.s : currPlayer.sApprox;
+    activePlayerRoute.getFrameAt(activeWrongWayS, wrongWayFrame);
+    getCarPose(currPlayer, activePlayerRoute, eventPose);
     wrongWayActive = wrongWayDetector.update(
       {
-        carState: currState,
+        carState: currPlayer,
         carPose: eventPose,
         trackFrame: wrongWayFrame,
         isClosed: isClosedCourse,
@@ -2100,10 +2162,10 @@ export async function bootstrap(): Promise<void> {
       step,
     );
 
-    const activeZoneS = currState.mode === 'grounded' ? currState.s : currState.sApprox;
+    const activeZoneS = currPlayer.mode === 'grounded' ? currPlayer.s : currPlayer.sApprox;
     if (
       raceState.phase === 'RACING' &&
-      currState.routeId === 'main' &&
+      currPlayer.routeId === 'main' &&
       !wrongWayActive
     ) {
       if (raceState.currentLap !== lastZoneLap) {
@@ -2143,15 +2205,16 @@ export async function bootstrap(): Promise<void> {
     trackAccentsVisual.update(realDt);
     shortcutGateVisual.update(realDt);
 
-    interpolateCarState(prevState, currState, alpha, renderState);
-    const renderRoute = course.getRoute(renderState.routeId);
-    getCarPose(renderState, renderRoute, renderPose);
+    ensureCarsForCourse(renderCars, course);
+    for (let i = 0; i < raceState.cars.length; i++) {
+      interpolateCarState(prevCars[i], raceState.cars[i], alpha, renderCars[i]);
+    }
+    carFleet.updateFromCars(renderCars, course, realDt, renderPose);
 
-    carVisual.group.position.copy(renderPose.position);
-    carVisual.group.quaternion.copy(renderPose.quaternion);
-    carVisual.update(renderState, realDt);
+    const renderPlayer = renderCars[0];
+    const renderRoute = course.getRoute(renderPlayer.routeId);
 
-    const boostBonusDeg = renderState.boostTimeLeft > 0 ? CONFIG.boost.fovBonus : 0;
+    const boostBonusDeg = renderPlayer.boostTimeLeft > 0 ? CONFIG.boost.fovBonus : 0;
     chaseCamera.setBoostFovBonus(boostBonusDeg);
 
     if (CONFIG.camera.debugOrbitMode) {
@@ -2159,24 +2222,24 @@ export async function bootstrap(): Promise<void> {
       sceneCtx.setCameraOrbitAngle(interpolatedAngle);
       sceneCtx.updateSunShadowTarget(bounds.center);
     } else {
-      chaseCamera.update(renderPose, renderState, renderRoute, realDt);
+      chaseCamera.update(renderPose, renderPlayer, renderRoute, realDt);
       sceneCtx.updateSunShadowTarget(renderPose.position);
     }
 
     sceneCtx.updateTheme(sceneCtx.camera.position, realDt);
-    particles.update(realDt, renderPose, renderState);
+    particles.update(realDt, renderPose, renderPlayer);
 
     const speedMs =
-      renderState.mode === 'grounded'
-        ? Math.abs(renderState.vForward)
-        : renderState.worldVel.length();
+      renderPlayer.mode === 'grounded'
+        ? Math.abs(renderPlayer.vForward)
+        : renderPlayer.worldVel.length();
     const speedRatio = speedMs / Math.max(1, CONFIG.physics.maxSpeed);
     const minFactor = CONFIG.fx.speedLines.minSpeedFactor;
     const baseSpeedFactor =
       speedRatio > minFactor
         ? THREE.MathUtils.clamp((speedRatio - minFactor) / Math.max(0.05, 1 - minFactor), 0, 1)
         : 0;
-    const boostSurge = renderState.boostTimeLeft > 0 ? CONFIG.fx.speedLines.boostBonus : 0;
+    const boostSurge = renderPlayer.boostTimeLeft > 0 ? CONFIG.fx.speedLines.boostBonus : 0;
     const speedLineIntensity =
       raceState.phase === 'RACING'
         ? THREE.MathUtils.clamp(
@@ -2190,18 +2253,18 @@ export async function bootstrap(): Promise<void> {
     soundSnapshot.phase = raceState.phase;
     soundSnapshot.speedNorm = speedRatio;
     soundSnapshot.throttle = lastThrottle;
-    soundSnapshot.boostActive = renderState.boostTimeLeft > 0;
-    soundSnapshot.slip = renderState.slip;
-    soundSnapshot.grounded = renderState.mode === 'grounded';
-    soundSnapshot.airborne = renderState.mode === 'airborne';
-    soundSnapshot.falling = renderState.mode === 'falling';
-    soundSnapshot.railContact = renderState.railContactTimer > 0;
+    soundSnapshot.boostActive = renderPlayer.boostTimeLeft > 0;
+    soundSnapshot.slip = renderPlayer.slip;
+    soundSnapshot.grounded = renderPlayer.mode === 'grounded';
+    soundSnapshot.airborne = renderPlayer.mode === 'airborne';
+    soundSnapshot.falling = renderPlayer.mode === 'falling';
+    soundSnapshot.railContact = renderPlayer.railContactTimer > 0;
     sound.update(soundSnapshot, realDt);
 
-    const rawProgressS = renderState.mode === 'grounded' ? renderState.s : renderState.sApprox;
+    const rawProgressS = renderPlayer.mode === 'grounded' ? renderPlayer.s : renderPlayer.sApprox;
     const activeProgressS =
-      (renderState.routeId !== 'main' ? (renderState.routeLapOffset ?? 0) : 0) +
-      course.getProgressS(renderState.routeId, rawProgressS);
+      (renderPlayer.routeId !== 'main' ? (renderPlayer.routeLapOffset ?? 0) : 0) +
+      course.getProgressS(renderPlayer.routeId, rawProgressS);
     const lapStartS = Math.max(0, raceState.currentLap - 1) * progressSpanS;
     const progress01 = isClosedCourse
       ? activeProgressS < lapStartS
@@ -2214,7 +2277,7 @@ export async function bootstrap(): Promise<void> {
     hudViewModel.speedKmh = speedMs * CONFIG.hud.speedScale;
     hudViewModel.boost01 =
       CONFIG.boost.duration > 1e-4
-        ? Math.min(1, Math.max(0, renderState.boostTimeLeft / CONFIG.boost.duration))
+        ? Math.min(1, Math.max(0, renderPlayer.boostTimeLeft / CONFIG.boost.duration))
         : 0;
     hudViewModel.progress01 = progress01;
     hudViewModel.timeSeconds = raceState.timer;
@@ -2388,7 +2451,7 @@ export async function bootstrap(): Promise<void> {
 
         debugOverlay?.update(
           nowMs,
-          currState,
+          raceState.cars[0],
           raceState,
           course,
           qualityManager.getLevel(),
@@ -2508,7 +2571,7 @@ export async function bootstrap(): Promise<void> {
     trackAccentsVisual.dispose();
     gates.dispose();
     shortcutGateVisual.dispose();
-    carVisual.dispose();
+    carFleet.dispose();
     sceneCtx.dispose();
   });
 }

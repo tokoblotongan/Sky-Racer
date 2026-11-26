@@ -107,6 +107,16 @@ export interface PresetBenchmarkReport {
   entries: PresetBenchmarkEntry[];
 }
 
+export interface DebugCarStatus {
+  index: number;
+  label: string;
+  routeId: string;
+  mode: string;
+  speedKmh: number;
+  s: number;
+  crashed: boolean;
+}
+
 export interface DebugMetricsSnapshot {
   fps: number;
   avgFrameMs: number;
@@ -120,6 +130,8 @@ export interface DebugMetricsSnapshot {
   courseId: string;
   routeId: string;
   quality: QualityLevel;
+  carCount: number;
+  cars?: DebugCarStatus[];
 }
 
 export interface HudHandle {
@@ -1432,7 +1444,7 @@ export function updateDebugMetricsOverlay(
     return;
   }
   hud.debugMetricsEl.classList.remove('sr-hud-hidden');
-  const stateKey = `${metrics.status}:${metrics.courseId}:${metrics.routeId}:${metrics.quality}`;
+  const stateKey = `${metrics.status}:${metrics.courseId}:${metrics.routeId}:${metrics.quality}:${metrics.carCount}`;
   const elapsedMs = nowMs - hud.lastDebugMetricsSampleMs;
   if (elapsedMs < CONFIG.debugOverlay.sampleIntervalMs && stateKey === hud.lastDebugMetricsKey) {
     return;
@@ -1444,10 +1456,20 @@ export function updateDebugMetricsOverlay(
     metrics.status === 'COUNTDOWN'
       ? `CD ${metrics.countdownSec} (${Math.round(metrics.countdownWallMs)}ms) `
       : '';
+  const carSummary =
+    metrics.cars && metrics.cars.length > 0
+      ? '\n' +
+        metrics.cars
+          .map(
+            (c) =>
+              `#${c.index} ${c.label} ${Math.round(c.speedKmh)}km/h ${c.mode} s=${c.s.toFixed(1)} [${c.routeId}]${c.crashed ? ' CRASH' : ''}`,
+          )
+          .join('\n')
+      : '';
   hud.debugMetricsEl.textContent =
     `${Math.round(metrics.fps)} FPS | ${metrics.avgFrameMs.toFixed(1)} ms | ${metrics.quality.toUpperCase()}\n` +
     `DC ${metrics.drawCalls} | TRI ${metrics.triangles} | GEO ${metrics.geometries} TEX ${metrics.textures}\n` +
-    `${metrics.status} ${cdPart}| ${metrics.courseId} (${metrics.routeId})`;
+    `${metrics.status} ${cdPart}| ${metrics.courseId} (${metrics.routeId}) | CARS ${metrics.carCount}${carSummary}`;
 }
 
 export function setHudProgressCheckpoints(

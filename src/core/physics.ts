@@ -43,6 +43,11 @@ export interface CarState {
   lastGapEndS: number;
   landingAlignTimer: number;
   landingStartQuat: THREE.Quaternion;
+  crashed: boolean;
+  crashTimer: number;
+  crashSpinAngle: number;
+  crashRollAngle: number;
+  crashHitCooldown: number;
 }
 
 export interface CarPose {
@@ -109,6 +114,15 @@ const LOCKED_FINISH_INPUT: CarInput = {
   confirmPressed: false,
 };
 
+const CRASH_COAST_INPUT: CarInput = {
+  throttle: 0,
+  brake: 0.35,
+  steer: 0,
+  handbrake: false,
+  resetPressed: false,
+  confirmPressed: false,
+};
+
 export interface CreateCarStateOptions {
   s?: number;
   lateral?: number;
@@ -148,6 +162,11 @@ export function createCarState(options?: CreateCarStateOptions): CarState {
     lastGapEndS: 0,
     landingAlignTimer: 0,
     landingStartQuat: new THREE.Quaternion(),
+    crashed: false,
+    crashTimer: 0,
+    crashSpinAngle: 0,
+    crashRollAngle: 0,
+    crashHitCooldown: 0,
   };
 }
 
@@ -181,6 +200,11 @@ export function copyCarState(src: CarState, dst: CarState): void {
   dst.lastGapEndS = src.lastGapEndS;
   dst.landingAlignTimer = src.landingAlignTimer;
   dst.landingStartQuat.copy(src.landingStartQuat);
+  dst.crashed = src.crashed;
+  dst.crashTimer = src.crashTimer;
+  dst.crashSpinAngle = src.crashSpinAngle;
+  dst.crashRollAngle = src.crashRollAngle;
+  dst.crashHitCooldown = src.crashHitCooldown;
 }
 
 export function interpolateCarState(
@@ -228,6 +252,11 @@ export function interpolateCarState(
     alpha,
   );
   out.landingStartQuat.copy(curr.landingStartQuat);
+  out.crashed = curr.crashed;
+  out.crashTimer = THREE.MathUtils.lerp(prev.crashTimer, curr.crashTimer, alpha);
+  out.crashSpinAngle = THREE.MathUtils.lerp(prev.crashSpinAngle, curr.crashSpinAngle, alpha);
+  out.crashRollAngle = THREE.MathUtils.lerp(prev.crashRollAngle, curr.crashRollAngle, alpha);
+  out.crashHitCooldown = curr.crashHitCooldown;
 }
 
 export function triggerBoost(state: CarState): void {
@@ -284,6 +313,11 @@ export function respawnAt(
   state.currentGrip = CONFIG.physics.grip;
   state.railContactTimer = 0;
   state.normalForce = CONFIG.physics.gravity * _frame.up.y;
+  state.crashed = false;
+  state.crashTimer = 0;
+  state.crashSpinAngle = 0;
+  state.crashRollAngle = 0;
+  state.crashHitCooldown = 0;
 
   state.worldPos
     .copy(_frame.position)
@@ -664,7 +698,12 @@ export function stepCar(
     return events;
   }
 
-  const effectiveInput = options.phase === 'FINISH' ? LOCKED_FINISH_INPUT : input;
+  const effectiveInput =
+    options.phase === 'FINISH'
+      ? LOCKED_FINISH_INPUT
+      : state.crashed
+        ? CRASH_COAST_INPUT
+        : input;
 
   if (state.mode === 'grounded') {
     stepGroundedCar(state, effectiveInput, route, dt, options.phase, events);

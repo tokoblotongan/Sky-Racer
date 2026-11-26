@@ -110,6 +110,7 @@ export interface CourseDefinition {
   readonly typeLabel: string;
   readonly closed?: boolean;
   readonly laps?: number;
+  readonly racers?: number;
   readonly trackWidth?: number;
   readonly startPosition?: { readonly x: number; readonly y: number; readonly z: number };
   readonly startHeadingDeg?: number;

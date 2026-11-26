@@ -12,6 +12,7 @@ export const fantasyLandCourse: CourseDefinition = {
   typeLabel: '3 lap',
   closed: true,
   laps: 3,
+  racers: 4,
   trackWidth: 16,
   startPosition: { x: 0, y: 34, z: 120 },
   startHeadingDeg: 0,
