@@ -43,6 +43,7 @@ export interface WorldTheme {
     scene: THREE.Scene,
     maxAnisotropy: number,
     presetName: VisualPresetName,
+    safeMode?: boolean,
   ) => ThemeInstance;
   applyPalette: (name: VisualPresetName) => void;
   getSkyColors: (presetName: VisualPresetName) => ThemeSkyColors;

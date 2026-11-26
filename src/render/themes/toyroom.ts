@@ -44,8 +44,9 @@ export const toyroomTheme: WorldTheme = {
     _scene: THREE.Scene,
     maxAnisotropy: number,
     presetName: VisualPresetName,
+    safeMode = false,
   ): ThemeInstance {
-    const propsVisual = buildProps(course, quality, maxAnisotropy, presetName);
+    const propsVisual = buildProps(course, quality, maxAnisotropy, presetName, safeMode);
     return {
       id: 'toyroom',
       group: propsVisual.group,

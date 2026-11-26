@@ -141,24 +141,44 @@ export function createPostFx(
   camera: THREE.PerspectiveCamera,
   quality: QualityLevel,
   isSoftwareGl = false,
+  safeMode = false,
 ): PostFxHandle {
+  if (safeMode || isSoftwareGl) {
+    return {
+      render(): void {
+        renderer.render(scene, camera);
+      },
+      resize(): void {
+        // Direct render uses renderer size
+      },
+      setQuality(): void {
+        // Post-processing disabled in safe/software mode
+      },
+      setSpeedIntensity(): void {
+        // Speed lines disabled in safe/software mode
+      },
+      applyPalette(): void {
+        // Color grading disabled in safe/software mode
+      },
+      dispose(): void {
+        // Nothing allocated
+      },
+    };
+  }
+
   const isWebGL2 = renderer.capabilities.isWebGL2;
   let currentWidth = renderer.domElement.clientWidth || window.innerWidth || 1280;
   let currentHeight = renderer.domElement.clientHeight || window.innerHeight || 720;
 
   const getDesiredSamples = (level: QualityLevel): number => {
-    if (isSoftwareGl || !isWebGL2) {
+    if (!isWebGL2) {
       return 0;
     }
     return CONFIG.render.antialias.composerSamples[level];
   };
 
-  const getPixelRatioForLevel = (level: QualityLevel): number => {
-    if (isSoftwareGl) {
-      return 1;
-    }
-    return Math.min(window.devicePixelRatio || 1, CONFIG.quality.levels[level].pixelRatioMax);
-  };
+  const getPixelRatioForLevel = (level: QualityLevel): number =>
+    Math.min(window.devicePixelRatio || 1, CONFIG.quality.levels[level].pixelRatioMax);
 
   let currentSamples = getDesiredSamples(quality);
   let currentPixelRatio = getPixelRatioForLevel(quality);
@@ -234,10 +254,10 @@ export function createPostFx(
       composer.reset(nextTarget);
     }
 
-    bloomEnabled = !isSoftwareGl && preset.bloomEnabled;
-    speedLinesEnabled = !isSoftwareGl && preset.speedLinesEnabled;
-    colorGradeEnabled = !isSoftwareGl && preset.colorGradeEnabled;
-    fxaaEnabled = !isSoftwareGl && preset.fxaaEnabled && currentSamples === 0;
+    bloomEnabled = preset.bloomEnabled;
+    speedLinesEnabled = preset.speedLinesEnabled;
+    colorGradeEnabled = preset.colorGradeEnabled;
+    fxaaEnabled = preset.fxaaEnabled && currentSamples === 0;
 
     bloomPass.enabled = bloomEnabled && scene.userData.visualDebugBloomEnabled !== false;
     speedLinesPass.enabled = speedLinesEnabled;
@@ -276,7 +296,7 @@ export function createPostFx(
     bloomPass.enabled = effectiveBloom;
 
     const needsComposer = effectiveBloom || speedLinesEnabled || colorGradeEnabled || !isWebGL2;
-    if (isSoftwareGl || !needsComposer) {
+    if (!needsComposer) {
       renderer.render(scene, camera);
       return;
     }

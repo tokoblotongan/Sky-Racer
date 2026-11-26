@@ -7,6 +7,19 @@ import { CONFIG, type VisualPreset, type VisualPresetName } from '../config';
 import type { Course, CourseBounds } from '../core/course';
 import type { QualityLevel } from './quality';
 import { getTheme, type ThemeInstance } from './themes';
+import { probeCapabilitiesFromGl, type WebGlDiagnostics } from '../ui/reportOverlay';
+
+export class RendererInitError extends Error {
+  readonly diagnostics: WebGlDiagnostics;
+  readonly attemptErrors: string[];
+
+  constructor(message: string, diagnostics: WebGlDiagnostics, attemptErrors: string[] = []) {
+    super(message);
+    this.name = 'RendererInitError';
+    this.diagnostics = diagnostics;
+    this.attemptErrors = attemptErrors;
+  }
+}
 
 export interface RoomDimensions {
   centerX: number;
@@ -21,7 +34,10 @@ export interface SceneContext {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   isSoftwareGl: boolean;
+  safeMode: boolean;
+  rendererFallbackUsed: boolean;
   maxAnisotropy: number;
+  getDiagnostics: () => WebGlDiagnostics;
   setRoomBounds: (bounds: CourseBounds) => void;
   setTheme: (course: Course, quality: QualityLevel) => void;
   updateTheme: (cameraPos: THREE.Vector3, dt: number) => void;
@@ -55,17 +71,18 @@ export function computeRoomDimensions(bounds: CourseBounds): RoomDimensions {
   };
 }
 
-function detectSoftwareWebGL(): boolean {
-  const probeCanvas = document.createElement('canvas');
-  const gl = probeCanvas.getContext('webgl2');
-  if (!gl) {
-    return true;
+function probeFallbackDiagnostics(): WebGlDiagnostics {
+  try {
+    const probeCanvas = document.createElement('canvas');
+    const gl =
+      (probeCanvas.getContext('webgl2') as WebGL2RenderingContext | null) ??
+      (probeCanvas.getContext('webgl') as WebGLRenderingContext | null);
+    const diag = probeCapabilitiesFromGl(gl);
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    return diag;
+  } catch {
+    return probeCapabilitiesFromGl(null);
   }
-  const ext = gl.getExtension('WEBGL_debug_renderer_info');
-  const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
-  const gpu = String(gl.getParameter(param));
-  gl.getExtension('WEBGL_lose_context')?.loseContext();
-  return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
 }
 
 function makeNonIndexedNormalized(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
@@ -361,9 +378,14 @@ function disposeObjectResources(root: THREE.Object3D): void {
       const matList = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const mat of matList) {
         materials.add(mat);
-        if (mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshPhysicalMaterial) {
+        if (
+          mat instanceof THREE.MeshStandardMaterial ||
+          mat instanceof THREE.MeshPhysicalMaterial ||
+          mat instanceof THREE.MeshLambertMaterial ||
+          mat instanceof THREE.MeshBasicMaterial
+        ) {
           if (mat.map) textures.add(mat.map);
-          if (mat.roughnessMap) textures.add(mat.roughnessMap);
+          if ('roughnessMap' in mat && mat.roughnessMap) textures.add(mat.roughnessMap);
         }
       }
     }
@@ -377,28 +399,68 @@ function disposeObjectResources(root: THREE.Object3D): void {
 export function createSceneContext(
   container: HTMLElement,
   initialQuality: QualityLevel = 'high',
+  safeMode = false,
 ): SceneContext {
-  const isSoftwareGl = detectSoftwareWebGL();
-  const initialQualityPreset = CONFIG.quality.levels[initialQuality];
+  const effectiveInitialQuality: QualityLevel = safeMode ? 'mobile' : initialQuality;
+  const initialQualityPreset = CONFIG.quality.levels[effectiveInitialQuality];
   const vis = CONFIG.visual;
   let activePresetName: VisualPresetName = vis.activePreset;
   let activePreset: VisualPreset = vis.presets[activePresetName];
 
-  const renderer = new THREE.WebGLRenderer({
-    antialias: !isSoftwareGl && initialQualityPreset.antialias,
-    powerPreference: 'high-performance',
-  });
+  const attemptErrors: string[] = [];
+  let createdRenderer: THREE.WebGLRenderer;
+  let rendererFallbackUsed = false;
+
+  try {
+    createdRenderer = new THREE.WebGLRenderer({
+      antialias: !safeMode && initialQualityPreset.antialias,
+      powerPreference: safeMode ? 'default' : 'high-performance',
+    });
+  } catch (err1) {
+    attemptErrors.push(err1 instanceof Error ? err1.message : String(err1 ?? 'WebGL tier 1 failed'));
+    try {
+      createdRenderer = new THREE.WebGLRenderer({
+        antialias: false,
+        powerPreference: 'default',
+      });
+      rendererFallbackUsed = true;
+    } catch (err2) {
+      attemptErrors.push(err2 instanceof Error ? err2.message : String(err2 ?? 'WebGL tier 2 failed'));
+      const diag = probeFallbackDiagnostics();
+      throw new RendererInitError('Perangkat tidak mendukung grafis 3D', diag, attemptErrors);
+    }
+  }
+
+  const renderer = createdRenderer;
+
+  const initialDiag = probeCapabilitiesFromGl(renderer.getContext());
+  const isSoftwareGl = /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(
+    initialDiag.unmaskedRenderer,
+  );
+  const effectiveSafeMode = safeMode || rendererFallbackUsed || isSoftwareGl;
+  const activePresetLevel: QualityLevel = effectiveSafeMode ? 'mobile' : effectiveInitialQuality;
+  const activeQualityPreset = CONFIG.quality.levels[activePresetLevel];
+
+  const measureViewport = (): { width: number; height: number } => {
+    const rawW = container.clientWidth || window.visualViewport?.width || window.innerWidth;
+    const rawH = container.clientHeight || window.visualViewport?.height || window.innerHeight;
+    return {
+      width: Math.max(1, Math.round(rawW)),
+      height: Math.max(1, Math.round(rawH)),
+    };
+  };
+  const initViewport = measureViewport();
+
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = activePreset.exposure;
   renderer.setPixelRatio(
-    isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, initialQualityPreset.pixelRatioMax),
+    effectiveSafeMode
+      ? 1
+      : Math.min(window.devicePixelRatio || 1, activeQualityPreset.pixelRatioMax),
   );
-  renderer.setSize(
-    container.clientWidth || window.innerWidth,
-    container.clientHeight || window.innerHeight,
-  );
-  const initialShadowsEnabled = !isSoftwareGl && initialQualityPreset.shadowsEnabled;
+  renderer.setSize(initViewport.width, initViewport.height);
+  const initialShadowsEnabled = !effectiveSafeMode && activeQualityPreset.shadowsEnabled;
   renderer.shadowMap.enabled = initialShadowsEnabled;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.appendChild(renderer.domElement);
@@ -406,9 +468,11 @@ export function createSceneContext(
   const maxAnisotropy = Math.min(
     renderer.capabilities.getMaxAnisotropy(),
     CONFIG.render.anisotropyMax,
-    initialQualityPreset.anisotropy,
+    effectiveSafeMode ? Math.min(2, activeQualityPreset.anisotropy) : activeQualityPreset.anisotropy,
   );
-  const maxTextureSize = initialQualityPreset.maxTextureSize;
+  const maxTextureSize = effectiveSafeMode
+    ? Math.min(activeQualityPreset.maxTextureSize, CONFIG.safeMode.maxTextureSize)
+    : activeQualityPreset.maxTextureSize;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(activePreset.skyHorizon);
@@ -427,22 +491,26 @@ export function createSceneContext(
   let fogEnabled: boolean = vis.fogEnabled;
   scene.fog = fogEnabled ? ensureDebugFog() : null;
 
-  const pmremGenerator = new THREE.PMREMGenerator(renderer);
-  const roomEnvironment = new RoomEnvironment();
-  const envRenderTarget = pmremGenerator.fromScene(roomEnvironment, CONFIG.renderer.envBlur);
-  scene.environment = envRenderTarget.texture;
-  scene.environmentIntensity = activePreset.envIntensity;
-  roomEnvironment.dispose();
-  pmremGenerator.dispose();
+  let envRenderTarget: THREE.WebGLRenderTarget | null = null;
+  if (!effectiveSafeMode) {
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    const roomEnvironment = new RoomEnvironment();
+    envRenderTarget = pmremGenerator.fromScene(roomEnvironment, CONFIG.renderer.envBlur);
+    scene.environment = envRenderTarget.texture;
+    scene.environmentIntensity = activePreset.envIntensity;
+    roomEnvironment.dispose();
+    pmremGenerator.dispose();
+  } else {
+    scene.environment = null;
+    scene.environmentIntensity = 0;
+  }
 
-  const aspect =
-    (container.clientWidth || window.innerWidth) /
-    (container.clientHeight || window.innerHeight);
+  const aspect = initViewport.width / initViewport.height;
   const camera = new THREE.PerspectiveCamera(
     CONFIG.camera.fovBase,
     aspect,
     CONFIG.camera.near,
-    initialQualityPreset.viewDistance * 1.2,
+    activeQualityPreset.viewDistance * 1.2,
   );
 
   const sunOffsetVec = new THREE.Vector3(
@@ -456,10 +524,10 @@ export function createSceneContext(
   const sunUp = new THREE.Vector3().crossVectors(sunDir, sunRight).normalize();
   const snappedTarget = new THREE.Vector3();
 
-  let currentPixelRatioMax: number = initialQualityPreset.pixelRatioMax;
+  let currentPixelRatioMax: number = activeQualityPreset.pixelRatioMax;
   let currentShadowMapSize: number =
-    initialQualityPreset.shadowMapSize > 0 ? initialQualityPreset.shadowMapSize : 256;
-  let currentShadowFollowRadius: number = initialQualityPreset.shadowFollowRadius;
+    activeQualityPreset.shadowMapSize > 0 ? activeQualityPreset.shadowMapSize : 256;
+  let currentShadowFollowRadius: number = activeQualityPreset.shadowFollowRadius;
 
   const sunLight = new THREE.DirectionalLight(activePreset.sunColor, activePreset.sunIntensity);
   sunLight.position.copy(sunOffsetVec);
@@ -779,7 +847,7 @@ export function createSceneContext(
 
   let activeCourse: Course | null = null;
   let activeTheme: ThemeInstance | null = null;
-  let activeQuality: QualityLevel = initialQuality;
+  let activeQuality: QualityLevel = activePresetLevel;
   let activeDensityScale = -1;
   let activeRoomDim: RoomDimensions = {
     centerX: 0,
@@ -821,7 +889,7 @@ export function createSceneContext(
       debugFog.color.set(sky.fogColor);
     }
 
-    scene.environmentIntensity = lighting.envIntensity;
+    scene.environmentIntensity = effectiveSafeMode ? 0 : lighting.envIntensity;
 
     sunLight.color.set(lighting.sunColor);
     sunLight.intensity = lighting.sunIntensity;
@@ -838,12 +906,20 @@ export function createSceneContext(
       activeTheme = null;
     }
 
+    const targetQuality: QualityLevel = effectiveSafeMode ? 'mobile' : quality;
     activeCourse = course;
-    activeQuality = quality;
-    activeDensityScale = CONFIG.quality.levels[quality].propsDensityScale;
+    activeQuality = targetQuality;
+    activeDensityScale = CONFIG.quality.levels[targetQuality].propsDensityScale;
 
     const theme = getTheme(course.getThemeId());
-    activeTheme = theme.build(course, quality, scene, maxAnisotropy, activePresetName);
+    activeTheme = theme.build(
+      course,
+      targetQuality,
+      scene,
+      maxAnisotropy,
+      activePresetName,
+      effectiveSafeMode,
+    );
     scene.add(activeTheme.group);
 
     syncCameraFar();
@@ -890,13 +966,14 @@ export function createSceneContext(
   setCameraOrbitAngle(0);
 
   function setQuality(level: QualityLevel): void {
-    const preset = CONFIG.quality.levels[level];
+    const targetLevel: QualityLevel = effectiveSafeMode ? 'mobile' : level;
+    const preset = CONFIG.quality.levels[targetLevel];
     currentPixelRatioMax = preset.pixelRatioMax;
     renderer.setPixelRatio(
-      isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, currentPixelRatioMax),
+      effectiveSafeMode ? 1 : Math.min(window.devicePixelRatio || 1, currentPixelRatioMax),
     );
 
-    const shadowsEnabled = !isSoftwareGl && preset.shadowsEnabled;
+    const shadowsEnabled = !effectiveSafeMode && preset.shadowsEnabled;
     renderer.shadowMap.enabled = shadowsEnabled;
     sunLight.castShadow = shadowsEnabled;
 
@@ -925,7 +1002,7 @@ export function createSceneContext(
       sunLight.shadow.camera.updateProjectionMatrix();
     }
 
-    activeQuality = level;
+    activeQuality = targetLevel;
     syncCameraFar();
 
     const nextDensityScale = preset.propsDensityScale;
@@ -935,11 +1012,10 @@ export function createSceneContext(
   }
 
   function getViewportSize(): { width: number; height: number } {
-    return {
-      width: container.clientWidth || window.innerWidth,
-      height: container.clientHeight || window.innerHeight,
-    };
+    return measureViewport();
   }
+
+  let orientationResizeTimer = 0;
 
   function handleResize(): void {
     const { width, height } = getViewportSize();
@@ -947,14 +1023,25 @@ export function createSceneContext(
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
     renderer.setPixelRatio(
-      isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, currentPixelRatioMax),
+      effectiveSafeMode ? 1 : Math.min(window.devicePixelRatio || 1, currentPixelRatioMax),
     );
   }
 
+  function handleOrientationChange(): void {
+    handleResize();
+    window.clearTimeout(orientationResizeTimer);
+    orientationResizeTimer = window.setTimeout(handleResize, 120);
+  }
+
   window.addEventListener('resize', handleResize);
+  window.addEventListener('orientationchange', handleOrientationChange);
+  window.visualViewport?.addEventListener('resize', handleResize);
 
   function dispose(): void {
+    window.clearTimeout(orientationResizeTimer);
     window.removeEventListener('resize', handleResize);
+    window.removeEventListener('orientationchange', handleOrientationChange);
+    window.visualViewport?.removeEventListener('resize', handleResize);
     if (vis.debugKeys) {
       window.removeEventListener('keydown', handleDebugKeyDown);
     }
@@ -969,7 +1056,7 @@ export function createSceneContext(
     disposeObjectResources(scene);
     skyDome.geometry.dispose();
     skyDome.material.dispose();
-    envRenderTarget.dispose();
+    envRenderTarget?.dispose();
     renderer.dispose();
 
     if (renderer.domElement.parentElement === container) {
@@ -1046,7 +1133,10 @@ export function createSceneContext(
     scene,
     camera,
     isSoftwareGl,
+    safeMode: effectiveSafeMode,
+    rendererFallbackUsed,
     maxAnisotropy,
+    getDiagnostics: () => probeCapabilitiesFromGl(renderer.getContext()),
     setRoomBounds,
     setTheme,
     updateTheme,

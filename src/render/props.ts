@@ -290,16 +290,18 @@ function buildPropsAssembly(
   qualityLevel: QualityLevel,
   maxAnisotropy: number,
   presetName: VisualPresetName,
+  safeMode = false,
 ): PropsAssembly {
   const cfg = CONFIG.props;
   const preset = VISUAL_PRESETS[presetName];
   const pal = preset.room;
   const propColors = pal.propColors;
-  const qualityPreset = CONFIG.quality.levels[qualityLevel];
+  const effectiveQuality: QualityLevel = safeMode ? 'mobile' : qualityLevel;
+  const qualityPreset = CONFIG.quality.levels[effectiveQuality];
   const densityScale = cfg.density * qualityPreset.propsDensityScale;
   const propsChunkSize = Math.max(40, CONFIG.render.propsChunkLength);
   const viewDistance = qualityPreset.viewDistance;
-  const shadowsEnabled = qualityPreset.shadowsEnabled;
+  const shadowsEnabled = !safeMode && qualityPreset.shadowsEnabled;
   const fadeMargin = Math.max(1, CONFIG.render.cullFadeMargin);
 
   const group = new THREE.Group();
@@ -522,41 +524,43 @@ function buildPropsAssembly(
   freezeStatic(windowFrameMesh);
   group.add(windowFrameMesh);
 
-  const sunbeamTex = trackTex(createSunbeamTexture());
-  const sunbeamMat = trackMat(
-    new THREE.MeshBasicMaterial({
-      map: sunbeamTex,
-      color: pal.sunbeamColor,
-      transparent: true,
-      opacity: CONFIG.fx.windowShaft.opacity,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      fog: false,
-      side: THREE.DoubleSide,
-    }),
-  );
+  if (!safeMode) {
+    const sunbeamTex = trackTex(createSunbeamTexture());
+    const sunbeamMat = trackMat(
+      new THREE.MeshBasicMaterial({
+        map: sunbeamTex,
+        color: pal.sunbeamColor,
+        transparent: true,
+        opacity: CONFIG.fx.windowShaft.opacity,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+        side: THREE.DoubleSide,
+      }),
+    );
 
-  const sunOffset = CONFIG.lighting.sunOffset;
-  const beamDir = new THREE.Vector3(-sunOffset.x, -sunOffset.y, -sunOffset.z).normalize();
-  const beamSide = new THREE.Vector3().crossVectors(beamDir, beamUpRef).normalize();
-  const beamPlaneNormal = new THREE.Vector3().crossVectors(beamSide, beamDir).normalize();
-  const beamBasis = new THREE.Matrix4().makeBasis(
-    beamSide,
-    beamDir.clone().negate(),
-    beamPlaneNormal,
-  );
-  const beamGeom = trackGeom(new THREE.PlaneGeometry(46, 110));
-  const beamOffsets = [-40, -14, 14, 40];
-  for (const dz of beamOffsets) {
-    const beam = new THREE.Mesh(beamGeom, sunbeamMat);
-    beam.setRotationFromMatrix(beamBasis);
-    beam.position
-      .set(windowX - 5, windowCenterY - 2, windowZ + dz)
-      .addScaledVector(beamDir, 52);
-    beam.castShadow = false;
-    beam.receiveShadow = false;
-    freezeStatic(beam);
-    group.add(beam);
+    const sunOffset = CONFIG.lighting.sunOffset;
+    const beamDir = new THREE.Vector3(-sunOffset.x, -sunOffset.y, -sunOffset.z).normalize();
+    const beamSide = new THREE.Vector3().crossVectors(beamDir, beamUpRef).normalize();
+    const beamPlaneNormal = new THREE.Vector3().crossVectors(beamSide, beamDir).normalize();
+    const beamBasis = new THREE.Matrix4().makeBasis(
+      beamSide,
+      beamDir.clone().negate(),
+      beamPlaneNormal,
+    );
+    const beamGeom = trackGeom(new THREE.PlaneGeometry(46, 110));
+    const beamOffsets = [-40, -14, 14, 40];
+    for (const dz of beamOffsets) {
+      const beam = new THREE.Mesh(beamGeom, sunbeamMat);
+      beam.setRotationFromMatrix(beamBasis);
+      beam.position
+        .set(windowX - 5, windowCenterY - 2, windowZ + dz)
+        .addScaledVector(beamDir, 52);
+      beam.castShadow = false;
+      beam.receiveShadow = false;
+      freezeStatic(beam);
+      group.add(beam);
+    }
   }
 
   // =========================================================================
@@ -1324,12 +1328,13 @@ export function buildProps(
   qualityLevel: QualityLevel,
   maxAnisotropy = 8,
   initialPreset: VisualPresetName = CONFIG.visual.activePreset,
+  safeMode = false,
 ): PropsVisual {
   const outerGroup = new THREE.Group();
   outerGroup.name = 'RoomPropsRoot';
 
   let currentPreset = initialPreset;
-  let activeAssembly = buildPropsAssembly(course, qualityLevel, maxAnisotropy, currentPreset);
+  let activeAssembly = buildPropsAssembly(course, qualityLevel, maxAnisotropy, currentPreset, safeMode);
   outerGroup.add(activeAssembly.group);
 
   function update(cameraPos: THREE.Vector3): void {
@@ -1343,7 +1348,7 @@ export function buildProps(
     currentPreset = name;
     outerGroup.remove(activeAssembly.group);
     activeAssembly.dispose();
-    activeAssembly = buildPropsAssembly(course, qualityLevel, maxAnisotropy, currentPreset);
+    activeAssembly = buildPropsAssembly(course, qualityLevel, maxAnisotropy, currentPreset, safeMode);
     outerGroup.add(activeAssembly.group);
   }
 

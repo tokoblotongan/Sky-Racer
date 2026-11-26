@@ -43,7 +43,7 @@ import { buildGates, type GatesVisual } from './render/gates';
 import { createParticles } from './render/particles';
 import { createPostFx } from './render/postfx';
 import { createQualityManager, detectInitialQuality, type QualityLevel } from './render/quality';
-import { createSceneContext } from './render/scene';
+import { createSceneContext, RendererInitError, type SceneContext } from './render/scene';
 import { buildShortcutGates, type ShortcutGateVisual } from './render/shortcutGate';
 import { buildTrackMesh, type TrackVisual } from './render/track';
 import { buildTrackAccents, type TrackAccentsVisual } from './render/trackAccents';
@@ -58,6 +58,7 @@ import { createCourseSelect, type CourseSelectHandle } from './ui/courseCard';
 import {
   disposeErrorOverlay,
   isDebugUrlEnabled,
+  isSafeUrlEnabled,
   logErrorOverlay,
 } from './ui/errorOverlay';
 import {
@@ -68,9 +69,11 @@ import {
   hideFinishScreen,
   hideLapPopup,
   hideLoadingOverlay,
+  hideModalScreens,
   hideSplitPopup,
   hideZoneToast,
   setHudProgressCheckpoints,
+  setSafeModeUi,
   setStartButtonLoading,
   showAirtimePopup,
   showContextLostOverlay,
@@ -78,6 +81,7 @@ import {
   showFinishScreen,
   showLapPopup,
   showLoadingOverlay,
+  showSafeModeNotice,
   showShortcutToast,
   showSplitPopup,
   showZoneToast,
@@ -86,6 +90,14 @@ import {
   updateTitleScreen,
   type HudViewModel,
 } from './ui/hud';
+import {
+  disposeReportOverlay,
+  isReportOverlayOpen,
+  probeCapabilitiesFromGl,
+  showReportOverlay,
+  updateReportOverlay,
+  type DeviceReportSnapshot,
+} from './ui/reportOverlay';
 
 interface DebugOverlay {
   update: (
@@ -233,17 +245,84 @@ function extractErrorInfo(err: unknown): { message: string; file?: string; line?
   return { message: String(err ?? 'runtime error') };
 }
 
+function safeStorageGet(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeStorageSet(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function safeStorageRemove(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function detectMobileOrAndroid(): boolean {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+  const isMobileUa = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  const hasCoarsePointer =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches;
+  const hasTouchPoints = typeof navigator !== 'undefined' && (navigator.maxTouchPoints ?? 0) > 0;
+  return isMobileUa || hasCoarsePointer || hasTouchPoints;
+}
+
 export async function bootstrap(): Promise<void> {
-  const container = document.getElementById('app');
-  if (!container) {
+  const foundContainer = document.getElementById('app');
+  if (!foundContainer) {
     throw new Error('Root container #app not found.');
   }
+  const container: HTMLElement = foundContainer;
 
   let activePreset: VisualPresetName = CONFIG.visual.activePreset;
   let activeCarDesign: CarDesignId = CONFIG.car.visual.designId;
 
+  const isMobileDevice = detectMobileOrAndroid();
+  const urlSafe = isSafeUrlEnabled();
+  const safeReasons: string[] = [];
+  if (urlSafe) {
+    safeReasons.push('url:?safe');
+  }
+  const normalOkStored = safeStorageGet(CONFIG.safeMode.normalOkStorageKey) === '1';
+  let trialActive = !urlSafe && safeStorageGet(CONFIG.safeMode.normalTrialStorageKey) === '1';
+  if (!urlSafe && isMobileDevice && !normalOkStored && !trialActive) {
+    safeReasons.push('mobile-default');
+  }
+
+  const addSafeReason = (reason: string): void => {
+    if (reason && !safeReasons.includes(reason)) {
+      safeReasons.push(reason);
+    }
+  };
+
   const detectedQuality = detectInitialQuality(CONFIG.quality);
-  const sceneCtx = createSceneContext(container, detectedQuality);
+  const initialSafeRequested = safeReasons.length > 0;
+  let sceneCtx: SceneContext = createSceneContext(container, detectedQuality, initialSafeRequested);
+  let safeMode = sceneCtx.safeMode;
+  if (sceneCtx.rendererFallbackUsed) {
+    addSafeReason('webgl-fallback');
+  }
+  if (sceneCtx.isSoftwareGl) {
+    addSafeReason('software-gl');
+  }
+  if (safeMode) {
+    trialActive = false;
+    safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
+  }
+
   const debugOverlay = createDebugOverlay(container);
   const sound = createSound();
   sound.init();
@@ -266,6 +345,9 @@ export async function bootstrap(): Promise<void> {
   let onConfirmFromUi: () => void = () => {};
   let onReturnToMenuFromUi: () => void = () => {};
   let onClearRecordsFromUi: () => void = () => {};
+  let onTryFullGraphicsFromUi: () => void = () => {};
+  let onUseSafeModeFromUi: () => void = () => {};
+  let onOpenReportFromUi: () => void = () => {};
 
   const hud = createHud(container, {
     onStartRace: () => {
@@ -294,6 +376,15 @@ export async function bootstrap(): Promise<void> {
     },
     onClearRecords: () => {
       onClearRecordsFromUi();
+    },
+    onTryFullGraphics: () => {
+      onTryFullGraphicsFromUi();
+    },
+    onUseSafeMode: () => {
+      onUseSafeModeFromUi();
+    },
+    onOpenReport: () => {
+      onOpenReportFromUi();
     },
   });
 
@@ -328,7 +419,12 @@ export async function bootstrap(): Promise<void> {
   let bounds = course.getBounds();
   sceneCtx.setRoomBounds(bounds);
 
-  let trackVisual: TrackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy);
+  let trackVisual: TrackVisual = buildTrackMesh(
+    course,
+    sceneCtx.maxAnisotropy,
+    activePreset,
+    safeMode,
+  );
   sceneCtx.scene.add(trackVisual.group);
 
   let gates: GatesVisual = buildGates(course, sceneCtx.maxAnisotropy);
@@ -350,19 +446,26 @@ export async function bootstrap(): Promise<void> {
   });
   sceneCtx.scene.add(carVisual.group);
 
-  const chaseCamera = new ChaseCamera(sceneCtx.camera);
+  let chaseCamera = new ChaseCamera(sceneCtx.camera);
   const controls = createKeyboardControls(touchControls);
 
   let particles: ReturnType<typeof createParticles>;
   let postfx: ReturnType<typeof createPostFx>;
 
-  const qualityManager = createQualityManager(CONFIG.quality, (level) => {
-    sceneCtx.setQuality(level);
-    particles?.setQuality(level);
-    postfx?.setQuality(level);
-  });
+  const createActiveQualityManager = (isSafe: boolean): ReturnType<typeof createQualityManager> =>
+    createQualityManager(
+      isSafe ? { ...CONFIG.quality, initialOverride: 'mobile' } : CONFIG.quality,
+      (level) => {
+        const effectiveLevel: QualityLevel = safeMode ? 'mobile' : level;
+        sceneCtx.setQuality(effectiveLevel);
+        particles?.setQuality(effectiveLevel);
+        postfx?.setQuality(effectiveLevel);
+      },
+    );
 
-  const initialQuality = qualityManager.getLevel();
+  let qualityManager = createActiveQualityManager(safeMode);
+
+  const initialQuality: QualityLevel = safeMode ? 'mobile' : qualityManager.getLevel();
   sceneCtx.setQuality(initialQuality);
   sceneCtx.setTheme(course, initialQuality);
 
@@ -396,6 +499,7 @@ export async function bootstrap(): Promise<void> {
     sceneCtx.camera,
     initialQuality,
     sceneCtx.isSoftwareGl,
+    safeMode,
   );
   const initialViewport = sceneCtx.getViewportSize();
   postfx.resize(initialViewport.width, initialViewport.height);
@@ -503,11 +607,19 @@ export async function bootstrap(): Promise<void> {
     window.addEventListener('keydown', handleDebugKey);
   }
 
+  let resizeOrientationTimer = 0;
   function handleWindowResize(): void {
     const { width, height } = sceneCtx.getViewportSize();
     postfx.resize(width, height);
   }
+  function handleWindowOrientationChange(): void {
+    handleWindowResize();
+    window.clearTimeout(resizeOrientationTimer);
+    resizeOrientationTimer = window.setTimeout(handleWindowResize, 120);
+  }
   window.addEventListener('resize', handleWindowResize);
+  window.addEventListener('orientationchange', handleWindowOrientationChange);
+  window.visualViewport?.addEventListener('resize', handleWindowResize);
 
   const createStartCarState = (): CarState =>
     createCarState({ s: startGridSlot.s, lateral: startGridSlot.lateral });
@@ -592,15 +704,90 @@ export async function bootstrap(): Promise<void> {
   let prevOrbitAngle = 0;
   let currOrbitAngle = 0;
   let frameHandle = 0;
+  let frameIsRaf = false;
   let switchDebounceTimer = 0;
   let switchRafId = 0;
   let disposed = false;
   let contextLost = false;
+  let rebuilding = false;
   let isLoadingCourse = false;
   let pendingStartAfterLoad = false;
   let lastConfirmAtMs = 0;
+  let renderedFrameCount = 0;
+  let consecutiveErrorCount = 0;
+  let firstFrameChecked = false;
+  let reportOpenedForSafeErrors = false;
+  let lastReportRefreshMs = 0;
+  let trialCleanElapsedSec = 0;
+  let lastTrialUiSec = -1;
+  let wallCountdownTimerId = 0;
+  let startWatchdogTimerId = 0;
+  let watchdogFiredForRace = false;
 
   let courseSelect: CourseSelectHandle;
+
+  function cancelScheduledLoop(): void {
+    if (frameHandle !== 0) {
+      if (frameIsRaf) {
+        window.cancelAnimationFrame(frameHandle);
+      } else {
+        window.clearTimeout(frameHandle);
+      }
+      frameHandle = 0;
+      frameIsRaf = false;
+    }
+  }
+
+  function clearWallCountdownTimer(): void {
+    if (wallCountdownTimerId !== 0) {
+      window.clearTimeout(wallCountdownTimerId);
+      wallCountdownTimerId = 0;
+    }
+  }
+
+  function clearStartWatchdog(): void {
+    if (startWatchdogTimerId !== 0) {
+      window.clearTimeout(startWatchdogTimerId);
+      startWatchdogTimerId = 0;
+    }
+  }
+
+  function syncSafeModeTitleUi(): void {
+    const remSec = trialActive
+      ? Math.max(1, Math.ceil(CONFIG.safeMode.normalTrialSec - trialCleanElapsedSec))
+      : undefined;
+    setSafeModeUi(hud, {
+      safeMode,
+      isMobileDevice,
+      trialActive,
+      trialSecRemaining: remSec,
+    });
+  }
+  syncSafeModeTitleUi();
+
+  function buildReportSnapshot(overrides?: Partial<DeviceReportSnapshot>): DeviceReportSnapshot {
+    let diag;
+    try {
+      diag = sceneCtx.getDiagnostics();
+    } catch {
+      diag = probeCapabilitiesFromGl(null);
+    }
+    return {
+      safeMode,
+      safeReasons: [...safeReasons],
+      quality: qualityManager.getLevel(),
+      renderedFrames: renderedFrameCount,
+      gameStatus: isLoadingCourse ? 'LOADING' : raceState.phase,
+      countdownSec:
+        raceState.phase === 'COUNTDOWN' ? raceState.countdownDisplayNumber : undefined,
+      diagnostics: diag,
+      ...overrides,
+    };
+  }
+
+  onOpenReportFromUi = (): void => {
+    showReportOverlay(buildReportSnapshot());
+  };
 
   function emitDebugMetrics(nowMs: number): void {
     if (!isDebugUrlEnabled()) {
@@ -636,6 +823,7 @@ export async function bootstrap(): Promise<void> {
     });
     courseSelect?.setSelected(previewDef.id);
     courseSelect?.refreshRecords();
+    syncSafeModeTitleUi();
   }
 
   function clearPendingCourseSwitch(hideOverlay = true): void {
@@ -661,8 +849,9 @@ export async function bootstrap(): Promise<void> {
     pendingStartAfterLoad = false;
     isLoadingCourse = false;
     clearPendingCourseSwitch(false);
-    window.cancelAnimationFrame(frameHandle);
-    window.clearTimeout(frameHandle);
+    clearWallCountdownTimer();
+    clearStartWatchdog();
+    cancelScheduledLoop();
     try {
       setAudioPaused(true);
     } catch {
@@ -673,7 +862,32 @@ export async function bootstrap(): Promise<void> {
     setStartButtonLoading(hud, false, false);
     showContextLostOverlay(hud);
   };
-  sceneCtx.renderer.domElement.addEventListener('webglcontextlost', handleCanvasContextLost);
+
+  const handleCanvasContextRestored = (): void => {
+    if (disposed || !contextLost) {
+      return;
+    }
+    contextLost = false;
+    hud.contextLostOverlayEl.classList.add('sr-hud-hidden');
+    try {
+      setAudioPaused(paused);
+    } catch {
+      // Ignore audio resume errors
+    }
+    void rebuildGraphicsPipeline(safeMode, 'webglcontextrestored');
+  };
+
+  function bindCanvasContextEvents(canvas: HTMLCanvasElement): void {
+    canvas.addEventListener('webglcontextlost', handleCanvasContextLost);
+    canvas.addEventListener('webglcontextrestored', handleCanvasContextRestored);
+  }
+
+  function unbindCanvasContextEvents(canvas: HTMLCanvasElement): void {
+    canvas.removeEventListener('webglcontextlost', handleCanvasContextLost);
+    canvas.removeEventListener('webglcontextrestored', handleCanvasContextRestored);
+  }
+
+  bindCanvasContextEvents(sceneCtx.renderer.domElement);
 
   async function precompileShaders(label = 'Memuat arena...'): Promise<void> {
     if (disposed || contextLost) {
@@ -685,10 +899,18 @@ export async function bootstrap(): Promise<void> {
       compileAsync?: (scene: THREE.Scene, camera: THREE.Camera) => Promise<void>;
     };
     try {
-      if (typeof renderer.compileAsync === 'function') {
-        await renderer.compileAsync(sceneCtx.scene, sceneCtx.camera);
-      } else {
-        renderer.compile(sceneCtx.scene, sceneCtx.camera);
+      const gl = renderer.getContext();
+      const hasParallel = Boolean(gl.getExtension('KHR_parallel_shader_compile'));
+      if (hasParallel && typeof renderer.compileAsync === 'function') {
+        let timeoutId = 0;
+        await Promise.race([
+          renderer.compileAsync(sceneCtx.scene, sceneCtx.camera).finally(() => {
+            window.clearTimeout(timeoutId);
+          }),
+          new Promise<void>((resolve) => {
+            timeoutId = window.setTimeout(resolve, CONFIG.render.shaderPrecompileTimeoutMs);
+          }),
+        ]);
       }
     } catch (err) {
       const info = extractErrorInfo(err);
@@ -755,8 +977,7 @@ export async function bootstrap(): Promise<void> {
       showLoadingOverlay(hud, 'Memuat arena...', 55);
     }
 
-    trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy);
-    trackVisual.applyPalette(activePreset);
+    trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy, activePreset, safeMode);
     sceneCtx.scene.add(trackVisual.group);
 
     bridgeVisual = buildBridgeMesh(
@@ -771,7 +992,7 @@ export async function bootstrap(): Promise<void> {
       course,
       sceneCtx.maxAnisotropy,
       activePreset,
-      qualityManager.getLevel(),
+      safeMode ? 'mobile' : qualityManager.getLevel(),
     );
     sceneCtx.scene.add(tunnelVisual.group);
 
@@ -950,6 +1171,292 @@ export async function bootstrap(): Promise<void> {
   touchControls.setPhase(raceState.phase);
 
   let paused = false;
+
+  function scheduleLoopStart(): void {
+    if (disposed || contextLost || rebuilding) {
+      return;
+    }
+    cancelScheduledLoop();
+    if (sceneCtx.isSoftwareGl) {
+      frameIsRaf = false;
+      tick(performance.now());
+    } else {
+      frameIsRaf = true;
+      frameHandle = window.requestAnimationFrame(tick);
+    }
+  }
+
+  function restartLoopOnce(): void {
+    if (disposed || contextLost || rebuilding) {
+      return;
+    }
+    lastFrameMs = performance.now();
+    accumulator = 0;
+    scheduleLoopStart();
+  }
+
+  async function rebuildGraphicsPipeline(targetSafeMode: boolean, reason?: string): Promise<void> {
+    if (disposed || rebuilding) {
+      return;
+    }
+    rebuilding = true;
+    cancelScheduledLoop();
+    if (reason) {
+      addSafeReason(reason);
+    }
+
+    const prevSceneCtx = sceneCtx;
+    const prevCanvas = prevSceneCtx.renderer.domElement;
+    unbindCanvasContextEvents(prevCanvas);
+
+    disposeCurrentCourseVisuals();
+    sceneCtx.scene.remove(carVisual.group);
+    carVisual.dispose();
+    particles.dispose();
+    postfx.dispose();
+    qualityManager.dispose();
+    prevSceneCtx.dispose();
+
+    const targetInitialQuality: QualityLevel = targetSafeMode
+      ? 'mobile'
+      : detectInitialQuality(CONFIG.quality);
+
+    try {
+      sceneCtx = createSceneContext(container, targetInitialQuality, targetSafeMode);
+    } catch (err) {
+      if (err instanceof RendererInitError) {
+        showReportOverlay(
+          buildReportSnapshot({
+            headline: 'Perangkat tidak mendukung grafis 3D',
+            fatal: true,
+            safeMode: true,
+            safeReasons: err.attemptErrors,
+            diagnostics: err.diagnostics,
+          }),
+        );
+      }
+      rebuilding = false;
+      throw err;
+    }
+
+    safeMode = sceneCtx.safeMode;
+    if (sceneCtx.rendererFallbackUsed) {
+      addSafeReason('webgl-fallback');
+    }
+    if (sceneCtx.isSoftwareGl) {
+      addSafeReason('software-gl');
+    }
+    if (safeMode) {
+      trialActive = false;
+      safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
+    }
+
+    bindCanvasContextEvents(sceneCtx.renderer.domElement);
+    qualityManager = createActiveQualityManager(safeMode);
+    const activeQuality: QualityLevel = safeMode ? 'mobile' : qualityManager.getLevel();
+    sceneCtx.setRoomBounds(bounds);
+    sceneCtx.setQuality(activeQuality);
+    sceneCtx.setTheme(course, activeQuality);
+    sceneCtx.setOrbitTarget(bounds.center, orbitRadius, CONFIG.camera.orbitHeight);
+
+    trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy, activePreset, safeMode);
+    sceneCtx.scene.add(trackVisual.group);
+
+    bridgeVisual = buildBridgeMesh(
+      course,
+      (x, z) => sceneCtx.getGroundY(x, z),
+      sceneCtx.maxAnisotropy,
+      activePreset,
+    );
+    sceneCtx.scene.add(bridgeVisual.group);
+
+    tunnelVisual = buildTunnelMesh(course, sceneCtx.maxAnisotropy, activePreset, activeQuality);
+    sceneCtx.scene.add(tunnelVisual.group);
+
+    trackAccentsVisual = buildTrackAccents(course, sceneCtx.maxAnisotropy, activePreset);
+    sceneCtx.scene.add(trackAccentsVisual.group);
+
+    gates = buildGates(course, sceneCtx.maxAnisotropy);
+    for (let i = 0; i < raceState.nextCheckpointIndex; i++) {
+      gates.setPassed(i);
+    }
+    gates.setActive(raceState.nextCheckpointIndex);
+    sceneCtx.scene.add(gates.group);
+
+    shortcutGateVisual = buildShortcutGates(course, sceneCtx.maxAnisotropy);
+    shortcutGateVisual.applyPalette(activePreset);
+    sceneCtx.scene.add(shortcutGateVisual.group);
+
+    carVisual = buildCarMesh({
+      designId: activeCarDesign,
+      maxAnisotropy: sceneCtx.maxAnisotropy,
+      presetName: activePreset,
+    });
+    sceneCtx.scene.add(carVisual.group);
+
+    const activeRoute = course.getRoute(currState.routeId);
+    getCarPose(currState, activeRoute, renderPose);
+    carVisual.group.position.copy(renderPose.position);
+    carVisual.group.quaternion.copy(renderPose.quaternion);
+    carVisual.update(currState, 0);
+
+    chaseCamera = new ChaseCamera(sceneCtx.camera);
+    if (raceState.phase === 'TITLE') {
+      chaseCamera.setMode('title');
+    } else if (raceState.phase === 'FINISH') {
+      chaseCamera.setMode('finish');
+    } else {
+      chaseCamera.setMode('chase');
+    }
+    if (!CONFIG.camera.debugOrbitMode) {
+      chaseCamera.snapTo(renderPose, currState, activeRoute);
+    }
+
+    particles = createParticles(sceneCtx.scene, activeQuality);
+    postfx = createPostFx(
+      sceneCtx.renderer,
+      sceneCtx.scene,
+      sceneCtx.camera,
+      activeQuality,
+      sceneCtx.isSoftwareGl,
+      safeMode,
+    );
+    const vp = sceneCtx.getViewportSize();
+    postfx.resize(vp.width, vp.height);
+
+    consecutiveErrorCount = 0;
+    firstFrameChecked = false;
+    lastFrameMs = performance.now();
+    accumulator = 0;
+    syncSafeModeTitleUi();
+    if (isReportOverlayOpen()) {
+      updateReportOverlay(buildReportSnapshot());
+    }
+
+    rebuilding = false;
+    scheduleLoopStart();
+  }
+
+  async function downgradeToSafeMode(reason: string): Promise<void> {
+    if (disposed || rebuilding) {
+      return;
+    }
+    trialActive = false;
+    trialCleanElapsedSec = 0;
+    safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
+    safeStorageRemove(CONFIG.safeMode.normalOkStorageKey);
+    addSafeReason(reason);
+    showSafeModeNotice(hud, 'Mode aman aktif');
+    await rebuildGraphicsPipeline(true, reason);
+  }
+
+  onTryFullGraphicsFromUi = (): void => {
+    if (disposed || rebuilding || !safeMode) {
+      return;
+    }
+    trialActive = true;
+    trialCleanElapsedSec = 0;
+    lastTrialUiSec = CONFIG.safeMode.normalTrialSec;
+    safeStorageSet(CONFIG.safeMode.normalTrialStorageKey, '1');
+    const idx = safeReasons.indexOf('mobile-default');
+    if (idx !== -1) {
+      safeReasons.splice(idx, 1);
+    }
+    void rebuildGraphicsPipeline(false).then(() => {
+      if (safeMode) {
+        trialActive = false;
+        safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
+        showSafeModeNotice(hud, 'Mode aman aktif (perangkat membatasi grafis penuh)');
+      } else {
+        showSafeModeNotice(hud, `Menguji grafis penuh (${CONFIG.safeMode.normalTrialSec} dtk)...`);
+      }
+      syncSafeModeTitleUi();
+    });
+  };
+
+  onUseSafeModeFromUi = (): void => {
+    if (disposed || rebuilding || safeMode) {
+      return;
+    }
+    trialActive = false;
+    trialCleanElapsedSec = 0;
+    safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
+    safeStorageRemove(CONFIG.safeMode.normalOkStorageKey);
+    showSafeModeNotice(hud, 'Mode aman aktif');
+    void rebuildGraphicsPipeline(true, 'manual');
+  };
+
+  function pumpWallCountdown(): void {
+    clearWallCountdownTimer();
+    if (disposed || contextLost || paused || raceState.phase !== 'COUNTDOWN') {
+      return;
+    }
+    const now = performance.now();
+    const carSpeedKmh =
+      (currState.mode === 'grounded' ? Math.abs(currState.vForward) : currState.worldVel.length()) *
+      CONFIG.hud.speedScale;
+    const events = updateRace(
+      raceState,
+      {
+        s: currState.s,
+        sApprox: currState.sApprox,
+        mode: currState.mode,
+        routeId: currState.routeId,
+        routeLapOffset: currState.routeLapOffset,
+        speedKmh: carSpeedKmh,
+      },
+      course,
+      0,
+      undefined,
+      now,
+    );
+    if (events.length > 0) {
+      handleRaceEvents(events);
+    }
+    if (raceState.phase === 'COUNTDOWN') {
+      const stepMs = Math.max(100, CONFIG.race.countdownStepMs);
+      const elapsed = Math.max(0, raceState.countdownElapsedMs);
+      const nextBoundary = Math.min(
+        CONFIG.race.countdownWatchdogMs,
+        (Math.floor(elapsed / stepMs) + 1) * stepMs,
+      );
+      const delayMs = Math.max(16, nextBoundary - elapsed + 10);
+      wallCountdownTimerId = window.setTimeout(pumpWallCountdown, delayMs);
+    }
+  }
+
+  function startRenderWatchdog(): void {
+    clearStartWatchdog();
+    watchdogFiredForRace = false;
+    const baselineFrames = renderedFrameCount;
+    startWatchdogTimerId = window.setTimeout(() => {
+      startWatchdogTimerId = 0;
+      if (disposed || contextLost || paused || rebuilding || watchdogFiredForRace) {
+        return;
+      }
+      if (renderedFrameCount === baselineFrames) {
+        watchdogFiredForRace = true;
+        logErrorOverlay('render watchdog: 0 frame dalam 1.5 detik setelah Mulai');
+        if (!safeMode) {
+          void downgradeToSafeMode('start-watchdog').then(() => {
+            showReportOverlay(
+              buildReportSnapshot({
+                headline: 'Mode aman aktif (render sempat macet)',
+              }),
+            );
+          });
+        } else {
+          restartLoopOnce();
+          showReportOverlay(
+            buildReportSnapshot({
+              headline: 'Render belum berjalan setelah Mulai',
+            }),
+          );
+        }
+      }
+    }, CONFIG.safeMode.renderWatchdogMs);
+  }
+
   function setPaused(nextPaused: boolean): void {
     const resolved = Boolean(nextPaused);
     if (resolved === paused) {
@@ -963,11 +1470,16 @@ export async function bootstrap(): Promise<void> {
       // Ignore audio pause failures
     }
     if (paused) {
+      clearWallCountdownTimer();
+      clearStartWatchdog();
       pauseRaceClock(raceState, nowMs);
     } else {
       resumeRaceClock(raceState, nowMs);
       lastFrameMs = nowMs;
       accumulator = 0;
+      if (raceState.phase === 'COUNTDOWN') {
+        pumpWallCountdown();
+      }
     }
   }
 
@@ -983,13 +1495,18 @@ export async function bootstrap(): Promise<void> {
     touchControls.setPhase(raceState.phase);
     sound.setPhase(raceState.phase);
     sound.handleEvents(events);
+    hudViewModel.phase = raceState.phase;
+    hudViewModel.resultReady = raceState.resultReady;
     for (const ev of events) {
       if (ev.type === 'countdownTick') {
         showCountdownOverlay(hud, String(ev.n), false);
       } else if (ev.type === 'countdownWatchdog') {
         logErrorOverlay(`countdown watchdog forced start (${Math.round(ev.elapsedMs)}ms)`);
+        clearWallCountdownTimer();
       } else if (ev.type === 'go') {
+        clearWallCountdownTimer();
         showCountdownOverlay(hud, 'GO!', true);
+        updateHud(hud, hudViewModel);
       } else if (ev.type === 'checkpoint') {
         gates.setPassed(ev.index);
         gates.setActive(ev.index + 1);
@@ -1038,10 +1555,10 @@ export async function bootstrap(): Promise<void> {
       }
 
       lastConfirmAtMs = nowMs;
+      hideModalScreens(hud);
       touchControls.consumePresses();
       lastFinishData = null;
       lastFinishRecords = null;
-      hideFinishScreen(hud);
       wrongWayDetector.reset();
       wrongWayActive = false;
 
@@ -1056,14 +1573,17 @@ export async function bootstrap(): Promise<void> {
       const events = startCountdown(raceState, nowMs);
       chaseCamera.setMode('chase');
       handleRaceEvents(events);
+      updateHud(hud, hudViewModel);
+      pumpWallCountdown();
+      startRenderWatchdog();
       return;
     }
 
     lastConfirmAtMs = nowMs;
+    hideModalScreens(hud);
     touchControls.consumePresses();
     lastFinishData = null;
     lastFinishRecords = null;
-    hideFinishScreen(hud);
     wrongWayDetector.reset();
     wrongWayActive = false;
 
@@ -1088,11 +1608,16 @@ export async function bootstrap(): Promise<void> {
     }
 
     handleRaceEvents(events);
+    updateHud(hud, hudViewModel);
+    pumpWallCountdown();
+    startRenderWatchdog();
   }
 
   function handleReturnToTitle(): void {
     sound.unlock();
     clearPendingCourseSwitch();
+    clearWallCountdownTimer();
+    clearStartWatchdog();
     pendingStartAfterLoad = false;
     lastFinishData = null;
     lastFinishRecords = null;
@@ -1122,6 +1647,7 @@ export async function bootstrap(): Promise<void> {
     }
 
     handleRaceEvents(events);
+    updateHud(hud, hudViewModel);
     sound.handleEvents([{ type: 'uiConfirm' }]);
     syncTitleUi();
   }
@@ -1429,28 +1955,37 @@ export async function bootstrap(): Promise<void> {
       const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
       gl.flush();
       const poll = (): void => {
-        if (disposed || contextLost) {
+        if (disposed || contextLost || rebuilding) {
           return;
         }
         const status = sync ? gl.getSyncParameter(sync, gl.SYNC_STATUS) : gl.SIGNALED;
         if (status === gl.UNSIGNALED) {
+          frameIsRaf = false;
           frameHandle = window.setTimeout(poll, CONFIG.renderer.softwareGlPollMs);
         } else {
           if (sync) {
             gl.deleteSync(sync);
           }
+          frameIsRaf = false;
           frameHandle = window.setTimeout(next, CONFIG.renderer.softwareGlFramePauseMs);
         }
       };
+      frameIsRaf = false;
       frameHandle = window.setTimeout(poll, CONFIG.renderer.softwareGlPollMs);
     } else {
+      frameIsRaf = false;
       frameHandle = window.setTimeout(next, CONFIG.renderer.softwareGlFramePauseMs);
     }
   }
 
   function tick(nowMs: number): void {
-    if (disposed || contextLost) {
+    if (disposed || contextLost || rebuilding) {
       return;
+    }
+
+    if (!sceneCtx.isSoftwareGl) {
+      frameIsRaf = true;
+      frameHandle = window.requestAnimationFrame(tick);
     }
 
     try {
@@ -1473,6 +2008,43 @@ export async function bootstrap(): Promise<void> {
 
         const alpha = accumulator / fixedStep;
         render(alpha, frameDt);
+        renderedFrameCount++;
+        consecutiveErrorCount = 0;
+
+        if (!firstFrameChecked) {
+          firstFrameChecked = true;
+          const diag = sceneCtx.getDiagnostics();
+          if (
+            !safeMode &&
+            (diag.glError !== 'NO_ERROR' || diag.framebufferStatus !== 'COMPLETE')
+          ) {
+            logErrorOverlay(
+              `GL/FB check failed: ${diag.glError} / ${diag.framebufferStatus}`,
+            );
+            void downgradeToSafeMode('gl-error-first-frame');
+            return;
+          }
+        }
+
+        if (!safeMode && trialActive) {
+          trialCleanElapsedSec += frameDt;
+          const nextRemaining = Math.max(
+            0,
+            Math.ceil(CONFIG.safeMode.normalTrialSec - trialCleanElapsedSec),
+          );
+          if (nextRemaining !== lastTrialUiSec) {
+            lastTrialUiSec = nextRemaining;
+            syncSafeModeTitleUi();
+          }
+          if (trialCleanElapsedSec >= CONFIG.safeMode.normalTrialSec) {
+            trialActive = false;
+            safeStorageSet(CONFIG.safeMode.normalOkStorageKey, '1');
+            safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
+            syncSafeModeTitleUi();
+            showSafeModeNotice(hud, 'Grafis penuh aktif');
+          }
+        }
+
         qualityManager.update(frameDt);
         debugOverlay?.update(
           nowMs,
@@ -1486,16 +2058,30 @@ export async function bootstrap(): Promise<void> {
       }
 
       emitDebugMetrics(nowMs);
+      if (isReportOverlayOpen() && nowMs - lastReportRefreshMs >= 300) {
+        lastReportRefreshMs = nowMs;
+        updateReportOverlay(buildReportSnapshot());
+      }
     } catch (err) {
+      consecutiveErrorCount++;
       const info = extractErrorInfo(err);
       logErrorOverlay(info.message, info.file, info.line);
-    } finally {
-      if (!disposed && !contextLost) {
-        if (sceneCtx.isSoftwareGl) {
-          scheduleAfterSoftwareDraw(() => tick(performance.now()));
-        } else {
-          frameHandle = window.requestAnimationFrame(tick);
+      if (consecutiveErrorCount >= CONFIG.safeMode.consecutiveErrorLimit) {
+        if (!safeMode) {
+          void downgradeToSafeMode('5x-frame-error');
+          return;
+        } else if (!reportOpenedForSafeErrors) {
+          reportOpenedForSafeErrors = true;
+          showReportOverlay(
+            buildReportSnapshot({
+              headline: 'Terjadi error render berulang',
+            }),
+          );
         }
+      }
+    } finally {
+      if (sceneCtx.isSoftwareGl && !disposed && !contextLost && !rebuilding) {
+        scheduleAfterSoftwareDraw(() => tick(performance.now()));
       }
     }
   }
@@ -1528,19 +2114,21 @@ export async function bootstrap(): Promise<void> {
       handleConfirmAction();
     }
 
-    if (sceneCtx.isSoftwareGl) {
-      tick(performance.now());
-    } else {
-      frameHandle = window.requestAnimationFrame(tick);
+    if (isDebugUrlEnabled()) {
+      showReportOverlay(buildReportSnapshot());
     }
+
+    scheduleLoopStart();
   }
 
   window.addEventListener('beforeunload', () => {
     disposed = true;
     clearPendingCourseSwitch(false);
-    sceneCtx.renderer.domElement.removeEventListener('webglcontextlost', handleCanvasContextLost);
-    window.cancelAnimationFrame(frameHandle);
-    window.clearTimeout(frameHandle);
+    clearWallCountdownTimer();
+    clearStartWatchdog();
+    window.clearTimeout(resizeOrientationTimer);
+    unbindCanvasContextEvents(sceneCtx.renderer.domElement);
+    cancelScheduledLoop();
     window.clearTimeout(debugToastTimeout);
     if (debugToastEl && debugToastEl.parentElement === container) {
       container.removeChild(debugToastEl);
@@ -1549,6 +2137,8 @@ export async function bootstrap(): Promise<void> {
       window.removeEventListener('keydown', handleDebugKey);
     }
     window.removeEventListener('resize', handleWindowResize);
+    window.removeEventListener('orientationchange', handleWindowOrientationChange);
+    window.visualViewport?.removeEventListener('resize', handleWindowResize);
     document.removeEventListener('visibilitychange', syncPauseState);
     unbindTouchStatus();
     hud.audioBtnEl.removeEventListener('click', handleAudioButtonClick);
@@ -1557,6 +2147,7 @@ export async function bootstrap(): Promise<void> {
     touchControls.dispose();
     sound.dispose();
     disposeHud(hud);
+    disposeReportOverlay();
     disposeErrorOverlay();
     debugOverlay?.dispose();
     qualityManager.dispose();

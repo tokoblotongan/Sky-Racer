@@ -173,7 +173,8 @@ export function createTouchControls(
   let visible = true;
   let phase: RacePhase = 'TITLE';
   let disposed = false;
-  let portraitBlocked = false;
+  let portraitDismissed = false;
+  let orientationResizeTimerId = 0;
 
   const statusCallbacks = new Set<() => void>();
   function emitStatusChange(): void {
@@ -332,14 +333,9 @@ export function createTouchControls(
       </button>
     </div>
 
-    <div class="sr-touch-portrait-overlay sr-touch-hidden" role="dialog" aria-live="polite">
-      <svg class="sr-touch-portrait-icon" viewBox="0 0 64 64" aria-hidden="true">
-        <rect x="20" y="10" width="24" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="3.5" />
-        <circle cx="32" cy="48" r="2.2" fill="currentColor" />
-        <path d="M12 24c-2.5 5-2 11 1.5 16M8 38l5.5 2 1.5-5.5" fill="none" stroke="#35D4FF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-      <h2 class="sr-touch-portrait-title">Putar perangkat ke mode landscape</h2>
-      <p class="sr-touch-portrait-sub">Balapan dijeda sementara hingga layar horizontal</p>
+    <div class="sr-touch-portrait-banner sr-touch-hidden" role="status" aria-live="polite">
+      <span class="sr-touch-portrait-banner-text">Putar HP ke landscape untuk pengalaman terbaik</span>
+      <button type="button" class="sr-touch-portrait-dismiss" aria-label="Tutup imbauan">&times;</button>
     </div>
   `;
 
@@ -366,7 +362,8 @@ export function createTouchControls(
   const steerModeTextEl = root.querySelector('.sr-touch-steer-mode-text') as HTMLElement;
   const autoBtnEl = root.querySelector('.sr-touch-util-auto') as HTMLButtonElement;
   const fsBtnEl = root.querySelector('.sr-touch-util-fs') as HTMLButtonElement;
-  const portraitOverlayEl = root.querySelector('.sr-touch-portrait-overlay') as HTMLElement;
+  const portraitBannerEl = root.querySelector('.sr-touch-portrait-banner') as HTMLElement;
+  const portraitDismissEl = root.querySelector('.sr-touch-portrait-dismiss') as HTMLButtonElement;
 
   function safeCapture(el: Element, pointerId: number): void {
     try {
@@ -450,22 +447,20 @@ export function createTouchControls(
       root.style.height = '';
     }
 
-    const nextPortrait = Boolean(active && config.orientationHint && vh > vw);
-    const portraitChanged = nextPortrait !== portraitBlocked;
-    portraitBlocked = nextPortrait;
-    portraitOverlayEl.classList.toggle('sr-touch-hidden', !portraitBlocked);
-
-    if (portraitBlocked) {
-      clearAllActiveInputs();
+    const isPortrait = Boolean(active && config.orientationHint && vh > vw);
+    if (!isPortrait) {
+      portraitDismissed = false;
     }
+    const showPortraitBanner = isPortrait && !portraitDismissed && phase !== 'TITLE' && phase !== 'FINISH';
+    portraitBannerEl.classList.toggle('sr-touch-hidden', !showPortraitBanner);
 
     const isDrivingPhase = phase === 'COUNTDOWN' || phase === 'RACING';
     const isTitlePhase = phase === 'TITLE';
     const isFinishPhase = phase === 'FINISH';
 
     // Hide all touch controls when FINISH results screen is displayed so nothing overlaps it
-    topbarEl.classList.toggle('sr-touch-hidden', isFinishPhase || portraitBlocked);
-    confirmBackdropEl.classList.toggle('sr-touch-hidden', !isTitlePhase || portraitBlocked);
+    topbarEl.classList.toggle('sr-touch-hidden', isFinishPhase);
+    confirmBackdropEl.classList.toggle('sr-touch-hidden', !isTitlePhase);
     steerZoneEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
     actionsEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
     resetBtnEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
@@ -482,10 +477,6 @@ export function createTouchControls(
 
     if (isStick && stickPointerId === null) {
       positionIdleStick();
-    }
-
-    if (portraitChanged) {
-      emitStatusChange();
     }
   }
 
@@ -508,7 +499,7 @@ export function createTouchControls(
   }
 
   function onSteerZonePointerDown(e: PointerEvent): void {
-    if (steerMode !== 'stick' || stickPointerId !== null || portraitBlocked) {
+    if (steerMode !== 'stick' || stickPointerId !== null) {
       return;
     }
     if (phase !== 'COUNTDOWN' && phase !== 'RACING') {
@@ -562,7 +553,7 @@ export function createTouchControls(
     setId: (id: number | null) => void,
   ): () => void {
     const onDown = (e: PointerEvent): void => {
-      if (getId() !== null || portraitBlocked) {
+      if (getId() !== null) {
         return;
       }
       e.preventDefault();
@@ -610,7 +601,7 @@ export function createTouchControls(
 
   // Reset checkpoint button (short tap <= resetTapMaxMs)
   function onResetDown(e: PointerEvent): void {
-    if (resetPointerId !== null || portraitBlocked) return;
+    if (resetPointerId !== null) return;
     e.preventDefault();
     e.stopPropagation();
     resetPointerId = e.pointerId;
@@ -655,7 +646,7 @@ export function createTouchControls(
   }
 
   function onRestartDown(e: PointerEvent): void {
-    if (restartPointerId !== null || portraitBlocked || phase === 'TITLE') return;
+    if (restartPointerId !== null || phase === 'TITLE') return;
     e.preventDefault();
     e.stopPropagation();
     restartPointerId = e.pointerId;
@@ -685,7 +676,7 @@ export function createTouchControls(
     onTap: () => void,
   ): () => void {
     const onDown = (e: PointerEvent): void => {
-      if (getId() !== null || portraitBlocked) return;
+      if (getId() !== null) return;
       e.preventDefault();
       e.stopPropagation();
       setId(e.pointerId);
@@ -790,7 +781,7 @@ export function createTouchControls(
 
   // Tap-anywhere outside Title card to confirm start on TITLE screen
   function onConfirmDown(e: PointerEvent): void {
-    if (confirmPointerId !== null || portraitBlocked) return;
+    if (confirmPointerId !== null) return;
     if (phase !== 'TITLE') return;
     e.preventDefault();
     confirmPointerId = e.pointerId;
@@ -800,7 +791,7 @@ export function createTouchControls(
     if (e.pointerId !== confirmPointerId) return;
     safeRelease(confirmBackdropEl, e.pointerId);
     confirmPointerId = null;
-    if (e.type === 'pointerup' && phase === 'TITLE' && !portraitBlocked) {
+    if (e.type === 'pointerup' && phase === 'TITLE') {
       queuedPresses.confirm = true;
     }
   }
@@ -808,6 +799,15 @@ export function createTouchControls(
   confirmBackdropEl.addEventListener('pointerup', onConfirmEnd);
   confirmBackdropEl.addEventListener('pointercancel', onConfirmEnd);
   confirmBackdropEl.addEventListener('lostpointercapture', onConfirmEnd);
+
+  function onDismissPortraitBanner(e: Event): void {
+    e.preventDefault();
+    e.stopPropagation();
+    portraitDismissed = true;
+    syncUiState();
+  }
+  portraitDismissEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+  portraitDismissEl.addEventListener('click', onDismissPortraitBanner);
 
   // Global protection against browser gestures, stuck pointers, and first-touch detection
   function onFirstTouchActivate(e: PointerEvent): void {
@@ -834,6 +834,16 @@ export function createTouchControls(
 
   function onViewportResize(): void {
     syncUiState();
+  }
+
+  function onOrientationChange(): void {
+    syncUiState();
+    window.clearTimeout(orientationResizeTimerId);
+    orientationResizeTimerId = window.setTimeout(() => {
+      if (!disposed) {
+        syncUiState();
+      }
+    }, 120);
   }
 
   function onContextMenu(e: Event): void {
@@ -899,7 +909,7 @@ export function createTouchControls(
   window.addEventListener('blur', onWindowBlur);
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('resize', onViewportResize);
-  window.addEventListener('orientationchange', onViewportResize);
+  window.addEventListener('orientationchange', onOrientationChange);
   window.visualViewport?.addEventListener('resize', onViewportResize);
   coarseQuery?.addEventListener?.('change', onCoarseMediaChange);
   rootElement.addEventListener('contextmenu', onContextMenu);
@@ -931,7 +941,7 @@ export function createTouchControls(
   }
 
   function getState(): TouchControlState {
-    if (!enabled || !visible || portraitBlocked) {
+    if (!enabled || !visible) {
       return {
         steer: 0,
         throttle: 0,
@@ -1071,11 +1081,13 @@ export function createTouchControls(
     confirmBackdropEl.removeEventListener('pointercancel', onConfirmEnd);
     confirmBackdropEl.removeEventListener('lostpointercapture', onConfirmEnd);
 
+    window.clearTimeout(orientationResizeTimerId);
+    portraitDismissEl.removeEventListener('click', onDismissPortraitBanner);
     window.removeEventListener('pointerdown', onFirstTouchActivate, true);
     window.removeEventListener('blur', onWindowBlur);
     document.removeEventListener('visibilitychange', onVisibilityChange);
     window.removeEventListener('resize', onViewportResize);
-    window.removeEventListener('orientationchange', onViewportResize);
+    window.removeEventListener('orientationchange', onOrientationChange);
     window.visualViewport?.removeEventListener('resize', onViewportResize);
     coarseQuery?.removeEventListener?.('change', onCoarseMediaChange);
     rootElement.removeEventListener('contextmenu', onContextMenu);
@@ -1096,7 +1108,7 @@ export function createTouchControls(
     setVisible,
     onHaptic,
     isEnabled: () => enabled && visible,
-    isPortraitBlocked: () => portraitBlocked,
+    isPortraitBlocked: () => false,
     setMutedVisual,
     onStatusChange,
     dispose,

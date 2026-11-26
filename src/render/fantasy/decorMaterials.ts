@@ -33,16 +33,18 @@ export interface FantasyDecorModule {
   getDrawCallCount: () => number;
 }
 
+export type FantasyLitMaterial = THREE.MeshStandardMaterial | THREE.MeshLambertMaterial;
+
 export interface FantasyDecorMaterials {
-  paletteMat: THREE.MeshStandardMaterial;
-  instancedColorMat: THREE.MeshStandardMaterial;
-  crystalCyanMat: THREE.MeshStandardMaterial;
-  crystalMagentaMat: THREE.MeshStandardMaterial;
-  crystalYellowMat: THREE.MeshStandardMaterial;
-  rainbowMat: THREE.MeshStandardMaterial;
+  paletteMat: FantasyLitMaterial;
+  instancedColorMat: FantasyLitMaterial;
+  crystalCyanMat: FantasyLitMaterial;
+  crystalMagentaMat: FantasyLitMaterial;
+  crystalYellowMat: FantasyLitMaterial;
+  rainbowMat: FantasyLitMaterial;
   waterfallMat: THREE.MeshBasicMaterial;
-  glowAccentMat: THREE.MeshStandardMaterial;
-  darkMetalMat: THREE.MeshStandardMaterial;
+  glowAccentMat: FantasyLitMaterial;
+  darkMetalMat: FantasyLitMaterial;
   waterfallTex: THREE.CanvasTexture;
   materialCount: number;
   dispose: () => void;
@@ -202,79 +204,120 @@ function createWaterfallTexture(maxAnisotropy: number): THREE.CanvasTexture {
   return tex;
 }
 
-export function createFantasyDecorMaterials(maxAnisotropy: number): FantasyDecorMaterials {
+export function createFantasyDecorMaterials(
+  maxAnisotropy: number,
+  safeMode = false,
+): FantasyDecorMaterials {
   const pal = CONFIG.fantasy.palette;
   const paletteTex = createPaletteAtlasTexture();
   const rainbowTex = createRainbowTexture();
   const waterfallTex = createWaterfallTexture(maxAnisotropy);
 
-  const paletteMat = new THREE.MeshStandardMaterial({
-    map: paletteTex,
-    roughness: 0.52,
-    metalness: 0.06,
-  });
+  const paletteMat: FantasyLitMaterial = safeMode
+    ? new THREE.MeshLambertMaterial({ map: paletteTex })
+    : new THREE.MeshStandardMaterial({
+        map: paletteTex,
+        roughness: 0.52,
+        metalness: 0.06,
+      });
 
-  const instancedColorMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.44,
-    metalness: 0.06,
-  });
+  const instancedColorMat: FantasyLitMaterial = safeMode
+    ? new THREE.MeshLambertMaterial({ color: 0xffffff })
+    : new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.44,
+        metalness: 0.06,
+      });
 
-  const crystalCyanMat = new THREE.MeshStandardMaterial({
-    color: pal.crystalCyan,
-    emissive: pal.crystalCyan,
-    emissiveIntensity: 0.9,
-    roughness: 0.16,
-    metalness: 0.2,
-  });
+  const crystalCyanMat: FantasyLitMaterial = safeMode
+    ? new THREE.MeshLambertMaterial({
+        color: pal.crystalCyan,
+        emissive: pal.crystalCyan,
+        emissiveIntensity: 0.9,
+      })
+    : new THREE.MeshStandardMaterial({
+        color: pal.crystalCyan,
+        emissive: pal.crystalCyan,
+        emissiveIntensity: 0.9,
+        roughness: 0.16,
+        metalness: 0.2,
+      });
 
-  const crystalMagentaMat = new THREE.MeshStandardMaterial({
-    color: pal.crystalMagenta,
-    emissive: pal.crystalMagenta,
-    emissiveIntensity: 0.9,
-    roughness: 0.16,
-    metalness: 0.2,
-  });
+  const crystalMagentaMat: FantasyLitMaterial = safeMode
+    ? new THREE.MeshLambertMaterial({
+        color: pal.crystalMagenta,
+        emissive: pal.crystalMagenta,
+        emissiveIntensity: 0.9,
+      })
+    : new THREE.MeshStandardMaterial({
+        color: pal.crystalMagenta,
+        emissive: pal.crystalMagenta,
+        emissiveIntensity: 0.9,
+        roughness: 0.16,
+        metalness: 0.2,
+      });
 
-  const crystalYellowMat = new THREE.MeshStandardMaterial({
-    color: pal.crystalYellow,
-    emissive: pal.crystalYellow,
-    emissiveIntensity: 0.9,
-    roughness: 0.16,
-    metalness: 0.2,
-  });
+  const crystalYellowMat: FantasyLitMaterial = safeMode
+    ? new THREE.MeshLambertMaterial({
+        color: pal.crystalYellow,
+        emissive: pal.crystalYellow,
+        emissiveIntensity: 0.9,
+      })
+    : new THREE.MeshStandardMaterial({
+        color: pal.crystalYellow,
+        emissive: pal.crystalYellow,
+        emissiveIntensity: 0.9,
+        roughness: 0.16,
+        metalness: 0.2,
+      });
 
-  const rainbowMat = new THREE.MeshStandardMaterial({
-    map: rainbowTex,
-    emissive: '#FFFFFF',
-    emissiveMap: rainbowTex,
-    emissiveIntensity: 0.62,
-    roughness: 0.35,
-    metalness: 0.0,
-    side: THREE.DoubleSide,
-  });
+  const rainbowMat: FantasyLitMaterial = safeMode
+    ? new THREE.MeshLambertMaterial({
+        map: rainbowTex,
+        emissive: '#FFFFFF',
+        emissiveMap: rainbowTex,
+        emissiveIntensity: 0.62,
+        side: THREE.DoubleSide,
+      })
+    : new THREE.MeshStandardMaterial({
+        map: rainbowTex,
+        emissive: '#FFFFFF',
+        emissiveMap: rainbowTex,
+        emissiveIntensity: 0.62,
+        roughness: 0.35,
+        metalness: 0.0,
+        side: THREE.DoubleSide,
+      });
 
   const waterfallMat = new THREE.MeshBasicMaterial({
     map: waterfallTex,
-    transparent: true,
-    opacity: 0.8,
-    depthWrite: false,
+    transparent: !safeMode,
+    opacity: safeMode ? 1.0 : 0.8,
+    depthWrite: safeMode,
     side: THREE.DoubleSide,
     fog: false,
   });
 
-  const glowAccentMat = new THREE.MeshStandardMaterial({
-    color: pal.lampGlow,
-    emissive: pal.lampGlow,
-    emissiveIntensity: 1.45,
-    roughness: 0.2,
-  });
+  const glowAccentMat: FantasyLitMaterial = safeMode
+    ? new THREE.MeshLambertMaterial({
+        color: pal.lampGlow,
+        emissive: pal.lampGlow,
+        emissiveIntensity: 1.45,
+      })
+    : new THREE.MeshStandardMaterial({
+        color: pal.lampGlow,
+        emissive: pal.lampGlow,
+        emissiveIntensity: 1.45,
+        roughness: 0.2,
+      });
 
-  const darkMetalMat = new THREE.MeshStandardMaterial({
-    color: pal.lampPost,
-    roughness: 0.44,
-    metalness: 0.62,
-  });
+  const darkMetalMat: FantasyLitMaterial = safeMode
+    ? new THREE.MeshLambertMaterial({ color: pal.lampPost })
+    : new THREE.MeshStandardMaterial({
+        color: pal.lampPost,
+        roughness: 0.44,
+        metalness: 0.62,
+      });
 
   const allTextures: THREE.Texture[] = [paletteTex, rainbowTex, waterfallTex];
   const allMaterials: THREE.Material[] = [

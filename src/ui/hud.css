@@ -36,6 +36,10 @@
   z-index: 26;
 }
 
+.sr-countdown-overlay {
+  z-index: 42;
+}
+
 .sr-hud-hidden {
   display: none !important;
 }
@@ -826,6 +830,64 @@
   justify-content: center;
   gap: 8px 14px;
   max-width: 490px;
+}
+
+.sr-title-gfx-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.sr-title-gfx-status {
+  font-size: clamp(10.5px, 1.3vw, 12px);
+  color: var(--sr-accent-cyan);
+  letter-spacing: 0.03em;
+}
+
+.sr-btn-compact {
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: 9px;
+  font-size: clamp(11px, 1.3vw, 12.5px);
+}
+
+.sr-title-version-btn {
+  position: fixed;
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  z-index: 28;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.65);
+  color: rgba(203, 213, 225, 0.85);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.sr-safe-banner {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 44;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(56, 189, 248, 0.75);
+  color: #38bdf8;
+  font-size: clamp(11px, 1.4vw, 13px);
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 /* COUNTDOWN Overlay */

@@ -275,6 +275,7 @@ export const CONFIG = {
     viewDistance: 700, // jarak pandang culling chunk & acuan camera.far tanpa fog
     cullFadeMargin: 80, // jarak penyusutan skala halus chunk sebelum batas viewDistance
     anisotropyMax: 8, // batas atas anisotropic filtering tekstur lantai, lintasan, dan dinding
+    shaderPrecompileTimeoutMs: 2000,
     antialias: {
       composerSamples: {
         mobile: 0,
@@ -283,6 +284,18 @@ export const CONFIG = {
         high: 4,
       },
     },
+  },
+  safeMode: {
+    normalOkStorageKey: 'sky-racer-normal-ok-v1',
+    normalTrialStorageKey: 'sky-racer-normal-trial-v1',
+    normalTrialSec: 10,
+    consecutiveErrorLimit: 5,
+    renderWatchdogMs: 1500,
+    maxTextureSize: 512,
+    versionTapCount: 5,
+    versionTapWindowMs: 2000,
+    maxReportErrors: 5,
+    statusBannerMs: 3200,
   },
   autopilot: {
     kLateral: 0.35,

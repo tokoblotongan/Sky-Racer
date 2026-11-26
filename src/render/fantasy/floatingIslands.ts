@@ -24,11 +24,12 @@ export function buildFloatingIslandsLandmark(
   mats: FantasyDecorMaterials,
   shadowsEnabled: boolean,
   quality: 'high' | 'medium' | 'mobile',
+  safeMode = false,
 ): FantasyDecorModule {
   const group = new THREE.Group();
   group.name = 'FantasyFloatingIslandsGroup';
 
-  const isMobile = quality === 'mobile';
+  const isMobile = quality === 'mobile' || safeMode;
   const parts: THREE.BufferGeometry[] = [];
 
   // Rocky tapered underside + lush grass cap + mini trees/crystal rock

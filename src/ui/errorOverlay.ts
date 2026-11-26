@@ -2,6 +2,20 @@
 
 import { CONFIG } from '../config';
 
+export interface RecordedErrorEntry {
+  message: string;
+  location: string;
+  count: number;
+}
+
+export function getBuildId(): string {
+  try {
+    return typeof __BUILD_ID__ === 'string' && __BUILD_ID__.length > 0 ? __BUILD_ID__ : 'dev';
+  } catch {
+    return 'dev';
+  }
+}
+
 function isTouchCapableDevice(): boolean {
   if (typeof window === 'undefined') {
     return false;
@@ -21,6 +35,17 @@ export function isDebugUrlEnabled(): boolean {
     return new URLSearchParams(window.location.search).has('debug');
   } catch {
     return window.location.search.includes('debug');
+  }
+}
+
+export function isSafeUrlEnabled(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  try {
+    return new URLSearchParams(window.location.search).has('safe');
+  } catch {
+    return window.location.search.includes('safe');
   }
 }
 
@@ -54,6 +79,20 @@ function extractLocationFromStack(stack?: string): { file?: string; line?: numbe
   return {};
 }
 
+function buildLocationSuffix(file?: string, line?: number): string {
+  const locFile = shortenFileName(file).toLowerCase();
+  if (locFile && typeof line === 'number' && Number.isFinite(line) && line > 0) {
+    return `${locFile}:${line}`;
+  }
+  if (locFile) {
+    return locFile;
+  }
+  if (typeof line === 'number' && line > 0) {
+    return `line ${line}`;
+  }
+  return '';
+}
+
 function formatErrorLines(message: string, file?: string, line?: number): string {
   const maxLines = Math.max(1, CONFIG.errorOverlay.maxLines);
   const rawLower = (message || 'unknown error').replace(/\r/g, '').trim().toLowerCase();
@@ -62,11 +101,7 @@ function formatErrorLines(message: string, file?: string, line?: number): string
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
 
-  const locFile = shortenFileName(file).toLowerCase();
-  const locSuffix =
-    locFile && typeof line === 'number' && Number.isFinite(line) && line > 0
-      ? `${locFile}:${line}`
-      : locFile || (typeof line === 'number' && line > 0 ? `line ${line}` : '');
+  const locSuffix = buildLocationSuffix(file, line);
 
   const lines: string[] = [];
   if (baseLines.length === 0) {
@@ -91,6 +126,44 @@ function formatErrorLines(message: string, file?: string, line?: number): string
 let initialized = false;
 let boxEl: HTMLDivElement | null = null;
 let listenersBound = false;
+const shownErrorKeys = new Set<string>();
+const recordedErrors: RecordedErrorEntry[] = [];
+
+export function getRecordedErrors(): readonly RecordedErrorEntry[] {
+  return recordedErrors;
+}
+
+export function clearRecordedErrors(): void {
+  shownErrorKeys.clear();
+  recordedErrors.length = 0;
+}
+
+function recordError(message: string, file?: string, line?: number): boolean {
+  const cleanMsg = (message || 'unknown error').replace(/\r/g, '').trim();
+  const location = buildLocationSuffix(file, line);
+  const key = `${cleanMsg.toLowerCase()}@@${location}`;
+
+  const existing = recordedErrors.find((e) => `${e.message.toLowerCase()}@@${e.location}` === key);
+  if (existing) {
+    existing.count++;
+  } else {
+    recordedErrors.push({
+      message: cleanMsg,
+      location,
+      count: 1,
+    });
+    const maxEntries = CONFIG.safeMode.maxReportErrors;
+    while (recordedErrors.length > maxEntries) {
+      recordedErrors.shift();
+    }
+  }
+
+  if (shownErrorKeys.has(key)) {
+    return false;
+  }
+  shownErrorKeys.add(key);
+  return true;
+}
 
 function ensureBox(): HTMLDivElement | null {
   if (typeof document === 'undefined' || !isErrorOverlayEnabled()) {
@@ -144,7 +217,8 @@ function ensureBox(): HTMLDivElement | null {
 }
 
 export function logErrorOverlay(message: string, file?: string, line?: number): void {
-  if (!isErrorOverlayEnabled()) {
+  const isNewOverlayMessage = recordError(message, file, line);
+  if (!isNewOverlayMessage || !isErrorOverlayEnabled()) {
     return;
   }
   const el = ensureBox();

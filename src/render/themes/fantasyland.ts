@@ -235,6 +235,7 @@ export const fantasyLandTheme: WorldTheme = {
     _scene: THREE.Scene,
     maxAnisotropy: number,
     _presetName: VisualPresetName,
+    safeMode = false,
   ): ThemeInstance {
     const group = new THREE.Group();
     group.name = 'FantasyLandThemeGroup';
@@ -264,10 +265,12 @@ export const fantasyLandTheme: WorldTheme = {
     const bounds = course.getBounds();
     const cx = bounds.center.x;
     const cz = bounds.center.z;
-    const qualityPreset = CONFIG.quality.levels[quality];
+    const effectiveQuality: QualityLevel = safeMode ? 'mobile' : quality;
+    const qualityPreset = CONFIG.quality.levels[effectiveQuality];
     const densityScale = qualityPreset.propsDensityScale;
     const cloudDensityScale = qualityPreset.cloudDensityScale;
-    const shadowsEnabled = qualityPreset.shadowsEnabled;
+    const shadowsEnabled = !safeMode && qualityPreset.shadowsEnabled;
+    const effectiveAnisotropy = safeMode ? Math.min(2, maxAnisotropy) : maxAnisotropy;
 
     const spanX = bounds.max.x - bounds.min.x;
     const spanZ = bounds.max.z - bounds.min.z;
@@ -279,13 +282,15 @@ export const fantasyLandTheme: WorldTheme = {
     // 1. Expansive Vibrant Grass Meadow + Beveled Island Rim
     // ---------------------------------------------------------------------
     const grassRepeat = Math.max(18, Math.round((islandRadius * 2) / 28));
-    const grassTex = trackTex(createGrassTexture(maxAnisotropy, grassRepeat));
+    const grassTex = trackTex(createGrassTexture(effectiveAnisotropy, grassRepeat));
     const grassMat = trackMat(
-      new THREE.MeshStandardMaterial({
-        map: grassTex,
-        roughness: 0.84,
-        metalness: 0.0,
-      }),
+      safeMode
+        ? new THREE.MeshLambertMaterial({ map: grassTex })
+        : new THREE.MeshStandardMaterial({
+            map: grassTex,
+            roughness: 0.84,
+            metalness: 0.0,
+          }),
     );
 
     const meadowGeom = trackGeom(new THREE.CircleGeometry(islandRadius, 72));
@@ -293,7 +298,7 @@ export const fantasyLandTheme: WorldTheme = {
     const meadowMesh = new THREE.Mesh(meadowGeom, grassMat);
     meadowMesh.name = 'FantasyGrassMeadow';
     meadowMesh.position.set(cx, 0, cz);
-    meadowMesh.receiveShadow = true;
+    meadowMesh.receiveShadow = shadowsEnabled;
     meadowMesh.castShadow = false;
     freezeStatic(meadowMesh);
     group.add(meadowMesh);
@@ -302,15 +307,17 @@ export const fantasyLandTheme: WorldTheme = {
       new THREE.CylinderGeometry(islandRadius, islandRadius + 6, 4.2, 72, 1, true),
     );
     const cliffMat = trackMat(
-      new THREE.MeshStandardMaterial({
-        color: '#168F42',
-        roughness: 0.88,
-        metalness: 0.0,
-      }),
+      safeMode
+        ? new THREE.MeshLambertMaterial({ color: '#168F42' })
+        : new THREE.MeshStandardMaterial({
+            color: '#168F42',
+            roughness: 0.88,
+            metalness: 0.0,
+          }),
     );
     const cliffMesh = new THREE.Mesh(cliffGeom, cliffMat);
     cliffMesh.position.set(cx, -2.12, cz);
-    cliffMesh.receiveShadow = true;
+    cliffMesh.receiveShadow = shadowsEnabled;
     freezeStatic(cliffMesh);
     group.add(cliffMesh);
 
@@ -318,13 +325,15 @@ export const fantasyLandTheme: WorldTheme = {
     // 2. Bright Blue Water Ring Surrounding the Meadow Island
     // ---------------------------------------------------------------------
     const waterRepeat = Math.max(16, Math.round((waterRadius * 2) / 42));
-    const waterTex = trackTex(createWaterTexture(maxAnisotropy, waterRepeat));
+    const waterTex = trackTex(createWaterTexture(effectiveAnisotropy, waterRepeat));
     const waterMat = trackMat(
-      new THREE.MeshStandardMaterial({
-        map: waterTex,
-        roughness: 0.22,
-        metalness: 0.06,
-      }),
+      safeMode
+        ? new THREE.MeshLambertMaterial({ map: waterTex })
+        : new THREE.MeshStandardMaterial({
+            map: waterTex,
+            roughness: 0.22,
+            metalness: 0.06,
+          }),
     );
 
     const waterGeom = trackGeom(new THREE.RingGeometry(islandRadius - 1.5, waterRadius, 72, 1));
@@ -332,7 +341,7 @@ export const fantasyLandTheme: WorldTheme = {
     const waterMesh = new THREE.Mesh(waterGeom, waterMat);
     waterMesh.name = 'FantasyWaterRing';
     waterMesh.position.set(cx, -2.35, cz);
-    waterMesh.receiveShadow = true;
+    waterMesh.receiveShadow = shadowsEnabled;
     freezeStatic(waterMesh);
     group.add(waterMesh);
 
@@ -365,7 +374,12 @@ export const fantasyLandTheme: WorldTheme = {
       }
     }
 
-    const decorManager = createFantasyDecorManager(course, quality, maxAnisotropy);
+    const decorManager = createFantasyDecorManager(
+      course,
+      effectiveQuality,
+      effectiveAnisotropy,
+      safeMode,
+    );
     group.add(decorManager.group);
 
     const startSlot = course.getGridSlots(1)[0];
@@ -455,18 +469,22 @@ export const fantasyLandTheme: WorldTheme = {
       const colGeom = trackGeom(new THREE.CylinderGeometry(1.15, 1.45, 1, 14));
       const plinthGeom = trackGeom(new THREE.CylinderGeometry(2.1, 2.5, 1.4, 16));
       const colMat = trackMat(
-        new THREE.MeshStandardMaterial({
-          color: '#E2E8F0',
-          roughness: 0.45,
-          metalness: 0.08,
-        }),
+        safeMode
+          ? new THREE.MeshLambertMaterial({ color: '#E2E8F0' })
+          : new THREE.MeshStandardMaterial({
+              color: '#E2E8F0',
+              roughness: 0.45,
+              metalness: 0.08,
+            }),
       );
       const plinthMat = trackMat(
-        new THREE.MeshStandardMaterial({
-          color: '#0A5CFF',
-          roughness: 0.4,
-          metalness: 0.1,
-        }),
+        safeMode
+          ? new THREE.MeshLambertMaterial({ color: '#0A5CFF' })
+          : new THREE.MeshStandardMaterial({
+              color: '#0A5CFF',
+              roughness: 0.4,
+              metalness: 0.1,
+            }),
       );
 
       const colInst = trackInst(new THREE.InstancedMesh(colGeom, colMat, supportSpots.length));
@@ -539,15 +557,17 @@ export const fantasyLandTheme: WorldTheme = {
         new THREE.SphereGeometry(1, 22, 12, 0, Math.PI * 2, 0, Math.PI * 0.52),
       );
       const hillMat = trackMat(
-        new THREE.MeshStandardMaterial({
-          color: 0xffffff,
-          roughness: 0.86,
-          metalness: 0.0,
-        }),
+        safeMode
+          ? new THREE.MeshLambertMaterial({ color: 0xffffff })
+          : new THREE.MeshStandardMaterial({
+              color: 0xffffff,
+              roughness: 0.86,
+              metalness: 0.0,
+            }),
       );
       const hillInst = trackInst(new THREE.InstancedMesh(hillGeom, hillMat, hillPlacements.length));
       hillInst.castShadow = false;
-      hillInst.receiveShadow = true;
+      hillInst.receiveShadow = shadowsEnabled;
 
       const mtx = new THREE.Matrix4();
       const pos = new THREE.Vector3();
@@ -602,11 +622,13 @@ export const fantasyLandTheme: WorldTheme = {
       const trunkGeom = trackGeom(new THREE.CylinderGeometry(0.55, 0.85, 5.2, 10));
       trunkGeom.translate(0, 2.6, 0);
       const trunkMat = trackMat(
-        new THREE.MeshStandardMaterial({
-          color: '#7C4A26',
-          roughness: 0.78,
-          metalness: 0.02,
-        }),
+        safeMode
+          ? new THREE.MeshLambertMaterial({ color: '#7C4A26' })
+          : new THREE.MeshStandardMaterial({
+              color: '#7C4A26',
+              roughness: 0.78,
+              metalness: 0.02,
+            }),
       );
 
       const puffA = new THREE.SphereGeometry(2.6, 14, 12);
@@ -617,11 +639,13 @@ export const fantasyLandTheme: WorldTheme = {
       puffC.translate(1.3, 5.5, -0.5);
       const canopyGeom = trackGeom(mergeWithCleanup([puffA, puffB, puffC]));
       const canopyMat = trackMat(
-        new THREE.MeshStandardMaterial({
-          color: 0xffffff,
-          roughness: 0.52,
-          metalness: 0.02,
-        }),
+        safeMode
+          ? new THREE.MeshLambertMaterial({ color: 0xffffff })
+          : new THREE.MeshStandardMaterial({
+              color: 0xffffff,
+              roughness: 0.52,
+              metalness: 0.02,
+            }),
       );
 
       const trunkInst = trackInst(new THREE.InstancedMesh(trunkGeom, trunkMat, treeSpots.length));
@@ -666,11 +690,13 @@ export const fantasyLandTheme: WorldTheme = {
     const mountainGeom = trackGeom(new THREE.ConeGeometry(1, 1, 6));
     mountainGeom.translate(0, 0.5, 0);
     const mountainMat = trackMat(
-      new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        roughness: 0.88,
-        metalness: 0.0,
-      }),
+      safeMode
+        ? new THREE.MeshLambertMaterial({ color: 0xffffff })
+        : new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            roughness: 0.88,
+            metalness: 0.0,
+          }),
     );
     const mountainInst = trackInst(new THREE.InstancedMesh(mountainGeom, mountainMat, mountainCount));
     mountainInst.castShadow = false;
@@ -711,17 +737,25 @@ export const fantasyLandTheme: WorldTheme = {
     // ---------------------------------------------------------------------
     const cloudTex = trackTex(createCloudTexture());
     const cloudMat = trackMat(
-      new THREE.MeshBasicMaterial({
-        map: cloudTex,
-        transparent: true,
-        opacity: 0.9,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        fog: false,
-      }),
+      safeMode
+        ? new THREE.MeshBasicMaterial({
+            map: cloudTex,
+            alphaTest: 0.45,
+            transparent: false,
+            side: THREE.DoubleSide,
+            fog: false,
+          })
+        : new THREE.MeshBasicMaterial({
+            map: cloudTex,
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+            fog: false,
+          }),
     );
     const cloudGeom = trackGeom(new THREE.PlaneGeometry(54, 27));
-    const cloudCount = Math.max(6, Math.round(20 * cloudDensityScale));
+    const cloudCount = Math.max(safeMode ? 4 : 6, Math.round(20 * cloudDensityScale));
     const clouds: CloudDriftItem[] = [];
     const cloudSpan = islandRadius * 1.55;
 
@@ -760,32 +794,35 @@ export const fantasyLandTheme: WorldTheme = {
       });
     }
 
-    const sunDir = new THREE.Vector3(
-      CONFIG.lighting.sunOffset.x,
-      CONFIG.lighting.sunOffset.y,
-      CONFIG.lighting.sunOffset.z,
-    ).normalize();
-    const sunDistance = Math.max(380, islandRadius * 1.18);
-    const sunTex = trackTex(createSunGlowTexture());
-    const sunGlowMat = trackMat(
-      new THREE.MeshBasicMaterial({
-        map: sunTex,
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        fog: false,
-      }),
-    );
-    const sunGeom = trackGeom(new THREE.PlaneGeometry(92, 92));
-    const sunMesh = new THREE.Mesh(sunGeom, sunGlowMat);
-    sunMesh.name = 'FantasySunGlow';
-    sunMesh.position.set(
-      cx + sunDir.x * sunDistance,
-      sunDir.y * sunDistance,
-      cz + sunDir.z * sunDistance,
-    );
-    sunMesh.renderOrder = -20;
-    group.add(sunMesh);
+    let sunMesh: THREE.Mesh | null = null;
+    if (!safeMode) {
+      const sunDir = new THREE.Vector3(
+        CONFIG.lighting.sunOffset.x,
+        CONFIG.lighting.sunOffset.y,
+        CONFIG.lighting.sunOffset.z,
+      ).normalize();
+      const sunDistance = Math.max(380, islandRadius * 1.18);
+      const sunTex = trackTex(createSunGlowTexture());
+      const sunGlowMat = trackMat(
+        new THREE.MeshBasicMaterial({
+          map: sunTex,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          fog: false,
+        }),
+      );
+      const sunGeom = trackGeom(new THREE.PlaneGeometry(92, 92));
+      sunMesh = new THREE.Mesh(sunGeom, sunGlowMat);
+      sunMesh.name = 'FantasySunGlow';
+      sunMesh.position.set(
+        cx + sunDir.x * sunDistance,
+        sunDir.y * sunDistance,
+        cz + sunDir.z * sunDistance,
+      );
+      sunMesh.renderOrder = -20;
+      group.add(sunMesh);
+    }
 
     let elapsed = 0;
 
@@ -795,7 +832,7 @@ export const fantasyLandTheme: WorldTheme = {
       waterTex.offset.y = (waterTex.offset.y + dt * 0.025) % 1;
 
       decorManager.update(cameraPos, dt);
-      sunMesh.lookAt(cameraPos);
+      sunMesh?.lookAt(cameraPos);
 
       for (let i = 0; i < clouds.length; i++) {
         const c = clouds[i];

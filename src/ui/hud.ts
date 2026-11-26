@@ -9,7 +9,7 @@ import {
   type MedalType,
 } from '../services/records';
 import { createToastQueue, type ToastQueue } from './toastQueue';
-import { isDebugUrlEnabled } from './errorOverlay';
+import { getBuildId, isDebugUrlEnabled } from './errorOverlay';
 import type { QualityLevel } from '../render/quality';
 import './hud.css';
 
@@ -64,6 +64,9 @@ export interface HudCallbacks {
   onReturnToMenu?: () => void;
   onCopyResult?: () => Promise<boolean> | boolean;
   onClearRecords?: () => void;
+  onTryFullGraphics?: () => void;
+  onUseSafeMode?: () => void;
+  onOpenReport?: () => void;
 }
 
 export interface DebugMetricsSnapshot {
@@ -121,6 +124,13 @@ export interface HudHandle {
   titleClearBtnEl: HTMLButtonElement;
   titleClearRingFillEl: SVGCircleElement;
   titleClearTextEl: HTMLElement;
+  titleGfxBarEl: HTMLElement;
+  titleGfxStatusEl: HTMLElement;
+  titleFullGfxBtnEl: HTMLButtonElement;
+  titleSafeModeBtnEl: HTMLButtonElement;
+  titleVersionBtnEl: HTMLButtonElement;
+  safeBannerEl: HTMLElement;
+  safeBannerTimerId: number | null;
   countdownEl: HTMLElement;
   finishScreenEl: HTMLElement;
   finishCardEl: HTMLElement;
@@ -431,8 +441,16 @@ export function createHud(
           <span class="sr-hint-item">Rem &amp; drift kanan</span>
           <span class="sr-hint-item">Tahan untuk ulang</span>
         </div>
+        <div class="sr-title-gfx-bar sr-hud-hidden">
+          <span class="sr-title-gfx-status">Mode aman aktif</span>
+          <button type="button" class="sr-btn sr-btn-secondary sr-btn-compact sr-title-fullgfx-btn">Coba grafis penuh</button>
+          <button type="button" class="sr-btn sr-btn-secondary sr-btn-compact sr-title-safemode-btn sr-hud-hidden">Mode aman</button>
+        </div>
       </div>
+      <button type="button" class="sr-title-version-btn" aria-label="Versi build">v${getBuildId()}</button>
     </div>
+
+    <div class="sr-safe-banner sr-hud-hidden" role="status" aria-live="polite">Mode aman aktif</div>
 
     <div class="sr-overlay-center sr-countdown-overlay sr-hud-hidden">
       <div class="sr-countdown-text">3</div>
@@ -516,6 +534,12 @@ export function createHud(
   const titleClearBtnEl = root.querySelector('.sr-title-clear-btn') as HTMLButtonElement;
   const titleClearRingFillEl = root.querySelector('.sr-hold-ring-fill') as SVGCircleElement;
   const titleClearTextEl = root.querySelector('.sr-title-clear-text') as HTMLElement;
+  const titleGfxBarEl = root.querySelector('.sr-title-gfx-bar') as HTMLElement;
+  const titleGfxStatusEl = root.querySelector('.sr-title-gfx-status') as HTMLElement;
+  const titleFullGfxBtnEl = root.querySelector('.sr-title-fullgfx-btn') as HTMLButtonElement;
+  const titleSafeModeBtnEl = root.querySelector('.sr-title-safemode-btn') as HTMLButtonElement;
+  const titleVersionBtnEl = root.querySelector('.sr-title-version-btn') as HTMLButtonElement;
+  const safeBannerEl = root.querySelector('.sr-safe-banner') as HTMLElement;
   const finishRetryBtnEl = root.querySelector('.sr-finish-retry-btn') as HTMLButtonElement;
   const finishMenuBtnEl = root.querySelector('.sr-finish-menu-btn') as HTMLButtonElement;
   const finishCopyBtnEl = root.querySelector('.sr-finish-copy-btn') as HTMLButtonElement;
@@ -531,6 +555,32 @@ export function createHud(
   const handleMenuClick = (): void => {
     finishMenuBtnEl.blur();
     callbacks.onReturnToMenu?.();
+  };
+  const handleFullGfxClick = (e: MouseEvent): void => {
+    e.stopPropagation();
+    titleFullGfxBtnEl.blur();
+    callbacks.onTryFullGraphics?.();
+  };
+  const handleSafeModeClick = (e: MouseEvent): void => {
+    e.stopPropagation();
+    titleSafeModeBtnEl.blur();
+    callbacks.onUseSafeMode?.();
+  };
+
+  let versionTapTimestamps: number[] = [];
+  const handleVersionPointerDown = (e: PointerEvent): void => {
+    e.stopPropagation();
+  };
+  const handleVersionClick = (e: MouseEvent): void => {
+    e.stopPropagation();
+    const now = performance.now();
+    const windowMs = CONFIG.safeMode.versionTapWindowMs;
+    versionTapTimestamps = versionTapTimestamps.filter((t) => now - t <= windowMs);
+    versionTapTimestamps.push(now);
+    if (versionTapTimestamps.length >= CONFIG.safeMode.versionTapCount) {
+      versionTapTimestamps = [];
+      callbacks.onOpenReport?.();
+    }
   };
 
   let copyResetTimerId: number | null = null;
@@ -551,6 +601,10 @@ export function createHud(
   finishRetryBtnEl.addEventListener('click', handleRetryClick);
   finishMenuBtnEl.addEventListener('click', handleMenuClick);
   finishCopyBtnEl.addEventListener('click', handleCopyClick);
+  titleFullGfxBtnEl.addEventListener('click', handleFullGfxClick);
+  titleSafeModeBtnEl.addEventListener('click', handleSafeModeClick);
+  titleVersionBtnEl.addEventListener('pointerdown', handleVersionPointerDown);
+  titleVersionBtnEl.addEventListener('click', handleVersionClick);
 
   // Hold-to-clear records button (~1.2s continuous hold with progress ring)
   let clearPointerId: number | null = null;
@@ -706,6 +760,13 @@ export function createHud(
     titleClearBtnEl,
     titleClearRingFillEl,
     titleClearTextEl,
+    titleGfxBarEl,
+    titleGfxStatusEl,
+    titleFullGfxBtnEl,
+    titleSafeModeBtnEl,
+    titleVersionBtnEl,
+    safeBannerEl,
+    safeBannerTimerId: null,
     countdownEl: root.querySelector('.sr-countdown-overlay') as HTMLElement,
     finishScreenEl: root.querySelector('.sr-finish-screen') as HTMLElement,
     finishCardEl: root.querySelector('.sr-finish-card') as HTMLElement,
@@ -829,6 +890,10 @@ export function createHud(
       window.clearTimeout(copyResetTimerId);
       copyResetTimerId = null;
     }
+    if (handle.safeBannerTimerId !== null) {
+      window.clearTimeout(handle.safeBannerTimerId);
+      handle.safeBannerTimerId = null;
+    }
     window.removeEventListener('keydown', handleHudKeyDown);
     hintBadgeEl.removeEventListener('click', handleHintBadgeClick);
     handle.contextLostOverlayEl.removeEventListener('click', handleContextLostReload);
@@ -837,6 +902,10 @@ export function createHud(
     finishRetryBtnEl.removeEventListener('click', handleRetryClick);
     finishMenuBtnEl.removeEventListener('click', handleMenuClick);
     finishCopyBtnEl.removeEventListener('click', handleCopyClick);
+    titleFullGfxBtnEl.removeEventListener('click', handleFullGfxClick);
+    titleSafeModeBtnEl.removeEventListener('click', handleSafeModeClick);
+    titleVersionBtnEl.removeEventListener('pointerdown', handleVersionPointerDown);
+    titleVersionBtnEl.removeEventListener('click', handleVersionClick);
     titleClearBtnEl.removeEventListener('pointerdown', onClearDown);
     titleClearBtnEl.removeEventListener('pointerup', onClearEnd);
     titleClearBtnEl.removeEventListener('pointercancel', onClearEnd);
@@ -1235,12 +1304,69 @@ export function showFinishScreen(hud: HudHandle, data: FinishScreenData): void {
   hud.finishCardEl.classList.remove('sr-finish-enter');
   void hud.finishCardEl.offsetWidth;
   hud.finishCardEl.classList.add('sr-finish-enter');
+  hud.finishScreenEl.style.pointerEvents = '';
   hud.finishScreenEl.classList.remove('sr-hud-hidden');
 }
 
 export function hideFinishScreen(hud: HudHandle): void {
   hud.finishScreenEl.classList.add('sr-hud-hidden');
+  hud.finishScreenEl.style.pointerEvents = 'none';
   hud.finishCardEl.classList.remove('sr-finish-enter');
+}
+
+export function hideModalScreens(hud: HudHandle): void {
+  hud.root.classList.remove('sr-hud--modal');
+  hud.titleScreenEl.classList.add('sr-hud-hidden');
+  hud.titleScreenEl.style.pointerEvents = 'none';
+  hud.finishScreenEl.classList.add('sr-hud-hidden');
+  hud.finishScreenEl.style.pointerEvents = 'none';
+  hud.finishCardEl.classList.remove('sr-finish-enter');
+  hud.clearHoldCleanup();
+  hud.toastQueue.clear();
+}
+
+export function setSafeModeUi(
+  hud: HudHandle,
+  options: { safeMode: boolean; isMobileDevice: boolean; trialActive?: boolean; trialSecRemaining?: number },
+): void {
+  const showBar = options.safeMode || options.isMobileDevice || Boolean(options.trialActive);
+  hud.titleGfxBarEl.classList.toggle('sr-hud-hidden', !showBar);
+  if (!showBar) {
+    return;
+  }
+  if (options.safeMode) {
+    hud.titleGfxStatusEl.textContent = 'Mode aman aktif (grafis ringan)';
+    hud.titleFullGfxBtnEl.classList.remove('sr-hud-hidden');
+    hud.titleSafeModeBtnEl.classList.add('sr-hud-hidden');
+  } else if (options.trialActive) {
+    const sec = Math.max(1, Math.ceil(options.trialSecRemaining ?? 0));
+    hud.titleGfxStatusEl.textContent = `Uji grafis penuh (${sec} dtk)...`;
+    hud.titleFullGfxBtnEl.classList.add('sr-hud-hidden');
+    hud.titleSafeModeBtnEl.classList.remove('sr-hud-hidden');
+  } else {
+    hud.titleGfxStatusEl.textContent = 'Grafis penuh aktif';
+    hud.titleFullGfxBtnEl.classList.add('sr-hud-hidden');
+    hud.titleSafeModeBtnEl.classList.remove('sr-hud-hidden');
+  }
+}
+
+export function showSafeModeNotice(
+  hud: HudHandle,
+  message = 'Mode aman aktif',
+  durationMs = CONFIG.safeMode.statusBannerMs,
+): void {
+  if (hud.safeBannerTimerId !== null) {
+    window.clearTimeout(hud.safeBannerTimerId);
+    hud.safeBannerTimerId = null;
+  }
+  hud.safeBannerEl.textContent = message;
+  hud.safeBannerEl.classList.remove('sr-hud-hidden');
+  if (durationMs > 0) {
+    hud.safeBannerTimerId = window.setTimeout(() => {
+      hud.safeBannerEl.classList.add('sr-hud-hidden');
+      hud.safeBannerTimerId = null;
+    }, durationMs);
+  }
 }
 
 export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
@@ -1277,7 +1403,9 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
 
     hud.root.classList.toggle('sr-hud--modal', isTitle || showResults);
     hud.titleScreenEl.classList.toggle('sr-hud-hidden', !isTitle);
+    hud.titleScreenEl.style.pointerEvents = isTitle ? '' : 'none';
     hud.finishScreenEl.classList.toggle('sr-hud-hidden', !showResults);
+    hud.finishScreenEl.style.pointerEvents = showResults ? '' : 'none';
     hud.topBarEl.classList.toggle('sr-hud-hidden', isTitle || showResults);
     hud.progressWrapEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
     hud.bottomRightEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);

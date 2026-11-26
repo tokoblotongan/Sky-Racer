@@ -918,6 +918,7 @@ export function buildTrackMesh(
   course: Course,
   maxAnisotropy = 8,
   initialPreset: VisualPresetName = CONFIG.visual.activePreset,
+  safeMode = false,
 ): TrackVisual {
   const cfg = CONFIG.course;
   const activePreset = VISUAL_PRESETS[initialPreset];
@@ -1026,7 +1027,7 @@ export function buildTrackMesh(
       emissive: new THREE.Color(stripCfg.color),
       emissiveMap: edgeStripTexture,
       emissiveIntensity: stripCfg.emissiveIntensity,
-      transparent: true,
+      transparent: !safeMode,
       alphaTest: 0.1,
       roughness: 0.22,
       metalness: 0.05,

@@ -40,14 +40,16 @@ export function createFantasyDecorManager(
   course: Course,
   quality: QualityLevel,
   maxAnisotropy: number,
+  safeMode = false,
 ): FantasyDecorManager {
   const group = new THREE.Group();
   group.name = 'FantasyDecorManagerGroup';
 
-  const plan = buildFantasyLandDecorPlan(course, quality);
+  const effectiveQuality: QualityLevel = safeMode ? 'mobile' : quality;
+  const plan = buildFantasyLandDecorPlan(course, effectiveQuality);
   const tier = plan.quality;
-  const shadowsEnabled = CONFIG.quality.levels[quality].shadowsEnabled;
-  const mats = createFantasyDecorMaterials(maxAnisotropy);
+  const shadowsEnabled = !safeMode && CONFIG.quality.levels[effectiveQuality].shadowsEnabled;
+  const mats = createFantasyDecorMaterials(maxAnisotropy, safeMode);
   const updateDistSq = CONFIG.fantasy.updateDistance * CONFIG.fantasy.updateDistance;
 
   const byType = <T extends ResolvedDecorPlacement['spec']['type']>(type: T) =>
@@ -79,7 +81,7 @@ export function createFantasyDecorManager(
 
   const islandPlacements = byType('floatingIslands');
   if (islandPlacements.length > 0) {
-    register(buildFloatingIslandsLandmark(islandPlacements, mats, shadowsEnabled, tier), null);
+    register(buildFloatingIslandsLandmark(islandPlacements, mats, shadowsEnabled, tier, safeMode), null);
   }
 
   const rainbowPlacements = byType('rainbow');
