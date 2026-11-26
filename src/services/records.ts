@@ -24,6 +24,7 @@ export interface RunSubmission {
   date?: string;
   medal: MedalType;
   stats: RaceStats;
+  position?: number;
 }
 
 export interface BestRunEntry {
@@ -49,6 +50,7 @@ export interface CourseRecords {
   top: TopRunEntry[];
   bestSplits: number[];
   bestLap?: number | null;
+  bestPosition?: number | null;
 }
 
 export interface SubmitRunResult {
@@ -75,6 +77,7 @@ export interface SummaryRunInfo {
   lapTimes?: number[];
   bestLap?: number | null;
   stats: RaceStats;
+  position?: number;
 }
 
 interface LegacyStage6Record {
@@ -151,6 +154,7 @@ function createEmptyRecords(courseId: string): CourseRecords {
     top: [],
     bestSplits: [],
     bestLap: null,
+    bestPosition: null,
   };
 }
 
@@ -209,6 +213,11 @@ function sanitizeRecords(raw: unknown, courseId: string): CourseRecords | null {
 
   const bestSplits = sanitizeSplits(obj.bestSplits);
   const bestLap = isPositiveFinite(obj.bestLap) ? obj.bestLap : null;
+  const rawPos = obj.bestPosition;
+  const bestPosition =
+    typeof rawPos === 'number' && Number.isInteger(rawPos) && rawPos >= 1 && rawPos <= 8
+      ? rawPos
+      : null;
 
   if (best === null && top.length > 0) {
     best = {
@@ -227,6 +236,7 @@ function sanitizeRecords(raw: unknown, courseId: string): CourseRecords | null {
     top,
     bestSplits,
     bestLap,
+    bestPosition,
   };
 }
 
@@ -443,6 +453,17 @@ export function submitRun(courseId: string, run: RunSubmission): SubmitRunResult
     }
   }
 
+  if (typeof run.position === 'number' && Number.isFinite(run.position) && run.position >= 1) {
+    const cleanPos = Math.round(run.position);
+    if (
+      typeof records.bestPosition !== 'number' ||
+      !Number.isFinite(records.bestPosition) ||
+      cleanPos < records.bestPosition
+    ) {
+      records.bestPosition = cleanPos;
+    }
+  }
+
   const newTopEntry: TopRunEntry = {
     time: run.time,
     date: runDate,
@@ -505,6 +526,9 @@ function formatSummaryTime(seconds: number): string {
 export function exportSummaryText(run: SummaryRunInfo, course: SummaryCourseInfo): string {
   const lines: string[] = [];
   lines.push(`SKY RACER — ${course.name}`);
+  if (typeof run.position === 'number' && run.position >= 1) {
+    lines.push(`Posisi Akhir: P${run.position}`);
+  }
   lines.push(`Waktu Akhir: ${formatSummaryTime(run.time)}${run.isNewBest ? ' (REKOR BARU!)' : ''}`);
   lines.push(`Medali: ${formatMedalLabel(run.medal)}`);
   if (run.lapTimes && run.lapTimes.length > 1) {

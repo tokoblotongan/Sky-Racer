@@ -10,7 +10,9 @@ export type SoundEffectEvent =
   | PhysicsEvent
   | RaceEvent
   | { type: 'uiConfirm' }
-  | { type: 'uiMove' };
+  | { type: 'uiMove' }
+  | { type: 'overtake' }
+  | { type: 'overtaken' };
 
 export interface SfxAudio {
   play: (event: SoundEffectEvent) => void;
@@ -529,6 +531,43 @@ export function createSfx(manager: AudioManager): SfxAudio {
     osc.stop(now + cfg.duration + 0.01);
   }
 
+  function playOvertake(passed: boolean): void {
+    const key: EffectKey = passed ? 'overtake' : 'overtaken';
+    if (!canTrigger(key) || !ctx || !buses) return;
+    const cfg = passed ? sfxCfg.overtake : sfxCfg.overtaken;
+    const f1 = cfg.frequency;
+    const f2 = passed ? sfxCfg.overtake.frequencyHigh : sfxCfg.overtaken.frequencyLow;
+    const now = ctx.currentTime;
+    const half = cfg.duration * 0.52;
+
+    const osc1 = ctx.createOscillator();
+    const g1 = ctx.createGain();
+    osc1.type = 'triangle';
+    osc1.frequency.setValueAtTime(f1, now);
+    g1.gain.setValueAtTime(0.0001, now);
+    g1.gain.linearRampToValueAtTime(cfg.gain, now + 0.008);
+    g1.gain.exponentialRampToValueAtTime(0.0001, now + half);
+    osc1.connect(g1);
+    g1.connect(buses.sfx);
+    registerSecondaryNode(osc1, [g1]);
+    osc1.start(now);
+    osc1.stop(now + half + 0.01);
+
+    const t2 = now + half * 0.65;
+    const osc2 = ctx.createOscillator();
+    const g2 = ctx.createGain();
+    osc2.type = 'triangle';
+    osc2.frequency.setValueAtTime(f2, t2);
+    g2.gain.setValueAtTime(0.0001, t2);
+    g2.gain.linearRampToValueAtTime(cfg.gain, t2 + 0.008);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t2 + half * 1.3);
+    osc2.connect(g2);
+    g2.connect(buses.sfx);
+    registerPrimaryVoice(osc2, [g2]);
+    osc2.start(t2);
+    osc2.stop(t2 + half * 1.3 + 0.015);
+  }
+
   function play(event: SoundEffectEvent): void {
     if (disposed || !ctx || ctx.state !== 'running') {
       return;
@@ -573,6 +612,12 @@ export function createSfx(manager: AudioManager): SfxAudio {
           break;
         case 'uiMove':
           playClick('uiMove');
+          break;
+        case 'overtake':
+          playOvertake(true);
+          break;
+        case 'overtaken':
+          playOvertake(false);
           break;
       }
     } catch {

@@ -9,6 +9,22 @@ const CAR_BODY_WIDTH = 1.7;
 
 export type VisualPresetName = 'vivid' | 'pastel';
 export type GraphicsPreset = 'hemat' | 'seimbang' | 'penuh';
+export type AiDifficulty = 'mudah' | 'sedang' | 'sulit';
+export type AiDrivingStyle = 'balanced' | 'aggressive' | 'cautious';
+
+export interface AiRivalConfig {
+  readonly id: string;
+  readonly name: string;
+  readonly color: string;
+  readonly accent: string;
+  readonly stripe: string;
+  readonly design: 'gt' | 'wedge';
+  readonly skill: number;
+  readonly preferredOffset: number;
+  readonly shortcutChance: number;
+  readonly boostUsage: number;
+  readonly style: AiDrivingStyle;
+}
 
 export interface VisualPreset {
   name: VisualPresetName;
@@ -336,14 +352,119 @@ export const CONFIG = {
     minImpactForceForSpark: 4.5,
   },
   ai: {
-    laneOffsets: [0, 3.2, -3.2, 1.4] as readonly number[],
-    paceFactors: [1.0, 0.96, 0.92, 0.89] as readonly number[],
-    shortcutProbs: [0, 0.55, 0.2, 0.4] as readonly number[],
-    avoidanceLookahead: 18,
-    avoidanceSideBuffer: 2.2,
-    avoidanceGain: 2.9,
-    minSafeRailMargin: 1.4,
-    boostThrottleMinSpeed: 40,
+    difficulties: {
+      mudah: { skillMultiplier: 0.82 },
+      sedang: { skillMultiplier: 0.92 },
+      sulit: { skillMultiplier: 1.0 },
+    },
+    cruiseReferenceSpeed: 43.5,
+    defaultDifficulty: 'sedang' as AiDifficulty,
+    difficultyStorageKey: 'sky-racer-ai-difficulty-v1',
+    lookahead: {
+      base: 8.5,
+      perSpeed: 0.24,
+    },
+    lateralAccelLimit: 22,
+    brakeDecel: 34,
+    accelLimit: 24,
+    speedPI: {
+      kp: 0.14,
+      ki: 0.04,
+      maxIntegral: 8.0,
+    },
+    rubberBand: {
+      enabled: true,
+      maxBoost: 0.05,
+      maxSlow: 0.06,
+      rangeMeters: 120,
+    },
+    stuck: {
+      minSpeed: 3,
+      seconds: 2.5,
+    },
+    wrongWay: {
+      dot: -0.2,
+      seconds: 1.5,
+    },
+    avoidance: {
+      lookAheadMeters: 22,
+      sideClearance: 2.3,
+      minGap: 5.5,
+      laneOffsetClamp: 5.8,
+      lateralGain: 1.75,
+    },
+    shortcut: {
+      minEntrySpeed: 28,
+      approachWindowMeters: 42,
+    },
+    draft: {
+      enabled: true,
+      rangeMeters: 18,
+      lateralThreshold: 2.6,
+      bonus: 0.05,
+    },
+    startReactionMaxSec: 0.24,
+    racingLine: {
+      apexPullFactor: 0.65,
+      smoothRadiusSamples: 24,
+      padPullWeight: 0.85,
+      padLookaheadMeters: 48,
+      railSafeMargin: 1.45,
+      loopSafeSpeedMargin: 1.18,
+      jumpSafeSpeedMargin: 1.08,
+    },
+    nametag: {
+      maxDistanceMeters: 35,
+      heightOffsetMeters: 2.15,
+    },
+    rivals: [
+      {
+        id: 'rival-1',
+        name: 'Vektor',
+        color: '#0A5CFF',
+        accent: '#00E5FF',
+        stripe: '#FFF6E0',
+        design: 'wedge',
+        skill: 0.90,
+        preferredOffset: -2.4,
+        shortcutChance: 0.35,
+        boostUsage: 0.72,
+        style: 'cautious',
+      },
+      {
+        id: 'rival-2',
+        name: 'Kilat',
+        color: '#FFD000',
+        accent: '#FF5A00',
+        stripe: '#141C2B',
+        design: 'gt',
+        skill: 0.95,
+        preferredOffset: 0.4,
+        shortcutChance: 0.62,
+        boostUsage: 0.88,
+        style: 'balanced',
+      },
+      {
+        id: 'rival-3',
+        name: 'Surya',
+        color: '#16A34A',
+        accent: '#FFD000',
+        stripe: '#FFF6E0',
+        design: 'wedge',
+        skill: 0.98,
+        preferredOffset: 2.4,
+        shortcutChance: 0.8,
+        boostUsage: 0.96,
+        style: 'aggressive',
+      },
+    ] as readonly AiRivalConfig[],
+    finish: {
+      fastForwardTimeoutSeconds: 30,
+      fastForwardStepMultiplier: 4,
+    },
+  },
+  standings: {
+    debounceMs: 300,
   },
   shortcut: {
     branchWidth: 8,
@@ -559,12 +680,14 @@ export const CONFIG = {
     splitPopupDurationMs: 1000,
     lapToastDurationMs: 1400,
     zoneToastDurationMs: 1400,
+    overtakePopupDurationMs: 1100,
     toastPriorities: {
       wrongWay: 5,
       lap: 4,
       zone: 3,
       airtime: 2,
       split: 1,
+      overtake: 0,
     },
     progressBarHeightPx: 3,
     speedoScale: 0.8,
@@ -944,6 +1067,20 @@ export const CONFIG = {
         duration: 0.045, // durasi klik pindah pilihan detik
         gain: 0.16, // volume klik pindah pilihan
         cooldown: 0.06, // jeda minimum detik
+      },
+      overtake: {
+        frequency: 587.33, // nada awal blip lembut saat menyalip lawan (D5) Hz
+        frequencyHigh: 880.0, // nada naik kedua blip menyalip (A5) Hz
+        duration: 0.16, // durasi efek menyalip detik
+        gain: 0.24, // volume lembut efek menyalip
+        cooldown: 0.45, // jeda minimum antar notifikasi menyalip detik
+      },
+      overtaken: {
+        frequency: 493.88, // nada awal blip halus saat tersalip (B4) Hz
+        frequencyLow: 369.99, // nada turun kedua blip tersalip (F#4) Hz
+        duration: 0.16, // durasi efek tersalip detik
+        gain: 0.18, // volume halus efek tersalip
+        cooldown: 0.45, // jeda minimum antar notifikasi tersalip detik
       },
     },
     skid: {

@@ -445,10 +445,17 @@ export function createCourseSelect(
         }
         const label = document.createElement('span');
         label.className = 'sr-arena-record-time';
-        label.textContent =
+        const baseText =
           best.medal !== 'none'
             ? `${formatMedalLabel(best.medal)} • ${formatRaceTime(best.time)}`
             : `Rekor ${formatRaceTime(best.time)}`;
+        const hasBestPos =
+          (def.racers ?? 1) > 1 &&
+          typeof records.bestPosition === 'number' &&
+          Number.isFinite(records.bestPosition);
+        label.textContent = hasBestPos
+          ? `${baseText} • Terbaik P${records.bestPosition}`
+          : baseText;
         recordEl.appendChild(label);
       } else {
         const empty = document.createElement('span');

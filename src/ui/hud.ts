@@ -1,6 +1,7 @@
 // src/ui/hud.ts
 
-import { CONFIG, type GraphicsPreset } from '../config';
+import { CONFIG, type AiDifficulty, type GraphicsPreset } from '../config';
+import type { RacerStandingEntry } from '../core/standings';
 import type { RacePhase, FinishResultData } from '../core/state';
 import type { CourseMedals } from '../courses/types';
 import type { TouchControlPrefs } from '../input/touch';
@@ -31,6 +32,9 @@ export interface HudViewModel {
   wrongWay: boolean;
   muted: boolean;
   touchActive: boolean;
+  position?: number;
+  totalRacers?: number;
+  standings?: readonly RacerStandingEntry[];
 }
 
 export interface CheckpointSplitNotice {
@@ -51,6 +55,8 @@ export interface TitleScreenData {
   courseName: string;
   medals: CourseMedals;
   records: CourseRecords;
+  racers?: number;
+  aiDifficulty?: AiDifficulty;
 }
 
 export interface FinishScreenData {
@@ -68,6 +74,7 @@ export interface HudCallbacks {
   onTryFullGraphics?: () => void;
   onUseSafeMode?: () => void;
   onSelectGraphicsPreset?: (preset: GraphicsPreset) => void;
+  onSelectAiDifficulty?: (difficulty: AiDifficulty) => void;
   onChangeBrightness?: (value: number) => void;
   onResetBrightness?: () => void;
   onMeasureLuminance?: () => number | null;
@@ -131,6 +138,7 @@ export interface DebugMetricsSnapshot {
   routeId: string;
   quality: QualityLevel;
   carCount: number;
+  aiStepMs?: number;
   cars?: DebugCarStatus[];
 }
 
@@ -138,6 +146,8 @@ export interface HudHandle {
   root: HTMLElement;
   container: HTMLElement;
   topBarEl: HTMLElement;
+  posSlotEl: HTMLElement;
+  standingsPanelEl: HTMLElement;
   progressWrapEl: HTMLElement;
   progressFillEl: HTMLElement;
   progressMarkersEl: HTMLElement;
@@ -166,6 +176,8 @@ export interface HudHandle {
   debugMetricsEl: HTMLElement;
   titleScreenEl: HTMLElement;
   titleCourseSelectSlotEl: HTMLElement;
+  titleDiffRowEl: HTMLElement;
+  titleDiffBtns: Record<AiDifficulty, HTMLButtonElement>;
   titleTargetGoldEl: HTMLElement;
   titleTargetSilverEl: HTMLElement;
   titleTargetBronzeEl: HTMLElement;
@@ -214,12 +226,15 @@ export interface HudHandle {
   finishScreenEl: HTMLElement;
   finishCardEl: HTMLElement;
   finishCourseNameEl: HTMLElement;
+  finishPosBannerEl: HTMLElement;
   finishBadgeEl: HTMLElement;
   finishMedalIconEl: HTMLElement;
   finishMedalLabelEl: HTMLElement;
   finishTimeEl: HTMLElement;
   finishDeltaEl: HTMLElement;
   finishStatsGridEl: HTMLElement;
+  finishStandingsBoxEl: HTMLElement;
+  finishStandingsEl: HTMLElement;
   finishLapsBoxEl: HTMLElement;
   finishLapsEl: HTMLElement;
   finishSplitsEl: HTMLElement;
@@ -249,6 +264,9 @@ export interface HudHandle {
   lastBestLapSeconds: number | null;
   lastLapText: string;
   lastShowLap: boolean | null;
+  lastPosText: string;
+  lastShowPos: boolean | null;
+  lastStandingsKey: string;
   lastCpText: string;
   lastWrongWay: boolean | null;
   lastMuted: boolean | null;
@@ -377,6 +395,7 @@ export function createHud(
 
   root.innerHTML = `
     <div class="sr-hud-top sr-hud-hidden">
+      <div class="sr-hud-panel sr-pos-slot sr-hud-hidden" data-slot="pos">P1 / 4</div>
       <div class="sr-hud-panel sr-lap-slot sr-hud-hidden" data-slot="lap">LAP 1 / 1</div>
       <div class="sr-hud-panel sr-timer-card">
         <div class="sr-timer-main">
@@ -391,6 +410,8 @@ export function createHud(
       </div>
       <div class="sr-hud-panel sr-checkpoint-slot" data-slot="checkpoint">CP 0 / 0</div>
     </div>
+
+    <div class="sr-hud-panel sr-standings-panel sr-hud-hidden" aria-label="Klasemen Sementara"></div>
 
     <div class="sr-progress-wrap sr-hud-hidden">
       <div class="sr-progress-track">
@@ -521,6 +542,14 @@ export function createHud(
         <div class="sr-title-kicker">Stunt Track Time Trial</div>
         <h1 class="sr-title-logo">SKY RACER</h1>
         <div class="sr-arena-select"></div>
+        <div class="sr-title-diff-row sr-hud-hidden">
+          <span class="sr-title-diff-label">Kesulitan Lawan</span>
+          <div class="sr-preset-seg sr-title-diff-seg">
+            <button type="button" class="sr-preset-btn sr-diff-btn" data-diff="mudah">Mudah</button>
+            <button type="button" class="sr-preset-btn sr-diff-btn" data-diff="sedang">Sedang</button>
+            <button type="button" class="sr-preset-btn sr-diff-btn" data-diff="sulit">Sulit</button>
+          </div>
+        </div>
         <div class="sr-title-targets">
           <div class="sr-target-chip sr-target-chip--gold">
             <span class="sr-target-label">Emas</span>
@@ -634,6 +663,7 @@ export function createHud(
               <span class="sr-finish-kicker sr-finish-course-name">Sky Circuit</span>
               <span class="sr-finish-title">BALAPAN SELESAI</span>
             </div>
+            <span class="sr-finish-pos-banner sr-hud-hidden">P1</span>
             <span class="sr-finish-newbest sr-hud-hidden">REKOR BARU!</span>
           </div>
 
@@ -661,6 +691,10 @@ export function createHud(
         </div>
 
         <div class="sr-finish-col sr-finish-col-right">
+          <div class="sr-finish-panel-box sr-finish-standings-box sr-hud-hidden">
+            <div class="sr-box-heading">Klasemen Balapan</div>
+            <div class="sr-finish-standings"></div>
+          </div>
           <div class="sr-finish-panel-box sr-finish-laps-box sr-hud-hidden">
             <div class="sr-box-heading">Waktu Per Lap</div>
             <div class="sr-finish-laps"></div>
@@ -691,6 +725,12 @@ export function createHud(
   const titleClearBtnEl = root.querySelector('.sr-title-clear-btn') as HTMLButtonElement;
   const titleClearRingFillEl = root.querySelector('.sr-hold-ring-fill') as SVGCircleElement;
   const titleClearTextEl = root.querySelector('.sr-title-clear-text') as HTMLElement;
+  const titleDiffRowEl = root.querySelector('.sr-title-diff-row') as HTMLElement;
+  const titleDiffBtns: Record<AiDifficulty, HTMLButtonElement> = {
+    mudah: root.querySelector('.sr-title-diff-seg [data-diff="mudah"]') as HTMLButtonElement,
+    sedang: root.querySelector('.sr-title-diff-seg [data-diff="sedang"]') as HTMLButtonElement,
+    sulit: root.querySelector('.sr-title-diff-seg [data-diff="sulit"]') as HTMLButtonElement,
+  };
   const titleGfxBarEl = root.querySelector('.sr-title-gfx-bar') as HTMLElement;
   const titleGfxStatusEl = root.querySelector('.sr-title-gfx-status') as HTMLElement;
   const titlePresetBtns: Record<GraphicsPreset, HTMLButtonElement> = {
@@ -829,6 +869,22 @@ export function createHud(
     gearPresetBtns[key].addEventListener('click', onGearClick);
     presetClickHandlers.push({ el: titlePresetBtns[key], fn: onTitleClick });
     presetClickHandlers.push({ el: gearPresetBtns[key], fn: onGearClick });
+  }
+
+  const diffKeys: AiDifficulty[] = ['mudah', 'sedang', 'sulit'];
+  const diffClickHandlers: Array<{ el: HTMLButtonElement; fn: (e: MouseEvent) => void }> = [];
+  for (const diff of diffKeys) {
+    const onDiffClick = (e: MouseEvent): void => {
+      e.stopPropagation();
+      titleDiffBtns[diff].blur();
+      for (const dk of diffKeys) {
+        titleDiffBtns[dk].classList.toggle('sr-preset-btn--active', dk === diff);
+      }
+      callbacks.onSelectAiDifficulty?.(diff);
+    };
+    titleDiffBtns[diff].addEventListener('pointerdown', stopProp);
+    titleDiffBtns[diff].addEventListener('click', onDiffClick);
+    diffClickHandlers.push({ el: titleDiffBtns[diff], fn: onDiffClick });
   }
 
   const handleBrightnessInput = (slider: HTMLInputElement) => (e: Event): void => {
@@ -1083,6 +1139,8 @@ export function createHud(
     root,
     container,
     topBarEl: root.querySelector('.sr-hud-top') as HTMLElement,
+    posSlotEl: root.querySelector('[data-slot="pos"]') as HTMLElement,
+    standingsPanelEl: root.querySelector('.sr-standings-panel') as HTMLElement,
     progressWrapEl: root.querySelector('.sr-progress-wrap') as HTMLElement,
     progressFillEl: root.querySelector('.sr-progress-fill') as HTMLElement,
     progressMarkersEl: root.querySelector('.sr-progress-markers') as HTMLElement,
@@ -1111,6 +1169,8 @@ export function createHud(
     debugMetricsEl: root.querySelector('.sr-debug-metrics') as HTMLElement,
     titleScreenEl: root.querySelector('.sr-title-screen') as HTMLElement,
     titleCourseSelectSlotEl: root.querySelector('.sr-arena-select') as HTMLElement,
+    titleDiffRowEl,
+    titleDiffBtns,
     titleTargetGoldEl: root.querySelector('.sr-target-gold') as HTMLElement,
     titleTargetSilverEl: root.querySelector('.sr-target-silver') as HTMLElement,
     titleTargetBronzeEl: root.querySelector('.sr-target-bronze') as HTMLElement,
@@ -1159,12 +1219,15 @@ export function createHud(
     finishScreenEl: root.querySelector('.sr-finish-screen') as HTMLElement,
     finishCardEl: root.querySelector('.sr-finish-card') as HTMLElement,
     finishCourseNameEl: root.querySelector('.sr-finish-course-name') as HTMLElement,
+    finishPosBannerEl: root.querySelector('.sr-finish-pos-banner') as HTMLElement,
     finishBadgeEl: root.querySelector('.sr-finish-newbest') as HTMLElement,
     finishMedalIconEl: root.querySelector('.sr-finish-medal-icon') as HTMLElement,
     finishMedalLabelEl: root.querySelector('.sr-finish-medal-label') as HTMLElement,
     finishTimeEl: root.querySelector('.sr-finish-final-time') as HTMLElement,
     finishDeltaEl: root.querySelector('.sr-finish-delta') as HTMLElement,
     finishStatsGridEl: root.querySelector('.sr-finish-stats-grid') as HTMLElement,
+    finishStandingsBoxEl: root.querySelector('.sr-finish-standings-box') as HTMLElement,
+    finishStandingsEl: root.querySelector('.sr-finish-standings') as HTMLElement,
     finishLapsBoxEl: root.querySelector('.sr-finish-laps-box') as HTMLElement,
     finishLapsEl: root.querySelector('.sr-finish-laps') as HTMLElement,
     finishSplitsEl: root.querySelector('.sr-finish-splits') as HTMLElement,
@@ -1194,6 +1257,9 @@ export function createHud(
     lastBestLapSeconds: null,
     lastLapText: '',
     lastShowLap: null,
+    lastPosText: '',
+    lastShowPos: null,
+    lastStandingsKey: '',
     lastCpText: 'CP 0 / 0',
     lastWrongWay: null,
     lastMuted: null,
@@ -1310,6 +1376,12 @@ export function createHud(
     for (const entry of presetClickHandlers) {
       entry.el.removeEventListener('click', entry.fn);
     }
+    for (const dk of diffKeys) {
+      titleDiffBtns[dk].removeEventListener('pointerdown', stopProp);
+    }
+    for (const entry of diffClickHandlers) {
+      entry.el.removeEventListener('click', entry.fn);
+    }
 
     titleBrightnessInputEl.removeEventListener('pointerdown', stopProp);
     titleBrightnessInputEl.removeEventListener('input', onTitleBrightnessInput);
@@ -1389,6 +1461,16 @@ export function updateTitleScreen(hud: HudHandle, data: TitleScreenData): void {
   hud.titleTargetSilverEl.textContent = formatRaceTime(data.medals.silver);
   hud.titleTargetBronzeEl.textContent = formatRaceTime(data.medals.bronze);
 
+  const showDifficulty = (data.racers ?? 1) > 1;
+  hud.titleDiffRowEl.classList.toggle('sr-hud-hidden', !showDifficulty);
+  if (showDifficulty) {
+    const activeDiff = data.aiDifficulty ?? CONFIG.ai.defaultDifficulty;
+    const diffKeys: AiDifficulty[] = ['mudah', 'sedang', 'sulit'];
+    for (const dk of diffKeys) {
+      hud.titleDiffBtns[dk].classList.toggle('sr-preset-btn--active', dk === activeDiff);
+    }
+  }
+
   renderTopRecordsList(hud.titleTopListEl, data.records, null);
 
   const hasRecords = data.records.best !== null || data.records.top.length > 0;
@@ -1466,10 +1548,14 @@ export function updateDebugMetricsOverlay(
           )
           .join('\n')
       : '';
+  const aiPart =
+    typeof metrics.aiStepMs === 'number' && metrics.carCount > 1
+      ? ` | AI ${metrics.aiStepMs.toFixed(2)}ms`
+      : '';
   hud.debugMetricsEl.textContent =
     `${Math.round(metrics.fps)} FPS | ${metrics.avgFrameMs.toFixed(1)} ms | ${metrics.quality.toUpperCase()}\n` +
     `DC ${metrics.drawCalls} | TRI ${metrics.triangles} | GEO ${metrics.geometries} TEX ${metrics.textures}\n` +
-    `${metrics.status} ${cdPart}| ${metrics.courseId} (${metrics.routeId}) | CARS ${metrics.carCount}${carSummary}`;
+    `${metrics.status} ${cdPart}| ${metrics.courseId} (${metrics.routeId}) | CARS ${metrics.carCount}${aiPart}${carSummary}`;
 }
 
 export function setHudProgressCheckpoints(
@@ -1566,6 +1652,24 @@ export function showShortcutToast(hud: HudHandle, title: string): void {
   });
 }
 
+export function showOvertakeToast(
+  hud: HudHandle,
+  kind: 'overtake' | 'overtaken',
+  newPosition: number,
+  rivalName: string,
+): void {
+  hud.toastQueue.push({
+    kind: 'overtake',
+    text:
+      kind === 'overtake'
+        ? `Naik ke P${newPosition}! (${rivalName})`
+        : `Turun ke P${newPosition} (${rivalName})`,
+    tone: kind === 'overtake' ? 'fast' : 'slow',
+    priority: CONFIG.hud.toastPriorities.overtake,
+    durationMs: CONFIG.hud.overtakePopupDurationMs,
+  });
+}
+
 export function showCountdownOverlay(hud: HudHandle, label: string, isGo: boolean): void {
   if (hud.countdownHideTimerId !== null) {
     window.clearTimeout(hud.countdownHideTimerId);
@@ -1604,6 +1708,16 @@ export function showFinishScreen(hud: HudHandle, data: FinishScreenData): void {
 
   hud.finishCourseNameEl.textContent = courseName;
   hud.finishBadgeEl.classList.toggle('sr-hud-hidden', !finish.isNewBest);
+
+  const isMultiRacer = (finish.totalRacers ?? 1) > 1 && typeof finish.playerPosition === 'number';
+  hud.finishPosBannerEl.classList.toggle('sr-hud-hidden', !isMultiRacer);
+  if (isMultiRacer && finish.playerPosition) {
+    const pos = finish.playerPosition;
+    hud.finishPosBannerEl.textContent =
+      pos === 1 ? 'JUARA P1!' : pos <= 3 ? `PODIUM P${pos}` : `POSISI P${pos}`;
+    hud.finishPosBannerEl.classList.toggle('sr-finish-pos-banner--win', pos === 1);
+  }
+
   hud.finishMedalIconEl.innerHTML = createMedalBadgeSvg(finish.medal);
   hud.finishMedalLabelEl.textContent = formatMedalLabel(finish.medal);
   hud.finishTimeEl.textContent = formatRaceTime(finish.time);
@@ -1624,6 +1738,9 @@ export function showFinishScreen(hud: HudHandle, data: FinishScreenData): void {
   // Stats grid
   const stats = finish.stats;
   const statItems: Array<{ label: string; value: string }> = [
+    ...(isMultiRacer
+      ? [{ label: 'Posisi Akhir', value: `P${finish.playerPosition} / ${finish.totalRacers}` }]
+      : []),
     { label: 'Top Speed', value: `${Math.round(stats.topSpeedKmh)} km/h` },
     { label: 'Total Udara', value: `${stats.totalAirtime.toFixed(2)} s` },
     { label: 'Lompatan Terlama', value: `${stats.longestAirtime.toFixed(2)} s` },
@@ -1645,6 +1762,54 @@ export function showFinishScreen(hud: HudHandle, data: FinishScreenData): void {
     tile.appendChild(labelEl);
     tile.appendChild(valEl);
     hud.finishStatsGridEl.appendChild(tile);
+  }
+
+  // Classification table for multi-racer courses
+  const classification = finish.classification ?? [];
+  const showStandingsBox = isMultiRacer && classification.length > 1;
+  hud.finishStandingsBoxEl.classList.toggle('sr-hud-hidden', !showStandingsBox);
+  hud.finishStandingsEl.textContent = '';
+  if (showStandingsBox) {
+    for (const rowItem of classification) {
+      const row = document.createElement('div');
+      row.className = rowItem.isPlayer
+        ? 'sr-finish-standing-row sr-finish-standing-row--player'
+        : 'sr-finish-standing-row';
+
+      const rankEl = document.createElement('span');
+      rankEl.className = 'sr-finish-standing-rank';
+      rankEl.textContent = `P${rowItem.rank}`;
+      row.appendChild(rankEl);
+
+      const nameWrap = document.createElement('span');
+      nameWrap.className = 'sr-finish-standing-name';
+      const dot = document.createElement('span');
+      dot.className = 'sr-racer-dot';
+      dot.style.backgroundColor = rowItem.color;
+      nameWrap.appendChild(dot);
+      const nameText = document.createElement('span');
+      nameText.textContent = rowItem.name;
+      nameWrap.appendChild(nameText);
+      row.appendChild(nameWrap);
+
+      const totalEl = document.createElement('span');
+      totalEl.className = 'sr-finish-standing-time';
+      totalEl.textContent =
+        rowItem.dnf || rowItem.totalTime === null
+          ? 'DNF'
+          : formatRaceTime(rowItem.totalTime);
+      row.appendChild(totalEl);
+
+      const bestLapEl = document.createElement('span');
+      bestLapEl.className = 'sr-finish-standing-bl';
+      bestLapEl.textContent =
+        rowItem.bestLap !== null && Number.isFinite(rowItem.bestLap)
+          ? `BL ${formatRaceTime(rowItem.bestLap)}`
+          : '--';
+      row.appendChild(bestLapEl);
+
+      hud.finishStandingsEl.appendChild(row);
+    }
   }
 
   // Per-lap breakdown (shown for multi-lap courses)
@@ -1930,6 +2095,9 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     hud.topBarEl.classList.toggle('sr-hud-hidden', isTitle || showResults);
     hud.progressWrapEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
     hud.bottomRightEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
+    if (isTitle || isFinish) {
+      hud.standingsPanelEl.classList.add('sr-hud-hidden');
+    }
 
     const isDriving = viewModel.phase === 'COUNTDOWN' || viewModel.phase === 'RACING';
     hud.gearWrapEl.classList.toggle('sr-hud-hidden', showResults);
@@ -2024,6 +2192,76 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     hud.lastBoostActive = boostActive;
     hud.boostWrapEl.classList.toggle('sr-boost-active', boostActive);
     hud.boostStateEl.textContent = boostActive ? 'BOOST!' : 'Siap';
+  }
+
+  const totalRacers = viewModel.totalRacers ?? 1;
+  const showPos = totalRacers > 1;
+  if (showPos !== hud.lastShowPos) {
+    hud.lastShowPos = showPos;
+    hud.posSlotEl.classList.toggle('sr-hud-hidden', !showPos);
+  }
+  if (showPos) {
+    const posNum = Math.max(1, Math.min(totalRacers, viewModel.position ?? 1));
+    const posText = `P${posNum} / ${totalRacers}`;
+    if (posText !== hud.lastPosText) {
+      hud.lastPosText = posText;
+      hud.posSlotEl.textContent = posText;
+    }
+  }
+
+  const standings = viewModel.standings;
+  const showMiniBoard =
+    showPos &&
+    !isCompact &&
+    !viewModel.touchActive &&
+    (viewModel.phase === 'COUNTDOWN' || viewModel.phase === 'RACING') &&
+    Boolean(standings && standings.length > 1);
+  hud.standingsPanelEl.classList.toggle('sr-hud-hidden', !showMiniBoard);
+  if (showMiniBoard && standings) {
+    let key = '';
+    for (let i = 0; i < standings.length; i++) {
+      const sEntry = standings[i];
+      const gapRounded = sEntry.rank === 1 ? '0' : sEntry.gapSeconds.toFixed(1);
+      key += `${sEntry.carIndex}:${gapRounded}|`;
+    }
+    if (key !== hud.lastStandingsKey) {
+      hud.lastStandingsKey = key;
+      hud.standingsPanelEl.textContent = '';
+      for (let i = 0; i < standings.length; i++) {
+        const sEntry = standings[i];
+        const row = document.createElement('div');
+        row.className = sEntry.isPlayer
+          ? 'sr-standings-row sr-standings-row--player'
+          : 'sr-standings-row';
+
+        const rEl = document.createElement('span');
+        rEl.className = 'sr-standings-rank';
+        rEl.textContent = `${sEntry.rank}.`;
+        row.appendChild(rEl);
+
+        const dot = document.createElement('span');
+        dot.className = 'sr-racer-dot';
+        dot.style.backgroundColor = sEntry.color;
+        row.appendChild(dot);
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'sr-standings-name';
+        nameEl.textContent = sEntry.name;
+        row.appendChild(nameEl);
+
+        const gapEl = document.createElement('span');
+        gapEl.className = 'sr-standings-gap';
+        gapEl.textContent =
+          sEntry.rank === 1
+            ? '--'
+            : sEntry.dnf
+              ? 'DNF'
+              : `+${sEntry.gapSeconds.toFixed(1)}s`;
+        row.appendChild(gapEl);
+
+        hud.standingsPanelEl.appendChild(row);
+      }
+    }
   }
 
   const showLap = viewModel.totalLaps > 1;

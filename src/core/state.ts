@@ -23,6 +23,29 @@ export interface CarRaceSnapshot {
   speedKmh?: number;
 }
 
+export interface RacerProgress {
+  carIndex: number;
+  currentLap: number;
+  lapStartTime: number;
+  lapTimes: number[];
+  bestLap: number | null;
+  nextCheckpointIndex: number;
+  finished: boolean;
+  dnf: boolean;
+  finishTime: number | null;
+}
+
+export interface FinishClassificationEntry {
+  carIndex: number;
+  rank: number;
+  name: string;
+  color: string;
+  isPlayer: boolean;
+  totalTime: number | null;
+  bestLap: number | null;
+  dnf: boolean;
+}
+
 export interface FinishResultData {
   time: number;
   medal: MedalType;
@@ -35,6 +58,9 @@ export interface FinishResultData {
   lapTimes: number[];
   bestLap: number | null;
   stats: RaceStats;
+  playerPosition?: number;
+  totalRacers?: number;
+  classification?: FinishClassificationEntry[];
 }
 
 export interface RaceState {
@@ -68,6 +94,7 @@ export interface RaceState {
   lastFinish: FinishResultData | null;
   persistRecords: boolean;
   cars: CarState[];
+  racerProgress: RacerProgress[];
 }
 
 export type RaceEvent =
@@ -112,6 +139,24 @@ function createEmptyStats(): RaceStats {
   };
 }
 
+function createRacerProgressList(count: number): RacerProgress[] {
+  const list: RacerProgress[] = [];
+  for (let i = 0; i < count; i++) {
+    list.push({
+      carIndex: i,
+      currentLap: 1,
+      lapStartTime: 0,
+      lapTimes: [],
+      bestLap: null,
+      nextCheckpointIndex: 0,
+      finished: false,
+      dnf: false,
+      finishTime: null,
+    });
+  }
+  return list;
+}
+
 function resetProgressFields(state: RaceState): void {
   state.resultReady = false;
   state.finishDelayTimer = 0;
@@ -135,6 +180,7 @@ function resetProgressFields(state: RaceState): void {
   state.countdownElapsedMs = 0;
   state.countdownWatchdogTriggered = false;
   state.goHoldTimer = 0;
+  state.racerProgress = createRacerProgressList(state.cars.length);
 }
 
 export function createRaceState(course: Course, options?: CreateRaceStateOptions): RaceState {
@@ -146,6 +192,7 @@ export function createRaceState(course: Course, options?: CreateRaceStateOptions
   const bestSplits =
     records && records.bestSplits.length === totalSplitCount ? [...records.bestSplits] : null;
 
+  const cars = createGridCars(course);
   return {
     phase: 'TITLE',
     resultReady: false,
@@ -176,7 +223,8 @@ export function createRaceState(course: Course, options?: CreateRaceStateOptions
     stats: createEmptyStats(),
     lastFinish: null,
     persistRecords,
-    cars: createGridCars(course),
+    cars,
+    racerProgress: createRacerProgressList(cars.length),
   };
 }
 
@@ -527,6 +575,28 @@ export function updateRace(
       return prev === null || !Number.isFinite(prev) || val < prev;
     });
 
+    if (state.racerProgress[0]) {
+      const rp0 = state.racerProgress[0];
+      rp0.currentLap = state.currentLap;
+      rp0.lapStartTime = state.lapStartTime;
+      rp0.lapTimes = [...lapTimesSnapshot];
+      rp0.bestLap =
+        lapTimesSnapshot.length > 0 ? Math.min(...lapTimesSnapshot) : state.bestLap;
+      rp0.nextCheckpointIndex = state.nextCheckpointIndex;
+      rp0.finished = true;
+      rp0.dnf = false;
+      rp0.finishTime = finalTime;
+    }
+
+    let finishedAhead = 0;
+    for (let i = 1; i < state.racerProgress.length; i++) {
+      const rp = state.racerProgress[i];
+      if (rp && rp.finished && !rp.dnf && rp.finishTime !== null && rp.finishTime <= finalTime) {
+        finishedAhead++;
+      }
+    }
+    const playerPosition = state.cars.length > 1 ? finishedAhead + 1 : 1;
+
     if (state.persistRecords) {
       const submitted = submitRun(course.getId(), {
         time: finalTime,
@@ -535,6 +605,7 @@ export function updateRace(
         bestLap: state.bestLap,
         medal,
         stats: statsSnapshot,
+        position: state.cars.length > 1 ? playerPosition : undefined,
       });
       isNewBest = submitted.isNewBest;
       rank = submitted.rank;
@@ -550,6 +621,8 @@ export function updateRace(
 
     state.newBest = isNewBest;
 
+    const classification = buildClassification(state, course);
+
     const finishData: FinishResultData = {
       time: finalTime,
       medal,
@@ -562,6 +635,9 @@ export function updateRace(
       lapTimes: lapTimesSnapshot,
       bestLap: state.bestLap,
       stats: statsSnapshot,
+      playerPosition,
+      totalRacers: state.cars.length,
+      classification,
     };
     state.lastFinish = finishData;
 
@@ -572,7 +648,167 @@ export function updateRace(
     if (state.resultReady) {
       events.push({ type: 'resultReady' });
     }
+  } else if (state.racerProgress[0]) {
+    const rp0 = state.racerProgress[0];
+    rp0.currentLap = state.currentLap;
+    rp0.lapStartTime = state.lapStartTime;
+    rp0.lapTimes = [...state.lapTimes];
+    rp0.bestLap = state.lapTimes.length > 0 ? Math.min(...state.lapTimes) : null;
+    rp0.nextCheckpointIndex = state.nextCheckpointIndex;
   }
 
   return events;
+}
+
+export function updateOpponentProgress(
+  state: RaceState,
+  course: Course,
+  simTime: number,
+): void {
+  if (state.cars.length <= 1) {
+    return;
+  }
+  const checkpoints = course.getCheckpoints();
+  const lapLength = course.getLength();
+  const isClosed = course.isClosed();
+  const totalLaps = state.laps;
+  const finishS = course.getFinishS();
+
+  for (let i = 1; i < state.cars.length; i++) {
+    const car = state.cars[i];
+    const rp = state.racerProgress[i];
+    if (!car || !rp || rp.finished) {
+      continue;
+    }
+
+    const rawActiveS = car.mode === 'grounded' ? car.s : car.sApprox;
+    const activeS =
+      (car.routeId !== 'main' ? car.routeLapOffset : 0) +
+      course.getProgressS(car.routeId, rawActiveS);
+
+    const advanceCps = (): void => {
+      const lapOffset = isClosed ? (rp.currentLap - 1) * lapLength : 0;
+      while (rp.nextCheckpointIndex < checkpoints.length) {
+        const cp = checkpoints[rp.nextCheckpointIndex];
+        if (activeS >= lapOffset + cp.s) {
+          rp.nextCheckpointIndex++;
+        } else {
+          break;
+        }
+      }
+    };
+
+    advanceCps();
+
+    while (
+      isClosed &&
+      rp.currentLap < totalLaps &&
+      rp.nextCheckpointIndex >= checkpoints.length &&
+      activeS >= rp.currentLap * lapLength
+    ) {
+      const lapTime = Math.max(0, simTime - rp.lapStartTime);
+      rp.lapTimes.push(lapTime);
+      if (rp.bestLap === null || lapTime < rp.bestLap) {
+        rp.bestLap = lapTime;
+      }
+      rp.lapStartTime = simTime;
+      rp.currentLap++;
+      rp.nextCheckpointIndex = 0;
+      advanceCps();
+    }
+
+    const done = isClosed
+      ? rp.currentLap >= totalLaps &&
+        rp.nextCheckpointIndex >= checkpoints.length &&
+        activeS >= finishS
+      : activeS >= finishS;
+
+    if (done) {
+      if (isClosed && totalLaps > 1) {
+        const finalLap = Math.max(0, simTime - rp.lapStartTime);
+        rp.lapTimes.push(finalLap);
+        if (rp.bestLap === null || finalLap < rp.bestLap) {
+          rp.bestLap = finalLap;
+        }
+      }
+      rp.finished = true;
+      rp.dnf = false;
+      rp.finishTime = simTime;
+    }
+  }
+}
+
+export function buildClassification(
+  state: RaceState,
+  course: Course,
+): FinishClassificationEntry[] {
+  const playerColor = CONFIG.car.visual.multiplayerPalettes[0]?.body ?? '#FF2D3D';
+
+  const rows = state.cars.map((car, i) => {
+    const rp = state.racerProgress[i];
+    const isPlayer = i === 0;
+    const rival = isPlayer ? null : CONFIG.ai.rivals[(i - 1) % CONFIG.ai.rivals.length];
+    const rawS = car.mode === 'grounded' ? car.s : car.sApprox;
+    const prog = (car.routeId !== 'main' ? car.routeLapOffset : 0) + course.getProgressS(car.routeId, rawS);
+    const finished = rp ? rp.finished : false;
+    const dnf = rp ? rp.dnf : false;
+    const totalTime = rp ? rp.finishTime : null;
+    const bestLap = rp
+      ? rp.bestLap
+      : isPlayer && state.lapTimes.length > 0
+        ? Math.min(...state.lapTimes)
+        : null;
+    return {
+      carIndex: i,
+      name: isPlayer ? 'Kamu' : rival?.name ?? `Lawan ${i}`,
+      color: isPlayer ? playerColor : rival?.color ?? '#0A5CFF',
+      isPlayer,
+      finished,
+      dnf,
+      totalTime,
+      bestLap,
+      progress: prog,
+    };
+  });
+
+  rows.sort((a, b) => {
+    const aOk = a.finished && !a.dnf && a.totalTime !== null;
+    const bOk = b.finished && !b.dnf && b.totalTime !== null;
+    if (aOk && bOk) return (a.totalTime as number) - (b.totalTime as number);
+    if (aOk) return -1;
+    if (bOk) return 1;
+    if (a.dnf !== b.dnf) return a.dnf ? 1 : -1;
+    return b.progress - a.progress;
+  });
+
+  return rows.map((r, idx) => ({
+    carIndex: r.carIndex,
+    rank: idx + 1,
+    name: r.name,
+    color: r.color,
+    isPlayer: r.isPlayer,
+    totalTime: r.totalTime,
+    bestLap: r.bestLap,
+    dnf: r.dnf,
+  }));
+}
+
+export function markUnfinishedAsDnfAndFinalize(state: RaceState, course: Course): void {
+  for (let i = 1; i < state.racerProgress.length; i++) {
+    const rp = state.racerProgress[i];
+    if (rp && !rp.finished) {
+      rp.dnf = true;
+      rp.finished = true;
+      rp.finishTime = null;
+    }
+  }
+  if (state.lastFinish) {
+    const classification = buildClassification(state, course);
+    state.lastFinish.classification = classification;
+    const playerEntry = classification.find((e) => e.isPlayer);
+    if (playerEntry) {
+      state.lastFinish.playerPosition = playerEntry.rank;
+    }
+    state.lastFinish.totalRacers = state.cars.length;
+  }
 }

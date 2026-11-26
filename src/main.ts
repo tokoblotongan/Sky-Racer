@@ -3,7 +3,12 @@
 import * as THREE from 'three';
 import { setAudioPaused } from './audio/audioManager';
 import { createSound, type SoundSnapshot } from './audio/sound';
-import { CONFIG, type GraphicsPreset, type VisualPresetName } from './config';
+import {
+  CONFIG,
+  type AiDifficulty,
+  type GraphicsPreset,
+  type VisualPresetName,
+} from './config';
 import { buildCourseConfigFromDefinition, Course, type TrackFrame } from './core/course';
 import { createWrongWayDetector } from './core/wrongWay';
 import { getCourse, getLastCourseId, listCourses, setLastCourseId } from './courses';
@@ -20,17 +25,21 @@ import {
 import { resolveCarCollisions } from './core/collisions';
 import { applyGridStart, ensureCarsForCourse } from './core/gridStart';
 import { updateRouteTransitions } from './core/routeTransitions';
-import { createTestDrivers } from './core/testDrivers';
+import { createAiDrivers } from './core/ai';
+import { createStandingsTracker, type RacerStandingEntry } from './core/standings';
 import {
   applyManualResetPenalty,
+  buildClassification,
   createRaceState,
   getRespawnTarget,
+  markUnfinishedAsDnfAndFinalize,
   pauseRaceClock,
   refreshRaceRecords,
   restartRace,
   resumeRaceClock,
   returnToTitle,
   startCountdown,
+  updateOpponentProgress,
   updateRace,
   type FinishResultData,
   type RaceEvent,
@@ -86,6 +95,7 @@ import {
   showFinishScreen,
   showLapPopup,
   showLoadingOverlay,
+  showOvertakeToast,
   showSafeModeNotice,
   showShortcutToast,
   showSplitPopup,
@@ -382,6 +392,13 @@ export async function bootstrap(): Promise<void> {
   const wrongWayDetector = createWrongWayDetector();
   let wrongWayActive = false;
 
+  const isValidDifficulty = (v: string | null): v is AiDifficulty =>
+    v === 'mudah' || v === 'sedang' || v === 'sulit';
+  const storedDiff = safeStorageGet(CONFIG.ai.difficultyStorageKey);
+  let aiDifficulty: AiDifficulty = isValidDifficulty(storedDiff)
+    ? storedDiff
+    : CONFIG.ai.defaultDifficulty;
+
   let lastFinishData: FinishResultData | null = null;
   let lastFinishRecords: CourseRecords | null = null;
 
@@ -389,6 +406,7 @@ export async function bootstrap(): Promise<void> {
   let onReturnToMenuFromUi: () => void = () => {};
   let onClearRecordsFromUi: () => void = () => {};
   let onSelectPresetFromUi: (preset: GraphicsPreset) => void = () => {};
+  let onSelectAiDifficultyFromUi: (diff: AiDifficulty) => void = () => {};
   let onChangeBrightnessFromUi: (value: number) => void = () => {};
   let onResetBrightnessFromUi: () => void = () => {};
   let onMeasureLumaFromUi: () => number | null = () => null;
@@ -414,11 +432,18 @@ export async function bootstrap(): Promise<void> {
       if (!lastFinishData) {
         return false;
       }
-      const summary = exportSummaryText(lastFinishData, {
-        id: course.getId(),
-        name: course.getName(),
-        medals: course.getMedals(),
-      });
+      const summary = exportSummaryText(
+        {
+          ...lastFinishData,
+          position:
+            (lastFinishData.totalRacers ?? 1) > 1 ? lastFinishData.playerPosition : undefined,
+        },
+        {
+          id: course.getId(),
+          name: course.getName(),
+          medals: course.getMedals(),
+        },
+      );
       return copyTextToClipboard(summary);
     },
     onClearRecords: () => {
@@ -426,6 +451,9 @@ export async function bootstrap(): Promise<void> {
     },
     onSelectGraphicsPreset: (preset) => {
       onSelectPresetFromUi(preset);
+    },
+    onSelectAiDifficulty: (diff) => {
+      onSelectAiDifficultyFromUi(diff);
     },
     onChangeBrightness: (value) => {
       onChangeBrightnessFromUi(value);
@@ -696,8 +724,22 @@ export async function bootstrap(): Promise<void> {
 
   const prevCars: CarState[] = [];
   const renderCars: CarState[] = [];
-  const testDrivers = createTestDrivers();
-  testDrivers.reset(course.getRacers());
+  let aiRaceSeed = 421701;
+  const aiController = createAiDrivers(course, aiDifficulty, aiRaceSeed);
+  const standingsTracker = createStandingsTracker(course.getRacers());
+  let latestStandings: readonly RacerStandingEntry[] = [];
+  let latestPlayerRank = 1;
+  let fastForwardSettled = true;
+  let fastForwardSimElapsed = 0;
+
+  onSelectAiDifficultyFromUi = (diff): void => {
+    aiDifficulty = diff;
+    safeStorageSet(CONFIG.ai.difficultyStorageKey, diff);
+    aiController.setDifficulty(diff);
+    sound.unlock();
+    sound.handleEvents([{ type: 'uiMove' }]);
+    syncTitleUi();
+  };
 
   function syncCarStateArrays(): void {
     ensureCarsForCourse(prevCars, course);
@@ -753,6 +795,9 @@ export async function bootstrap(): Promise<void> {
     wrongWay: false,
     muted: sound.getMuted(),
     touchActive: touchControls.isEnabled(),
+    position: 1,
+    totalRacers: course.getRacers(),
+    standings: [],
   };
 
   const soundSnapshot: SoundSnapshot = {
@@ -921,6 +966,7 @@ export async function bootstrap(): Promise<void> {
         crashed: car.crashed,
       };
     });
+    const aiMetrics = aiController.getMetrics();
     updateDebugMetricsOverlay(
       hud,
       {
@@ -937,6 +983,7 @@ export async function bootstrap(): Promise<void> {
         routeId: playerCar ? playerCar.routeId : 'main',
         quality: qualityManager.getLevel(),
         carCount: raceState.cars.length,
+        aiStepMs: aiMetrics.lastStepMs,
         cars: carsStatus,
       },
       nowMs,
@@ -949,6 +996,8 @@ export async function bootstrap(): Promise<void> {
       courseName: previewDef.displayName,
       medals: previewDef.medals,
       records: getRecords(previewDef.id, previewDef.medals),
+      racers: previewDef.racers,
+      aiDifficulty,
     });
     courseSelect?.setSelected(previewDef.id);
     courseSelect?.refreshRecords();
@@ -1088,7 +1137,13 @@ export async function bootstrap(): Promise<void> {
     }
     course = new Course(buildCourseConfigFromDefinition(targetDef));
     raceState = createRaceState(course);
-    testDrivers.reset(course.getRacers());
+    aiRaceSeed = (aiRaceSeed + 1013) >>> 0;
+    aiController.reset(course, aiDifficulty, aiRaceSeed);
+    standingsTracker.reset();
+    latestStandings = [];
+    latestPlayerRank = 1;
+    fastForwardSettled = true;
+    fastForwardSimElapsed = 0;
     zoneStarts = course.getZoneStarts();
     resetZoneTracking();
     wrongWayDetector.reset();
@@ -1200,6 +1255,9 @@ export async function bootstrap(): Promise<void> {
     hudViewModel.bestTime = raceState.bestTime;
     hudViewModel.bestLapSeconds = raceState.bestLap;
     hudViewModel.wrongWay = false;
+    hudViewModel.position = 1;
+    hudViewModel.totalRacers = course.getRacers();
+    hudViewModel.standings = latestStandings;
 
     touchControls.setPhase(raceState.phase);
     sound.setPhase(raceState.phase);
@@ -1791,6 +1849,75 @@ export async function bootstrap(): Promise<void> {
   document.addEventListener('visibilitychange', syncPauseState);
   syncPauseState();
 
+  function hasUnfinishedAi(): boolean {
+    if (raceState.cars.length <= 1) {
+      return false;
+    }
+    for (let i = 1; i < raceState.racerProgress.length; i++) {
+      const rp = raceState.racerProgress[i];
+      if (rp && !rp.finished) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function stepFastForwardBatch(step: number): void {
+    if (fastForwardSettled || !hasUnfinishedAi()) {
+      if (!fastForwardSettled) {
+        fastForwardSettled = true;
+        if (lastFinishData) {
+          lastFinishData.classification = buildClassification(raceState, course);
+        }
+        hideLoadingOverlay(hud);
+      }
+      return;
+    }
+
+    const batchSteps = Math.max(4, CONFIG.ai.finish.fastForwardStepMultiplier * 6);
+    const maxSimSec = CONFIG.ai.finish.fastForwardTimeoutSeconds;
+    const mainRoute = course.getRoute('main');
+
+    for (let sIdx = 0; sIdx < batchSteps; sIdx++) {
+      if (!hasUnfinishedAi() || fastForwardSimElapsed >= maxSimSec) {
+        break;
+      }
+      aiController.stepPrePhysics(raceState.cars, course, 'RACING', step);
+      for (let i = 1; i < raceState.cars.length; i++) {
+        const rp = raceState.racerProgress[i];
+        const car = raceState.cars[i];
+        if (!car || (rp && rp.finished)) continue;
+        const aiIn = aiController.sampleInput(i, raceState.cars, course, 'RACING', step);
+        const carRoute = course.getRoute(car.routeId);
+        stepCar(car, aiIn, carRoute, step, {
+          phase: 'RACING',
+          respawnTarget: { s: car.lastSafeS, lateral: 0 },
+          respawnRoute: mainRoute,
+        });
+        updateRouteTransitions(car, course);
+      }
+      resolveCarCollisions(raceState.cars, course, step, 'RACING');
+      fastForwardSimElapsed += step;
+      updateOpponentProgress(raceState, course, raceState.timer + fastForwardSimElapsed);
+    }
+
+    if (!hasUnfinishedAi() || fastForwardSimElapsed >= maxSimSec) {
+      markUnfinishedAsDnfAndFinalize(raceState, course);
+      if (lastFinishData && raceState.lastFinish) {
+        lastFinishData = raceState.lastFinish;
+      }
+      fastForwardSettled = true;
+      hideLoadingOverlay(hud);
+      if (raceState.resultReady && lastFinishData) {
+        showFinishScreen(hud, {
+          courseName: course.getName(),
+          finish: lastFinishData,
+          records: lastFinishRecords ?? getRecords(course.getId(), course.getMedals()),
+        });
+      }
+    }
+  }
+
   function handleRaceEvents(events: readonly RaceEvent[]): void {
     touchControls.setPhase(raceState.phase);
     sound.setPhase(raceState.phase);
@@ -1817,10 +1944,14 @@ export async function bootstrap(): Promise<void> {
       } else if (ev.type === 'finish') {
         lastFinishData = ev;
         lastFinishRecords = getRecords(course.getId(), course.getMedals());
+        fastForwardSimElapsed = 0;
+        fastForwardSettled = !hasUnfinishedAi();
         hideZoneToast(hud);
         chaseCamera.setMode('finish');
       } else if (ev.type === 'resultReady') {
-        if (lastFinishData) {
+        if (!fastForwardSettled) {
+          showLoadingOverlay(hud, 'Menghitung hasil...');
+        } else if (lastFinishData) {
           showFinishScreen(hud, {
             courseName: course.getName(),
             finish: lastFinishData,
@@ -1856,11 +1987,14 @@ export async function bootstrap(): Promise<void> {
 
       lastConfirmAtMs = nowMs;
       hideModalScreens(hud);
+      hideLoadingOverlay(hud);
       touchControls.consumePresses();
       lastFinishData = null;
       lastFinishRecords = null;
       wrongWayDetector.reset();
       wrongWayActive = false;
+      fastForwardSettled = true;
+      fastForwardSimElapsed = 0;
 
       if (touchControls.isEnabled()) {
         requestLandscapeOrientation();
@@ -1872,9 +2006,14 @@ export async function bootstrap(): Promise<void> {
       postfx.setSpeedIntensity(0);
       applyGridStart(raceState.cars, course, prevCars);
       syncCarStateArrays();
-      testDrivers.reset(course.getRacers());
+      aiRaceSeed = (aiRaceSeed + 1013) >>> 0;
+      aiController.reset(course, aiDifficulty, aiRaceSeed);
+      standingsTracker.reset();
       carFleet.snapFromCars(raceState.cars, course, renderPose);
       const events = startCountdown(raceState, nowMs, course);
+      const stInit = standingsTracker.update(raceState.cars, course, raceState, 0);
+      latestStandings = stInit.entries;
+      latestPlayerRank = stInit.playerRank;
       chaseCamera.setMode('chase');
       handleRaceEvents(events);
       syncGraphicsUi();
@@ -1886,15 +2025,20 @@ export async function bootstrap(): Promise<void> {
 
     lastConfirmAtMs = nowMs;
     hideModalScreens(hud);
+    hideLoadingOverlay(hud);
     touchControls.consumePresses();
     lastFinishData = null;
     lastFinishRecords = null;
     wrongWayDetector.reset();
     wrongWayActive = false;
+    fastForwardSettled = true;
+    fastForwardSimElapsed = 0;
 
     applyGridStart(raceState.cars, course, prevCars);
     syncCarStateArrays();
-    testDrivers.reset(course.getRacers());
+    aiRaceSeed = (aiRaceSeed + 1013) >>> 0;
+    aiController.reset(course, aiDifficulty, aiRaceSeed);
+    standingsTracker.reset();
     gates.reset();
     particles.reset();
     postfx.setSpeedIntensity(0);
@@ -1906,6 +2050,9 @@ export async function bootstrap(): Promise<void> {
     sound.reset();
     const events = restartRace(raceState, nowMs, course);
     resetZoneTracking();
+    const stRestart = standingsTracker.update(raceState.cars, course, raceState, 0);
+    latestStandings = stRestart.entries;
+    latestPlayerRank = stRestart.playerRank;
     chaseCamera.setMode('chase');
     carFleet.snapFromCars(raceState.cars, course, renderPose);
 
@@ -1930,10 +2077,16 @@ export async function bootstrap(): Promise<void> {
     lastThrottle = 0;
     wrongWayDetector.reset();
     wrongWayActive = false;
+    fastForwardSettled = true;
+    fastForwardSimElapsed = 0;
+    hideLoadingOverlay(hud);
 
     applyGridStart(raceState.cars, course, prevCars);
     syncCarStateArrays();
-    testDrivers.reset(course.getRacers());
+    aiController.reset(course, aiDifficulty, aiRaceSeed);
+    standingsTracker.reset();
+    latestStandings = [];
+    latestPlayerRank = 1;
     gates.reset();
     particles.reset();
     postfx.setSpeedIntensity(0);
@@ -2043,12 +2196,14 @@ export async function bootstrap(): Promise<void> {
     const mainRoute = course.getRoute('main');
     let playerPhysicsEvents: PhysicsEvent[] = [];
 
+    aiController.stepPrePhysics(raceState.cars, course, raceState.phase, step);
+
     for (let i = 0; i < raceState.cars.length; i++) {
       const car = raceState.cars[i];
       copyCarState(car, prevCars[i]);
 
       const carInput: CarInput =
-        i === 0 ? input : testDrivers.sampleInput(i, raceState.cars, course, raceState.phase);
+        i === 0 ? input : aiController.sampleInput(i, raceState.cars, course, raceState.phase, step);
       const carRoute = course.getRoute(car.routeId);
       const carRespawnTarget =
         i === 0
@@ -2131,6 +2286,10 @@ export async function bootstrap(): Promise<void> {
         ? Math.abs(currPlayer.vForward)
         : currPlayer.worldVel.length()) * CONFIG.hud.speedScale;
 
+    if (raceState.phase === 'RACING') {
+      updateOpponentProgress(raceState, course, raceState.timer + step);
+    }
+
     const raceEvents = updateRace(
       raceState,
       {
@@ -2147,6 +2306,28 @@ export async function bootstrap(): Promise<void> {
       nowMs,
     );
     handleRaceEvents(raceEvents);
+
+    if (raceState.phase === 'FINISH' && !fastForwardSettled) {
+      stepFastForwardBatch(step);
+    }
+
+    if (course.getRacers() > 1) {
+      const standingsRes = standingsTracker.update(raceState.cars, course, raceState, step);
+      latestStandings = standingsRes.entries;
+      latestPlayerRank = standingsRes.playerRank;
+      if (standingsRes.overtakeEvent && raceState.phase === 'RACING') {
+        showOvertakeToast(
+          hud,
+          standingsRes.overtakeEvent.type,
+          standingsRes.overtakeEvent.newRank,
+          standingsRes.overtakeEvent.rivalName,
+        );
+        sound.handleEvents([{ type: standingsRes.overtakeEvent.type }]);
+      }
+    } else {
+      latestStandings = [];
+      latestPlayerRank = 1;
+    }
 
     const activeWrongWayS = currPlayer.mode === 'grounded' ? currPlayer.s : currPlayer.sApprox;
     activePlayerRoute.getFrameAt(activeWrongWayS, wrongWayFrame);
@@ -2209,7 +2390,16 @@ export async function bootstrap(): Promise<void> {
     for (let i = 0; i < raceState.cars.length; i++) {
       interpolateCarState(prevCars[i], raceState.cars[i], alpha, renderCars[i]);
     }
-    carFleet.updateFromCars(renderCars, course, realDt, renderPose);
+    const showNametags =
+      raceState.phase === 'COUNTDOWN' || raceState.phase === 'RACING';
+    carFleet.updateFromCars(
+      renderCars,
+      course,
+      realDt,
+      renderPose,
+      sceneCtx.camera.position,
+      showNametags,
+    );
 
     const renderPlayer = renderCars[0];
     const renderRoute = course.getRoute(renderPlayer.routeId);
@@ -2273,7 +2463,7 @@ export async function bootstrap(): Promise<void> {
       : THREE.MathUtils.clamp((activeProgressS - startGridSlot.s) / progressSpanS, 0, 1);
 
     hudViewModel.phase = raceState.phase;
-    hudViewModel.resultReady = raceState.resultReady;
+    hudViewModel.resultReady = raceState.resultReady && fastForwardSettled;
     hudViewModel.speedKmh = speedMs * CONFIG.hud.speedScale;
     hudViewModel.boost01 =
       CONFIG.boost.duration > 1e-4
@@ -2294,6 +2484,9 @@ export async function bootstrap(): Promise<void> {
     hudViewModel.wrongWay = wrongWayActive;
     hudViewModel.muted = sound.getMuted();
     hudViewModel.touchActive = touchControls.isEnabled();
+    hudViewModel.position = latestPlayerRank;
+    hudViewModel.totalRacers = course.getRacers();
+    hudViewModel.standings = latestStandings;
     updateHud(hud, hudViewModel);
 
     postfx.render(realDt);
