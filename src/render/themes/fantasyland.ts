@@ -242,6 +242,7 @@ export const fantasyLandTheme: WorldTheme = {
     const geometries: THREE.BufferGeometry[] = [];
     const materials: THREE.Material[] = [];
     const textures: THREE.Texture[] = [];
+    const instancedMeshes: THREE.InstancedMesh[] = [];
 
     const trackGeom = <T extends THREE.BufferGeometry>(g: T): T => {
       geometries.push(g);
@@ -254,6 +255,10 @@ export const fantasyLandTheme: WorldTheme = {
     const trackTex = <T extends THREE.Texture>(t: T): T => {
       textures.push(t);
       return t;
+    };
+    const trackInst = (m: THREE.InstancedMesh): THREE.InstancedMesh => {
+      instancedMeshes.push(m);
+      return m;
     };
 
     const bounds = course.getBounds();
@@ -464,8 +469,8 @@ export const fantasyLandTheme: WorldTheme = {
         }),
       );
 
-      const colInst = new THREE.InstancedMesh(colGeom, colMat, supportSpots.length);
-      const plinthInst = new THREE.InstancedMesh(plinthGeom, plinthMat, supportSpots.length);
+      const colInst = trackInst(new THREE.InstancedMesh(colGeom, colMat, supportSpots.length));
+      const plinthInst = trackInst(new THREE.InstancedMesh(plinthGeom, plinthMat, supportSpots.length));
       colInst.castShadow = shadowsEnabled;
       colInst.receiveShadow = shadowsEnabled;
       plinthInst.castShadow = shadowsEnabled;
@@ -540,7 +545,7 @@ export const fantasyLandTheme: WorldTheme = {
           metalness: 0.0,
         }),
       );
-      const hillInst = new THREE.InstancedMesh(hillGeom, hillMat, hillPlacements.length);
+      const hillInst = trackInst(new THREE.InstancedMesh(hillGeom, hillMat, hillPlacements.length));
       hillInst.castShadow = false;
       hillInst.receiveShadow = true;
 
@@ -619,8 +624,8 @@ export const fantasyLandTheme: WorldTheme = {
         }),
       );
 
-      const trunkInst = new THREE.InstancedMesh(trunkGeom, trunkMat, treeSpots.length);
-      const canopyInst = new THREE.InstancedMesh(canopyGeom, canopyMat, treeSpots.length);
+      const trunkInst = trackInst(new THREE.InstancedMesh(trunkGeom, trunkMat, treeSpots.length));
+      const canopyInst = trackInst(new THREE.InstancedMesh(canopyGeom, canopyMat, treeSpots.length));
       trunkInst.castShadow = shadowsEnabled;
       trunkInst.receiveShadow = shadowsEnabled;
       canopyInst.castShadow = shadowsEnabled;
@@ -667,7 +672,7 @@ export const fantasyLandTheme: WorldTheme = {
         metalness: 0.0,
       }),
     );
-    const mountainInst = new THREE.InstancedMesh(mountainGeom, mountainMat, mountainCount);
+    const mountainInst = trackInst(new THREE.InstancedMesh(mountainGeom, mountainMat, mountainCount));
     mountainInst.castShadow = false;
     mountainInst.receiveShadow = false;
     {
@@ -813,6 +818,7 @@ export const fantasyLandTheme: WorldTheme = {
 
     function dispose(): void {
       decorManager.dispose();
+      for (const im of instancedMeshes) im.dispose();
       for (const g of geometries) g.dispose();
       for (const t of textures) t.dispose();
       for (const m of materials) m.dispose();

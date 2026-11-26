@@ -336,14 +336,14 @@ export function buildFantasyLandDecorPlan(
   // 1. KASTIL (inside circuit, visible from start straight & grid)
   // -------------------------------------------------------------------------
   {
-    const anchorS = 88;
+    const anchorS = 175;
     const f = course.getFrameAt(anchorS);
     const side: 'left' | 'right' = 'right';
     const footprint = tier === 'mobile' ? 25 : 29;
     const castleHalfH = 34;
     const safeDist =
-      findSafeDistance(f, side, 108, castleHalfH, footprint, castleHalfH, samples, minClear, overClear, 20, 4) ??
-      112;
+      findSafeDistance(f, side, 94, castleHalfH, footprint, castleHalfH, samples, minClear, overClear, 20, 4) ??
+      94;
     const pos = resolveCandidatePosition(f, side, safeDist, 0);
     const startFrame = course.getFrameAt(CONFIG.car.startS);
     const faceYaw = Math.atan2(startFrame.position.x - pos.x, startFrame.position.z - pos.z);
@@ -583,8 +583,8 @@ export function buildFantasyLandDecorPlan(
     };
 
     // Expand halfSpan symmetrically so BOTH legs & entire arch curve clear main track + shortcut branch
-    let halfSpan = 88;
-    for (let trySpan = 58; trySpan <= 136; trySpan += 3) {
+    let halfSpan = 148;
+    for (let trySpan = 58; trySpan <= 180; trySpan += 3) {
       const leftPos = resolveCandidatePosition(f, 'left', trySpan, 0);
       const rightPos = resolveCandidatePosition(f, 'right', trySpan, 0);
       const leftOk = isCircleClearOfRoutes(
@@ -879,40 +879,40 @@ export function estimateFantasyDecorBudgets(course: Course): DecorTierEstimate[]
     let triangles = 0;
 
     if (counts.castle > 0) {
-      drawCalls += tier === 'mobile' ? 2 : 3;
-      triangles += tier === 'mobile' ? 1850 : 4600;
+      drawCalls += 2;
+      triangles += tier === 'mobile' ? 1116 : 1988;
     }
     if (counts.crystals > 0) {
-      drawCalls += 4; // 3 emissive colors + 1 ground plinth instanced mesh
-      triangles += counts.crystals * (tier === 'mobile' ? 88 : 132);
+      drawCalls += 4; // up to 3 emissive colors + 1 ground plinth instanced mesh
+      triangles += counts.crystals * 176;
     }
     if (counts.floatingIslands > 0) {
       drawCalls += tier === 'mobile' ? counts.floatingIslands : counts.floatingIslands * 2;
-      triangles += counts.floatingIslands * (tier === 'mobile' ? 320 : 620);
+      triangles += counts.floatingIslands * (tier === 'mobile' ? 96 : 212);
     }
     if (counts.rainbow > 0) {
       drawCalls += 1;
-      triangles += tier === 'mobile' ? 480 : 960;
+      triangles += tier === 'mobile' ? 224 : 384;
     }
     if (counts.ferrisWheel > 0) {
-      drawCalls += tier === 'mobile' ? 2 : 4;
-      triangles += tier === 'mobile' ? 2600 : 5200;
+      drawCalls += tier === 'mobile' ? 3 : 4;
+      triangles += tier === 'mobile' ? 3124 : 4676;
     }
     if (counts.balloons > 0) {
       drawCalls += 2;
-      triangles += counts.balloons * (tier === 'mobile' ? 240 : 420);
+      triangles += counts.balloons * (tier === 'mobile' ? 132 : 204);
     }
     if (counts.lamps > 0) {
-      drawCalls += 2;
-      triangles += counts.lamps * 120;
+      drawCalls += 3;
+      triangles += counts.lamps * 124;
     }
     if (counts.flags > 0) {
       drawCalls += 2;
       triangles += counts.flags * 76;
     }
     if (counts.flowers > 0) {
-      drawCalls += 1;
-      triangles += counts.flowers * 64;
+      drawCalls += 2;
+      triangles += counts.flowers * 230;
     }
 
     const budget = CONFIG.fantasy.budgets[tier];

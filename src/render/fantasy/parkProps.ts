@@ -33,6 +33,7 @@ export function buildParkPropsLandmark(
   const flowers = placements.filter((p) => p.spec.variant === 'flowers');
 
   const ownedGeoms: THREE.BufferGeometry[] = [];
+  const ownedInsts: THREE.InstancedMesh[] = [];
   let drawCalls = 0;
   let totalTriangles = 0;
   const dummy = new THREE.Object3D();
@@ -68,8 +69,8 @@ export function buildParkPropsLandmark(
       dummy.updateMatrix();
       colInst.setMatrixAt(i, dummy.matrix);
 
-      // Turn lantern arm toward track center
-      const armYaw = l.spec.side === 'left' ? l.yaw - Math.PI / 2 : l.yaw + Math.PI / 2;
+      // Turn lantern arm inward toward track center (local +X points to -frame.right at yaw)
+      const armYaw = l.spec.side === 'left' ? l.yaw + Math.PI : l.yaw;
       dummy.position.set(l.position.x, topY, l.position.z);
       dummy.rotation.set(0, armYaw, 0);
       dummy.scale.set(1, 1, 1);
@@ -98,6 +99,7 @@ export function buildParkPropsLandmark(
     headInst.updateMatrix();
     bulbInst.updateMatrix();
 
+    ownedInsts.push(colInst, headInst, bulbInst);
     group.add(colInst, headInst, bulbInst);
     drawCalls += 3;
     totalTriangles +=
@@ -159,6 +161,7 @@ export function buildParkPropsLandmark(
     poleInst.computeBoundingSphere();
     poleInst.matrixAutoUpdate = false;
     poleInst.updateMatrix();
+    ownedInsts.push(poleInst, flagBannerInst);
     group.add(poleInst, flagBannerInst);
     drawCalls += 2;
     totalTriangles +=
@@ -186,9 +189,10 @@ export function buildParkPropsLandmark(
   flagBannerInst?.computeBoundingSphere();
 
   // -------------------------------------------------------------------------
-  // 3. Meadow Flower Patches (Instanced vibrant blooms, skipped on mobile/low)
+  // 3. Meadow Flower Patches (Instanced green stems + vibrant blooms, skipped on mobile/low)
   // -------------------------------------------------------------------------
   if (flowers.length > 0) {
+    const stems: THREE.BufferGeometry[] = [];
     const blossoms: THREE.BufferGeometry[] = [];
     const offsets = [
       { x: 0, z: 0, s: 1.0 },
@@ -200,14 +204,19 @@ export function buildParkPropsLandmark(
     for (const o of offsets) {
       const stem = new THREE.CylinderGeometry(0.08, 0.1, 0.7, 5);
       stem.translate(o.x, 0.35, o.z);
+      stems.push(setGeometrySwatch(stem, SWATCH.ISLAND_GRASS));
+
       const bloom = new THREE.CylinderGeometry(0.62 * o.s, 0.32 * o.s, 0.28, 6);
       bloom.translate(o.x, 0.72, o.z);
-      blossoms.push(setGeometrySwatch(stem, SWATCH.ISLAND_GRASS), bloom);
+      blossoms.push(bloom);
     }
-    const flowerGeom = mergeNormalizedGeometries(blossoms);
-    ownedGeoms.push(flowerGeom);
+    const stemGeom = mergeNormalizedGeometries(stems);
+    const bloomGeom = mergeNormalizedGeometries(blossoms);
+    ownedGeoms.push(stemGeom, bloomGeom);
 
-    const flowerInst = new THREE.InstancedMesh(flowerGeom, mats.instancedColorMat, flowers.length);
+    const stemInst = new THREE.InstancedMesh(stemGeom, mats.paletteMat, flowers.length);
+    const flowerInst = new THREE.InstancedMesh(bloomGeom, mats.instancedColorMat, flowers.length);
+    stemInst.receiveShadow = true;
     flowerInst.receiveShadow = true;
     const flowerColors = CONFIG.fantasy.palette.flowerColors;
     const tmpColor = new THREE.Color();
@@ -217,19 +226,26 @@ export function buildParkPropsLandmark(
       dummy.rotation.set(0, fp.yaw, 0);
       dummy.scale.setScalar(fp.spec.scale);
       dummy.updateMatrix();
+      stemInst.setMatrixAt(i, dummy.matrix);
       flowerInst.setMatrixAt(i, dummy.matrix);
       tmpColor.set(flowerColors[i % flowerColors.length]);
       flowerInst.setColorAt(i, tmpColor);
     });
 
+    stemInst.instanceMatrix.needsUpdate = true;
     flowerInst.instanceMatrix.needsUpdate = true;
     if (flowerInst.instanceColor) flowerInst.instanceColor.needsUpdate = true;
+    stemInst.computeBoundingSphere();
     flowerInst.computeBoundingSphere();
+    stemInst.matrixAutoUpdate = false;
     flowerInst.matrixAutoUpdate = false;
+    stemInst.updateMatrix();
     flowerInst.updateMatrix();
-    group.add(flowerInst);
-    drawCalls += 1;
-    totalTriangles += countGeometryTriangles(flowerGeom) * flowers.length;
+    ownedInsts.push(stemInst, flowerInst);
+    group.add(stemInst, flowerInst);
+    drawCalls += 2;
+    totalTriangles +=
+      (countGeometryTriangles(stemGeom) + countGeometryTriangles(bloomGeom)) * flowers.length;
   }
 
   return {
@@ -238,6 +254,7 @@ export function buildParkPropsLandmark(
       syncFlags(timeSec);
     },
     dispose(): void {
+      for (const inst of ownedInsts) inst.dispose();
       for (const g of ownedGeoms) g.dispose();
     },
     getTriangleCount(): number {

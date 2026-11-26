@@ -128,8 +128,9 @@ export function buildCrystalsLandmark(
   createBucket(magentaItems, mats.crystalMagentaMat, 'FantasyCrystalsMagenta');
   createBucket(yellowItems, mats.crystalYellowMat, 'FantasyCrystalsYellow');
 
+  let plinthInst: THREE.InstancedMesh | null = null;
   if (plinthItems.length > 0) {
-    const plinthInst = new THREE.InstancedMesh(plinthGeom, mats.paletteMat, plinthItems.length);
+    plinthInst = new THREE.InstancedMesh(plinthGeom, mats.paletteMat, plinthItems.length);
     plinthInst.name = 'FantasyCrystalPlinths';
     plinthInst.castShadow = shadowsEnabled;
     plinthInst.receiveShadow = shadowsEnabled;
@@ -138,7 +139,7 @@ export function buildCrystalsLandmark(
       dummy.rotation.set(0, i * 0.7, 0);
       dummy.scale.set(pl.radius, pl.height, pl.radius);
       dummy.updateMatrix();
-      plinthInst.setMatrixAt(i, dummy.matrix);
+      plinthInst!.setMatrixAt(i, dummy.matrix);
     });
     plinthInst.instanceMatrix.needsUpdate = true;
     plinthInst.computeBoundingSphere();
@@ -179,6 +180,10 @@ export function buildCrystalsLandmark(
       }
     },
     dispose(): void {
+      for (const bucket of animatedMeshes) {
+        bucket.inst.dispose();
+      }
+      plinthInst?.dispose();
       crystalGeom.dispose();
       plinthGeom.dispose();
     },

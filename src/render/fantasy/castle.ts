@@ -170,6 +170,7 @@ export function buildCastleLandmark(
       syncFlags(timeSec);
     },
     dispose(): void {
+      flagInst.dispose();
       castleGeom.dispose();
       flagGeom.dispose();
     },

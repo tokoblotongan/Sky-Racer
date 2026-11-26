@@ -208,6 +208,7 @@ export function buildFerrisWheelLandmark(
       }
     },
     dispose(): void {
+      gondolaInst?.dispose();
       supportGeom.dispose();
       wheelGeom.dispose();
       lightsGeom.dispose();

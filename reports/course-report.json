@@ -1,13 +1,13 @@
 {
   "courseId": "fantasy-land",
   "courseName": "FantasyLand",
-  "buildMs": 890.92,
+  "buildMs": 857.75,
   "recommendedMedals": {
     "gold": 214.7,
     "silver": 253.74,
     "bronze": 312.29
   },
-  "ok": false,
+  "ok": true,
   "closed": true,
   "laps": 3,
   "trackWidth": 16,
@@ -255,42 +255,40 @@
     "checked": true,
     "placementCount": 129,
     "minLateralClearanceM": 12.14,
-    "minOverTrackClearanceM": 34.6,
+    "minOverTrackClearanceM": 43.2,
     "rainbowApexAboveTrackM": 48,
-    "blockedJumpOrGateCount": 1,
+    "blockedJumpOrGateCount": 0,
     "budgets": [
       {
         "tier": "high",
-        "drawCalls": 29,
-        "triangles": 32048,
+        "drawCalls": 30,
+        "triangles": 27508,
         "budgetDrawCalls": 220,
         "budgetTriangles": 600000,
         "withinBudget": true
       },
       {
         "tier": "medium",
-        "drawCalls": 25,
-        "triangles": 24516,
+        "drawCalls": 26,
+        "triangles": 20268,
         "budgetDrawCalls": 160,
         "budgetTriangles": 350000,
         "withinBudget": true
       },
       {
         "tier": "mobile",
-        "drawCalls": 18,
-        "triangles": 11662,
+        "drawCalls": 20,
+        "triangles": 10436,
         "budgetDrawCalls": 90,
         "budgetTriangles": 160000,
         "withinBudget": true
       }
     ],
-    "ok": false
+    "ok": true
   },
   "railHits": 0,
   "stuckEvents": 0,
   "falls": 0,
   "warnings": [],
-  "errors": [
-    "Kaki pelangi 'rainbow_naga' mengganggu zona pendaratan lompatan atau gerbang pintas."
-  ]
+  "errors": []
 }

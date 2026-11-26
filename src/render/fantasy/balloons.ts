@@ -119,6 +119,8 @@ export function buildBalloonsLandmark(
       syncMatrices(timeSec);
     },
     dispose(): void {
+      envelopeInst.dispose();
+      basketInst.dispose();
       envelopeGeom.dispose();
       basketGeom.dispose();
     },
