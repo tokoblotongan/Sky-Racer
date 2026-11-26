@@ -1,8 +1,14 @@
 // src/render/track.ts
 
 import * as THREE from 'three';
-import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
+import { CONFIG, VISUAL_PRESETS, type GraphicsPreset, type VisualPreset, type VisualPresetName } from '../config';
 import type { Course, CourseChunkRange, Route, TrackFrame } from '../core/course';
+import {
+  createSurfaceMaterial,
+  injectDistantTrackLift,
+  updateSurfacePhysicalProps,
+  type SurfaceMaterial,
+} from './materialFactory';
 
 interface ProfilePoint {
   xNorm: number;
@@ -677,6 +683,7 @@ function createSurfaceRibbonMesh(
   flipV: boolean,
   material: THREE.Material,
   vTileMeters?: number,
+  receiveShadows = true,
 ): THREE.Mesh | null {
   const cfg = CONFIG.course;
   const totalLen = route.getLength();
@@ -750,7 +757,7 @@ function createSurfaceRibbonMesh(
   geometry.computeBoundingSphere();
 
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.receiveShadow = true;
+  mesh.receiveShadow = receiveShadows;
   mesh.frustumCulled = true;
   return mesh;
 }
@@ -769,6 +776,8 @@ function addChunkRailPosts(
   endDomeGeom: THREE.BufferGeometry,
   postEntries: readonly RailPostEntry[],
   endEntries: readonly RailPostEntry[],
+  castShadows: boolean,
+  receiveShadows: boolean,
 ): void {
   const cfg = CONFIG.course;
   const frame: TrackFrame = {
@@ -786,8 +795,8 @@ function addChunkRailPosts(
 
   if (postEntries.length > 0) {
     const instanced = new THREE.InstancedMesh(postGeometry, railMaterial, postEntries.length);
-    instanced.castShadow = true;
-    instanced.receiveShadow = true;
+    instanced.castShadow = castShadows;
+    instanced.receiveShadow = receiveShadows;
     instanced.frustumCulled = true;
 
     for (let idx = 0; idx < postEntries.length; idx++) {
@@ -815,11 +824,11 @@ function addChunkRailPosts(
     const totalEndPosts = endEntries.length;
     const endBodies = new THREE.InstancedMesh(endBodyGeom, railMaterial, totalEndPosts);
     const endDomes = new THREE.InstancedMesh(endDomeGeom, railMaterial, totalEndPosts);
-    endBodies.castShadow = true;
-    endBodies.receiveShadow = true;
+    endBodies.castShadow = castShadows;
+    endBodies.receiveShadow = receiveShadows;
     endBodies.frustumCulled = true;
-    endDomes.castShadow = true;
-    endDomes.receiveShadow = true;
+    endDomes.castShadow = castShadows;
+    endDomes.receiveShadow = receiveShadows;
     endDomes.frustumCulled = true;
 
     const postCenterHeight = cfg.railVerticalOffset * 0.5 + cfg.railEndPostHeight * 0.35;
@@ -919,7 +928,13 @@ export function buildTrackMesh(
   maxAnisotropy = 8,
   initialPreset: VisualPresetName = CONFIG.visual.activePreset,
   safeMode = false,
+  graphicsPreset?: GraphicsPreset,
 ): TrackVisual {
+  const effectivePreset: GraphicsPreset = safeMode ? 'hemat' : (graphicsPreset ?? 'penuh');
+  const isSimple = effectivePreset !== 'penuh';
+  const castShadows = effectivePreset === 'penuh';
+  const receiveShadows = effectivePreset !== 'hemat';
+
   const cfg = CONFIG.course;
   const activePreset = VISUAL_PRESETS[initialPreset];
   const mainIsWideTrack = course.getTrackWidth() >= 12;
@@ -928,8 +943,11 @@ export function buildTrackMesh(
 
   const trackProfile = buildTrackCrossSectionProfile();
   let mainTrackTexture = createTrackCanvasTexture(maxAnisotropy, activePreset, mainIsWideTrack);
-  const mainTrackMaterial = new THREE.MeshPhysicalMaterial({
+  const mainTrackMaterial = createSurfaceMaterial(effectivePreset, {
+    physical: true,
     map: mainTrackTexture,
+    emissive: isSimple ? activePreset.colors.track : 0x000000,
+    emissiveIntensity: isSimple ? CONFIG.safeMode.trackEmissive : 1.0,
     clearcoat: cfg.trackClearcoat,
     clearcoatRoughness: activePreset.trackClearcoatRoughness,
     envMapIntensity: activePreset.trackEnvIntensity,
@@ -937,16 +955,22 @@ export function buildTrackMesh(
     metalness: cfg.trackMetalness,
     ior: cfg.trackIor,
   });
+  if (isSimple) {
+    injectDistantTrackLift(mainTrackMaterial, effectivePreset);
+  }
 
   const branches = course.getBranchRoutes();
   const hasBranches = branches.length > 0;
   let branchTrackTexture: THREE.CanvasTexture | null = null;
-  let branchTrackMaterial: THREE.MeshPhysicalMaterial | null = null;
+  let branchTrackMaterial: SurfaceMaterial | null = null;
   if (hasBranches) {
     const branchIsWide = branches[0].getTrackWidth() >= 12;
     branchTrackTexture = createTrackCanvasTexture(maxAnisotropy, activePreset, branchIsWide);
-    branchTrackMaterial = new THREE.MeshPhysicalMaterial({
+    branchTrackMaterial = createSurfaceMaterial(effectivePreset, {
+      physical: true,
       map: branchTrackTexture,
+      emissive: isSimple ? activePreset.colors.track : 0x000000,
+      emissiveIntensity: isSimple ? CONFIG.safeMode.trackEmissive : 1.0,
       clearcoat: cfg.trackClearcoat,
       clearcoatRoughness: activePreset.trackClearcoatRoughness,
       envMapIntensity: activePreset.trackEnvIntensity,
@@ -957,6 +981,9 @@ export function buildTrackMesh(
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
     });
+    if (isSimple) {
+      injectDistantTrackLift(branchTrackMaterial, effectivePreset);
+    }
   }
 
   const railProfile = buildRoundedRailProfile(
@@ -965,7 +992,8 @@ export function buildTrackMesh(
     cfg.railArcSegments,
   );
   let railTexture = createRailCanvasTexture(maxAnisotropy, activePreset);
-  const railMaterial = new THREE.MeshPhysicalMaterial({
+  const railMaterial = createSurfaceMaterial(effectivePreset, {
+    physical: true,
     map: railTexture,
     clearcoat: cfg.railClearcoat,
     clearcoatRoughness: activePreset.trackClearcoatRoughness,
@@ -976,7 +1004,8 @@ export function buildTrackMesh(
   });
 
   let jumpStripTexture = createJumpStripCanvasTexture(maxAnisotropy, activePreset);
-  const jumpStripMaterial = new THREE.MeshPhysicalMaterial({
+  const jumpStripMaterial = createSurfaceMaterial(effectivePreset, {
+    physical: true,
     map: jumpStripTexture,
     clearcoat: cfg.trackClearcoat,
     clearcoatRoughness: activePreset.trackClearcoatRoughness,
@@ -990,7 +1019,8 @@ export function buildTrackMesh(
 
   let boostTexture = createBoostPadCanvasTexture(maxAnisotropy, activePreset);
   const boostColor = new THREE.Color(activePreset.colors.boost);
-  const boostMaterial = new THREE.MeshPhysicalMaterial({
+  const boostMaterial = createSurfaceMaterial(effectivePreset, {
+    physical: true,
     map: boostTexture,
     emissive: boostColor,
     emissiveMap: boostTexture,
@@ -1005,7 +1035,8 @@ export function buildTrackMesh(
   });
 
   const startGridTexture = createStartGridCanvasTexture(maxAnisotropy);
-  const startGridMaterial = new THREE.MeshPhysicalMaterial({
+  const startGridMaterial = createSurfaceMaterial(effectivePreset, {
+    physical: true,
     map: startGridTexture,
     clearcoat: 0.85,
     clearcoatRoughness: 0.12,
@@ -1017,17 +1048,17 @@ export function buildTrackMesh(
   });
 
   let edgeStripTexture: THREE.CanvasTexture | null = null;
-  let edgeStripMaterial: THREE.MeshStandardMaterial | null = null;
+  let edgeStripMaterial: SurfaceMaterial | null = null;
   if (hasBranches) {
     const stripCfg = CONFIG.shortcut.edgeStrip;
     edgeStripTexture = createShortcutEdgeStripTexture(maxAnisotropy);
-    edgeStripMaterial = new THREE.MeshStandardMaterial({
+    edgeStripMaterial = createSurfaceMaterial(effectivePreset, {
       map: edgeStripTexture,
       color: new THREE.Color(stripCfg.color),
       emissive: new THREE.Color(stripCfg.color),
       emissiveMap: edgeStripTexture,
       emissiveIntensity: stripCfg.emissiveIntensity,
-      transparent: !safeMode,
+      transparent: effectivePreset !== 'hemat',
       alphaTest: 0.1,
       roughness: 0.22,
       metalness: 0.05,
@@ -1153,8 +1184,8 @@ export function buildTrackMesh(
         );
 
         const trackMesh = new THREE.Mesh(trackGeometry, activeTrackMaterial);
-        trackMesh.castShadow = true;
-        trackMesh.receiveShadow = true;
+        trackMesh.castShadow = castShadows;
+        trackMesh.receiveShadow = receiveShadows;
         trackMesh.frustumCulled = true;
         chunkGroup.add(trackMesh);
       }
@@ -1197,8 +1228,8 @@ export function buildTrackMesh(
           );
 
           const railMesh = new THREE.Mesh(railGeometry, railMaterial);
-          railMesh.castShadow = true;
-          railMesh.receiveShadow = true;
+          railMesh.castShadow = castShadows;
+          railMesh.receiveShadow = receiveShadows;
           railMesh.frustumCulled = true;
           chunkGroup.add(railMesh);
         }
@@ -1230,6 +1261,7 @@ export function buildTrackMesh(
               false,
               edgeStripMaterial,
               stripCfg.dashPeriodMeters,
+              receiveShadows,
             );
             if (stripMesh) {
               chunkGroup.add(stripMesh);
@@ -1254,6 +1286,8 @@ export function buildTrackMesh(
             2,
             false,
             jumpStripMaterial,
+            undefined,
+            receiveShadows,
           );
           if (m) chunkGroup.add(m);
         }
@@ -1272,6 +1306,8 @@ export function buildTrackMesh(
             2,
             false,
             jumpStripMaterial,
+            undefined,
+            receiveShadows,
           );
           if (m) chunkGroup.add(m);
         }
@@ -1290,6 +1326,8 @@ export function buildTrackMesh(
           1,
           true,
           boostMaterial,
+          undefined,
+          receiveShadows,
         );
         if (m) chunkGroup.add(m);
       }
@@ -1309,6 +1347,8 @@ export function buildTrackMesh(
           isWideTrack ? 2 : 1,
           false,
           startGridMaterial,
+          undefined,
+          receiveShadows,
         );
         if (startStrip) {
           startStrip.name = 'StartGridStrip';
@@ -1328,6 +1368,8 @@ export function buildTrackMesh(
         endDomeGeom,
         chunkPosts,
         chunkEndPosts,
+        castShadows,
+        receiveShadows,
       );
 
       group.add(chunkGroup);
@@ -1357,8 +1399,14 @@ export function buildTrackMesh(
     const prevMainTex = mainTrackTexture;
     mainTrackTexture = createTrackCanvasTexture(maxAnisotropy, preset, mainIsWideTrack);
     mainTrackMaterial.map = mainTrackTexture;
-    mainTrackMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
-    mainTrackMaterial.envMapIntensity = preset.trackEnvIntensity;
+    if (isSimple) {
+      mainTrackMaterial.emissive.set(preset.colors.track);
+    }
+    updateSurfacePhysicalProps(
+      mainTrackMaterial,
+      preset.trackClearcoatRoughness,
+      preset.trackEnvIntensity,
+    );
     mainTrackMaterial.needsUpdate = true;
     prevMainTex.dispose();
 
@@ -1367,8 +1415,14 @@ export function buildTrackMesh(
       const branchIsWide = branches[0].getTrackWidth() >= 12;
       branchTrackTexture = createTrackCanvasTexture(maxAnisotropy, preset, branchIsWide);
       branchTrackMaterial.map = branchTrackTexture;
-      branchTrackMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
-      branchTrackMaterial.envMapIntensity = preset.trackEnvIntensity;
+      if (isSimple) {
+        branchTrackMaterial.emissive.set(preset.colors.track);
+      }
+      updateSurfacePhysicalProps(
+        branchTrackMaterial,
+        preset.trackClearcoatRoughness,
+        preset.trackEnvIntensity,
+      );
       branchTrackMaterial.needsUpdate = true;
       prevBranchTex.dispose();
     }
@@ -1376,16 +1430,22 @@ export function buildTrackMesh(
     const prevRailTex = railTexture;
     railTexture = createRailCanvasTexture(maxAnisotropy, preset);
     railMaterial.map = railTexture;
-    railMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
-    railMaterial.envMapIntensity = preset.trackEnvIntensity;
+    updateSurfacePhysicalProps(
+      railMaterial,
+      preset.trackClearcoatRoughness,
+      preset.trackEnvIntensity,
+    );
     railMaterial.needsUpdate = true;
     prevRailTex.dispose();
 
     const prevJumpTex = jumpStripTexture;
     jumpStripTexture = createJumpStripCanvasTexture(maxAnisotropy, preset);
     jumpStripMaterial.map = jumpStripTexture;
-    jumpStripMaterial.clearcoatRoughness = preset.trackClearcoatRoughness;
-    jumpStripMaterial.envMapIntensity = preset.trackEnvIntensity;
+    updateSurfacePhysicalProps(
+      jumpStripMaterial,
+      preset.trackClearcoatRoughness,
+      preset.trackEnvIntensity,
+    );
     jumpStripMaterial.needsUpdate = true;
     prevJumpTex.dispose();
 

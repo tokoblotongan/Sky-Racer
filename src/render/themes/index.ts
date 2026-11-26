@@ -1,7 +1,7 @@
 // src/render/themes/index.ts
 
 import * as THREE from 'three';
-import type { VisualPresetName } from '../../config';
+import type { GraphicsPreset, VisualPresetName } from '../../config';
 import type { Course } from '../../core/course';
 import type { ThemeId } from '../../courses/types';
 import type { QualityLevel } from '../quality';
@@ -43,7 +43,7 @@ export interface WorldTheme {
     scene: THREE.Scene,
     maxAnisotropy: number,
     presetName: VisualPresetName,
-    safeMode?: boolean,
+    graphicsPreset?: GraphicsPreset,
   ) => ThemeInstance;
   applyPalette: (name: VisualPresetName) => void;
   getSkyColors: (presetName: VisualPresetName) => ThemeSkyColors;

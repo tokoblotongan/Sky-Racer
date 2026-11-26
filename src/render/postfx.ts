@@ -7,7 +7,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
-import { CONFIG, VISUAL_PRESETS, type VisualPresetName } from '../config';
+import { CONFIG, VISUAL_PRESETS, type GraphicsPreset, type VisualPresetName } from '../config';
 import type { QualityLevel } from './quality';
 
 export interface PostFxHandle {
@@ -16,6 +16,7 @@ export interface PostFxHandle {
   setQuality: (level: QualityLevel) => void;
   setSpeedIntensity: (intensity: number) => void;
   applyPalette: (name: VisualPresetName) => void;
+  measureAverageLuminance: () => number | null;
   dispose: () => void;
 }
 
@@ -135,15 +136,67 @@ const ColorGradeShader = {
   `,
 };
 
+function createLumaSampler(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.PerspectiveCamera,
+): { measure: () => number | null; dispose: () => void } {
+  let lumaTarget: THREE.WebGLRenderTarget | null = null;
+  let lumaBuffer: Uint8Array | null = null;
+
+  return {
+    measure(): number | null {
+      try {
+        if (!lumaTarget) {
+          lumaTarget = new THREE.WebGLRenderTarget(16, 16, {
+            type: THREE.UnsignedByteType,
+            minFilter: THREE.LinearFilter,
+            magFilter: THREE.LinearFilter,
+            depthBuffer: true,
+          });
+          lumaBuffer = new Uint8Array(16 * 16 * 4);
+        }
+        const prevTarget = renderer.getRenderTarget();
+        renderer.setRenderTarget(lumaTarget);
+        renderer.clear();
+        renderer.render(scene, camera);
+        renderer.readRenderTargetPixels(lumaTarget, 0, 0, 16, 16, lumaBuffer!);
+        renderer.setRenderTarget(prevTarget);
+
+        let sum = 0;
+        const count = 16 * 16;
+        for (let i = 0; i < count; i++) {
+          const base = i * 4;
+          const r = lumaBuffer![base] / 255;
+          const g = lumaBuffer![base + 1] / 255;
+          const b = lumaBuffer![base + 2] / 255;
+          sum += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        }
+        return sum / count;
+      } catch {
+        return null;
+      }
+    },
+    dispose(): void {
+      lumaTarget?.dispose();
+      lumaTarget = null;
+      lumaBuffer = null;
+    },
+  };
+}
+
 export function createPostFx(
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
   camera: THREE.PerspectiveCamera,
   quality: QualityLevel,
   isSoftwareGl = false,
-  safeMode = false,
+  graphicsPreset: GraphicsPreset = 'penuh',
+  isMobileDevice = false,
 ): PostFxHandle {
-  if (safeMode || isSoftwareGl) {
+  const lumaSampler = createLumaSampler(renderer, scene, camera);
+
+  if (graphicsPreset !== 'penuh' || isSoftwareGl) {
     return {
       render(): void {
         renderer.render(scene, camera);
@@ -152,16 +205,19 @@ export function createPostFx(
         // Direct render uses renderer size
       },
       setQuality(): void {
-        // Post-processing disabled in safe/software mode
+        // Post-processing disabled in Hemat/Seimbang/software mode
       },
       setSpeedIntensity(): void {
-        // Speed lines disabled in safe/software mode
+        // Speed lines disabled in Hemat/Seimbang/software mode
       },
       applyPalette(): void {
-        // Color grading disabled in safe/software mode
+        // Color grading disabled in Hemat/Seimbang/software mode
+      },
+      measureAverageLuminance(): number | null {
+        return lumaSampler.measure();
       },
       dispose(): void {
-        // Nothing allocated
+        lumaSampler.dispose();
       },
     };
   }
@@ -198,11 +254,24 @@ export function createPostFx(
   const renderPass = new RenderPass(scene, camera);
   composer.addPass(renderPass);
 
+  const useMobileBloom = isMobileDevice && graphicsPreset === 'penuh';
+  const bloomCfg = CONFIG.fx.bloom;
+  const mobileBloomCfg = CONFIG.quality.mobileBloom;
+  const bloomScale = useMobileBloom ? mobileBloomCfg.resolutionScale : 1;
+  const bloomStrength = useMobileBloom
+    ? bloomCfg.strength * mobileBloomCfg.strengthMultiplier
+    : bloomCfg.strength;
+  const bloomRadius = useMobileBloom ? mobileBloomCfg.radius : bloomCfg.radius;
+  const bloomThreshold = useMobileBloom ? mobileBloomCfg.threshold : bloomCfg.threshold;
+
   const bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(currentWidth, currentHeight),
-    CONFIG.fx.bloom.strength,
-    CONFIG.fx.bloom.radius,
-    CONFIG.fx.bloom.threshold,
+    new THREE.Vector2(
+      Math.max(1, Math.floor(currentWidth * bloomScale)),
+      Math.max(1, Math.floor(currentHeight * bloomScale)),
+    ),
+    bloomStrength,
+    bloomRadius,
+    bloomThreshold,
   );
   composer.addPass(bloomPass);
 
@@ -227,6 +296,12 @@ export function createPostFx(
   let targetIntensity = 0;
   let currentIntensity = 0;
   let elapsed = 0;
+
+  const syncBloomPassSize = (): void => {
+    const bw = Math.max(1, Math.floor(currentWidth * bloomScale));
+    const bh = Math.max(1, Math.floor(currentHeight * bloomScale));
+    bloomPass.setSize(bw, bh);
+  };
 
   const updateFxaaResolution = (): void => {
     const res = fxaaPass.uniforms.resolution?.value as THREE.Vector2 | undefined;
@@ -254,7 +329,7 @@ export function createPostFx(
       composer.reset(nextTarget);
     }
 
-    bloomEnabled = preset.bloomEnabled;
+    bloomEnabled = useMobileBloom ? true : preset.bloomEnabled;
     speedLinesEnabled = preset.speedLinesEnabled;
     colorGradeEnabled = preset.colorGradeEnabled;
     fxaaEnabled = preset.fxaaEnabled && currentSamples === 0;
@@ -266,6 +341,7 @@ export function createPostFx(
 
     composer.setPixelRatio(currentPixelRatio);
     composer.setSize(currentWidth, currentHeight);
+    syncBloomPassSize();
     updateFxaaResolution();
   }
 
@@ -277,7 +353,7 @@ export function createPostFx(
     currentWidth = Math.max(1, width);
     currentHeight = Math.max(1, height);
     composer.setSize(currentWidth, currentHeight);
-    bloomPass.resolution.set(currentWidth, currentHeight);
+    syncBloomPassSize();
     speedLinesPass.uniforms.uAspect.value = currentWidth / currentHeight;
     updateFxaaResolution();
   }
@@ -314,6 +390,7 @@ export function createPostFx(
   }
 
   function dispose(): void {
+    lumaSampler.dispose();
     bloomPass.dispose();
     speedLinesPass.dispose();
     colorGradePass.dispose();
@@ -330,6 +407,7 @@ export function createPostFx(
     setQuality,
     setSpeedIntensity,
     applyPalette,
+    measureAverageLuminance: () => lumaSampler.measure(),
     dispose,
   };
 }

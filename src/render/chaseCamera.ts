@@ -90,10 +90,23 @@ function smoothDampScalar(
   return nextVal;
 }
 
+function resolveEffectiveVerticalFov(baseVerticalFov: number, aspect: number): number {
+  if (aspect >= 1 || !Number.isFinite(aspect) || aspect <= 0) {
+    return baseVerticalFov;
+  }
+  const cfg = CONFIG.camera;
+  const minHalfHFov = THREE.MathUtils.degToRad(cfg.minHorizontalFovDeg) * 0.5;
+  const requiredVFov = THREE.MathUtils.radToDeg(
+    2 * Math.atan(Math.tan(minHalfHFov) / Math.max(0.25, aspect)),
+  );
+  return Math.min(cfg.maxPortraitVerticalFovDeg, Math.max(baseVerticalFov, requiredVFov));
+}
+
 function computeCourseCameraTargets(
   pose: CarPose,
   carState: CarState,
   course: Route,
+  aspect = 1.77,
 ): void {
   const cfg = CONFIG.camera;
   const totalLen = course.getLength();
@@ -104,7 +117,8 @@ function computeCourseCameraTargets(
   const widthRatio = _camFrame.width / CONFIG.course.defaultWidth;
   const widthScale = 1 + Math.max(0, widthRatio - 1) * cfg.widthScale;
   const carScale = CONFIG.car.visualScale;
-  const camDistance = cfg.distance * widthScale * carScale;
+  const portraitDistScale = aspect < 1 ? cfg.portraitDistanceScale : 1;
+  const camDistance = cfg.distance * widthScale * carScale * portraitDistScale;
   const camHeight = cfg.height * widthScale * carScale;
 
   let lateral = carState.lateral;
@@ -226,7 +240,7 @@ export class ChaseCamera {
       this.computeTitleOrbitTargets(pose);
       this.smoothedUp.copy(_worldUp);
     } else {
-      computeCourseCameraTargets(pose, carState, course);
+      computeCourseCameraTargets(pose, carState, course, this.camera.aspect);
       this.smoothedUp.copy(pose.up).normalize();
     }
 
@@ -240,9 +254,10 @@ export class ChaseCamera {
     this.rollSpring.value = 0;
     this.rollSpring.velocity = 0;
 
-    const targetFov = cfg.fovBase + this.boostFovBonusDeg;
-    this.fovSpring.value = targetFov;
+    const baseFov = cfg.fovBase + this.boostFovBonusDeg;
+    this.fovSpring.value = baseFov;
     this.fovSpring.velocity = 0;
+    const targetFov = resolveEffectiveVerticalFov(baseFov, this.camera.aspect);
     if (Math.abs(this.camera.fov - targetFov) > 1e-4) {
       this.camera.fov = targetFov;
       this.camera.updateProjectionMatrix();
@@ -333,7 +348,7 @@ export class ChaseCamera {
         );
       }
 
-      computeCourseCameraTargets(pose, carState, course);
+      computeCourseCameraTargets(pose, carState, course, this.camera.aspect);
       smoothDampVector3(this.currentPos, _targetPos, this.posVelocity, activePosSmooth, dt);
       smoothDampVector3(this.currentLook, _targetLook, this.lookVelocity, activeLookSmooth, dt);
 
@@ -366,7 +381,8 @@ export class ChaseCamera {
     const speedRatio = THREE.MathUtils.clamp(speedMag / CONFIG.physics.maxSpeed, 0, 1);
     const targetFov =
       cfg.fovBase + cfg.fovMaxExtra * Math.pow(speedRatio, 1.15) + this.boostFovBonusDeg;
-    const nextFov = smoothDampScalar(this.fovSpring, targetFov, cfg.fovSmoothTime, dt);
+    const smoothedBaseFov = smoothDampScalar(this.fovSpring, targetFov, cfg.fovSmoothTime, dt);
+    const nextFov = resolveEffectiveVerticalFov(smoothedBaseFov, this.camera.aspect);
     if (Math.abs(this.camera.fov - nextFov) > 1e-3) {
       this.camera.fov = nextFov;
       this.camera.updateProjectionMatrix();

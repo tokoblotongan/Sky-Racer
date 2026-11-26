@@ -1,7 +1,7 @@
 // src/render/fantasy/decorManager.ts
 
 import * as THREE from 'three';
-import { CONFIG } from '../../config';
+import { CONFIG, type GraphicsPreset } from '../../config';
 import type { Course } from '../../core/course';
 import { buildFantasyLandDecorPlan, type ResolvedDecorPlacement } from '../../courses/fantasyLandDecor';
 import type { QualityLevel } from '../quality';
@@ -40,16 +40,18 @@ export function createFantasyDecorManager(
   course: Course,
   quality: QualityLevel,
   maxAnisotropy: number,
-  safeMode = false,
+  graphicsPreset: GraphicsPreset = 'penuh',
 ): FantasyDecorManager {
   const group = new THREE.Group();
   group.name = 'FantasyDecorManagerGroup';
 
+  const safeMode = graphicsPreset === 'hemat';
   const effectiveQuality: QualityLevel = safeMode ? 'mobile' : quality;
   const plan = buildFantasyLandDecorPlan(course, effectiveQuality);
   const tier = plan.quality;
-  const shadowsEnabled = !safeMode && CONFIG.quality.levels[effectiveQuality].shadowsEnabled;
-  const mats = createFantasyDecorMaterials(maxAnisotropy, safeMode);
+  const shadowsEnabled =
+    graphicsPreset === 'penuh' && CONFIG.quality.levels[effectiveQuality].shadowsEnabled;
+  const mats = createFantasyDecorMaterials(maxAnisotropy, graphicsPreset);
   const updateDistSq = CONFIG.fantasy.updateDistance * CONFIG.fantasy.updateDistance;
 
   const byType = <T extends ResolvedDecorPlacement['spec']['type']>(type: T) =>

@@ -224,132 +224,11 @@
   pointer-events: none;
 }
 
-/* Top-right compact utility bar (targets >= 48x48 px) */
-.sr-touch-topbar {
-  position: absolute;
-  top: max(10px, env(safe-area-inset-top, 0px));
-  right: max(var(--sr-touch-safe-margin), env(safe-area-inset-right, 0px));
-  z-index: 3;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-  pointer-events: none;
-}
-
-.sr-touch-util-btn {
-  position: relative;
-  width: 48px;
-  height: 48px;
-  min-width: 48px;
-  min-height: 48px;
-  border-radius: 14px;
-  border: 2px solid rgba(53, 212, 255, 0.55);
-  background: rgba(15, 23, 42, 0.84);
-  color: #35d4ff;
-  opacity: 0.88;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.36);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  padding: 0;
-  pointer-events: auto;
-  touch-action: none;
-  cursor: pointer;
-  transition: transform 0.08s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
-}
-
-.sr-touch-util-btn.sr-touch-is-pressed {
-  opacity: 1;
-  transform: scale(0.93);
-  border-color: #ffd23f;
-}
-
-.sr-touch-util-icon {
-  width: 20px;
-  height: 20px;
-  display: block;
-  pointer-events: none;
-}
-
-.sr-touch-util-text {
-  font-size: 9px;
-  line-height: 1;
-  letter-spacing: 0.04em;
-  pointer-events: none;
-}
-
-.sr-touch-util-mute.sr-touch-is-muted {
-  color: #94a3b8;
-  border-color: rgba(148, 163, 184, 0.45);
-}
-
-.sr-touch-util-mute .sr-touch-icon-off {
-  display: none;
-}
-
-.sr-touch-util-mute.sr-touch-is-muted .sr-touch-icon-on {
-  display: none;
-}
-
-.sr-touch-util-mute.sr-touch-is-muted .sr-touch-icon-off {
-  display: block;
-}
-
-.sr-touch-util-auto.sr-touch-auto-on {
-  color: #ffd23f;
-  border-color: rgba(255, 210, 63, 0.78);
-}
-
-.sr-touch-util-auto:not(.sr-touch-auto-on) {
-  color: #94a3b8;
-  border-color: rgba(148, 163, 184, 0.45);
-}
-
-.sr-touch-util-reset {
-  color: #ffd23f;
-  border-color: rgba(255, 210, 63, 0.55);
-}
-
-.sr-touch-util-restart {
-  color: #ff963d;
-  border-color: rgba(255, 106, 0, 0.6);
-}
-
-.sr-touch-restart-ring {
-  position: absolute;
-  inset: -1px;
-  width: calc(100% + 2px);
-  height: calc(100% + 2px);
-  pointer-events: none;
-  transform: rotate(-90deg);
-}
-
-.sr-touch-restart-ring-fill {
-  fill: none;
-  stroke: #ffd23f;
-  stroke-width: 3;
-  stroke-linecap: round;
-  opacity: 0;
-  transition: opacity 0.08s ease;
-}
-
-.sr-touch-util-restart.sr-touch-holding .sr-touch-restart-ring-fill {
-  opacity: 1;
-}
-
-/* Wrap top-right buttons cleanly on compact landscape phones (e.g. 640x360) */
+/* Keep compact spacing on phones and portrait viewports */
 @media (max-width: 840px), (max-height: 440px) {
-  .sr-touch-topbar {
-    max-width: 158px;
-    gap: 5px;
-  }
-
   .sr-touch-steer-zone {
     width: clamp(168px, 34vw, 240px);
-    height: clamp(114px, 40dvh, 178px);
+    height: clamp(114px, 34dvh, 168px);
   }
 
   .sr-touch-actions {
@@ -357,18 +236,25 @@
   }
 }
 
-/* Non-blocking dismissable portrait orientation hint banner */
+@media (orientation: portrait) {
+  .sr-touch-steer-zone {
+    width: clamp(164px, 44vw, 224px);
+    height: clamp(108px, 23dvh, 152px);
+  }
+}
+
+/* Non-blocking dismissable portrait orientation hint banner (placed cleanly below top bar) */
 .sr-touch-portrait-banner {
   position: fixed;
-  top: max(8px, env(safe-area-inset-top, 0px));
+  top: calc(max(8px, env(safe-area-inset-top, 0px)) + 44px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 36;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  max-width: min(92vw, 440px);
-  padding: 6px 10px 6px 12px;
+  max-width: min(88vw, 380px);
+  padding: 5px 8px 5px 12px;
   border-radius: 999px;
   background: rgba(15, 23, 42, 0.88);
   border: 1.5px solid rgba(53, 212, 255, 0.72);

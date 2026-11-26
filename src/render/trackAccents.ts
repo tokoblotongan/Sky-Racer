@@ -1,8 +1,9 @@
 // src/render/trackAccents.ts
 
 import * as THREE from 'three';
-import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
+import { CONFIG, VISUAL_PRESETS, type GraphicsPreset, type VisualPreset, type VisualPresetName } from '../config';
 import type { Course, Route, TrackFrame } from '../core/course';
+import { createSurfaceMaterial } from './materialFactory';
 
 export interface TrackAccentsVisual {
   group: THREE.Group;
@@ -232,20 +233,22 @@ export function buildTrackAccents(
   course: Course,
   maxAnisotropy = 8,
   initialPreset: VisualPresetName = CONFIG.visual.activePreset,
+  graphicsPreset: GraphicsPreset = 'penuh',
 ): TrackAccentsVisual {
   const group = new THREE.Group();
   group.name = 'TrackAccentsGroup';
 
   const cfg = CONFIG.styles.accents;
   const preset = VISUAL_PRESETS[initialPreset];
+  const receiveShadows = graphicsPreset !== 'hemat';
 
   let pulseTex = createPulseStripTexture(maxAnisotropy, preset);
   let hazardTex = createHazardBorderTexture(maxAnisotropy, preset);
   let targetTex = createLandingTargetTexture(maxAnisotropy, preset);
 
-  const pulseMat = new THREE.MeshStandardMaterial({
+  const pulseMat = createSurfaceMaterial(graphicsPreset, {
     map: pulseTex,
-    emissive: new THREE.Color(0xffffff),
+    emissive: 0xffffff,
     emissiveMap: pulseTex,
     emissiveIntensity: cfg.emissiveIntensity,
     roughness: 0.22,
@@ -255,7 +258,7 @@ export function buildTrackAccents(
     polygonOffsetUnits: -2,
   });
 
-  const hazardMat = new THREE.MeshPhysicalMaterial({
+  const hazardMat = createSurfaceMaterial(graphicsPreset, {
     map: hazardTex,
     roughness: 0.24,
     metalness: 0.04,
@@ -263,9 +266,10 @@ export function buildTrackAccents(
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
+    physical: true,
   });
 
-  const targetMat = new THREE.MeshPhysicalMaterial({
+  const targetMat = createSurfaceMaterial(graphicsPreset, {
     map: targetTex,
     transparent: true,
     alphaTest: 0.15,
@@ -275,6 +279,7 @@ export function buildTrackAccents(
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
+    physical: true,
   });
 
   const geomsToDispose: THREE.BufferGeometry[] = [];
@@ -302,7 +307,7 @@ export function buildTrackAccents(
         if (geom) {
           geomsToDispose.push(geom);
           const mesh = new THREE.Mesh(geom, pulseMat);
-          mesh.receiveShadow = true;
+          mesh.receiveShadow = receiveShadows;
           mesh.updateMatrix();
           mesh.matrixAutoUpdate = false;
           group.add(mesh);
@@ -329,7 +334,7 @@ export function buildTrackAccents(
           if (geom) {
             geomsToDispose.push(geom);
             const mesh = new THREE.Mesh(geom, pulseMat);
-            mesh.receiveShadow = true;
+            mesh.receiveShadow = receiveShadows;
             mesh.updateMatrix();
             mesh.matrixAutoUpdate = false;
             group.add(mesh);
@@ -355,7 +360,7 @@ export function buildTrackAccents(
             if (geom) {
               geomsToDispose.push(geom);
               const mesh = new THREE.Mesh(geom, hazardMat);
-              mesh.receiveShadow = true;
+              mesh.receiveShadow = receiveShadows;
               mesh.updateMatrix();
               mesh.matrixAutoUpdate = false;
               group.add(mesh);
@@ -386,7 +391,7 @@ export function buildTrackAccents(
         if (geom) {
           geomsToDispose.push(geom);
           const mesh = new THREE.Mesh(geom, targetMat);
-          mesh.receiveShadow = true;
+          mesh.receiveShadow = receiveShadows;
           mesh.updateMatrix();
           mesh.matrixAutoUpdate = false;
           group.add(mesh);
@@ -412,7 +417,7 @@ export function buildTrackAccents(
       if (geom) {
         geomsToDispose.push(geom);
         const mesh = new THREE.Mesh(geom, pulseMat);
-        mesh.receiveShadow = true;
+        mesh.receiveShadow = receiveShadows;
         mesh.updateMatrix();
         mesh.matrixAutoUpdate = false;
         group.add(mesh);

@@ -2,8 +2,9 @@
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { CONFIG, type VisualPresetName } from '../config';
+import { CONFIG, type GraphicsPreset, type VisualPresetName } from '../config';
 import type { Course, TrackFrame } from '../core/course';
+import { createSurfaceMaterial, type SurfaceMaterial } from './materialFactory';
 
 export interface ShortcutGateVisual {
   group: THREE.Group;
@@ -13,7 +14,7 @@ export interface ShortcutGateVisual {
 }
 
 interface AnimatedChevron {
-  material: THREE.MeshStandardMaterial;
+  material: SurfaceMaterial;
   phaseIndex: number;
 }
 
@@ -76,7 +77,11 @@ function createChevronShape(size: number, thickness: number): THREE.Shape {
   return shape;
 }
 
-export function buildShortcutGates(course: Course, maxAnisotropy = 8): ShortcutGateVisual {
+export function buildShortcutGates(
+  course: Course,
+  maxAnisotropy = 8,
+  graphicsPreset: GraphicsPreset = 'penuh',
+): ShortcutGateVisual {
   const group = new THREE.Group();
   group.name = 'ShortcutGatesGroup';
 
@@ -92,27 +97,30 @@ export function buildShortcutGates(course: Course, maxAnisotropy = 8): ShortcutG
 
   const cfg = CONFIG.course;
   const signColors = CONFIG.shortcut.signColors;
+  const castShadows = graphicsPreset === 'penuh';
+  const receiveShadows = graphicsPreset !== 'hemat';
   const geomsToDispose: THREE.BufferGeometry[] = [];
   const matsToDispose: THREE.Material[] = [];
   const texsToDispose: THREE.Texture[] = [];
   const animatedChevrons: AnimatedChevron[] = [];
 
-  const frameMat = new THREE.MeshPhysicalMaterial({
+  const frameMat = createSurfaceMaterial(graphicsPreset, {
     color: signColors.background,
     emissive: '#082F49',
     emissiveIntensity: 0.28,
     roughness: 0.28,
     metalness: 0.25,
     clearcoat: 0.85,
+    physical: true,
   });
-  const borderMat = new THREE.MeshStandardMaterial({
+  const borderMat = createSurfaceMaterial(graphicsPreset, {
     color: signColors.border,
     emissive: signColors.border,
     emissiveIntensity: 1.25,
     roughness: 0.2,
     metalness: 0.15,
   });
-  const beaconMat = new THREE.MeshStandardMaterial({
+  const beaconMat = createSurfaceMaterial(graphicsPreset, {
     color: signColors.arrowPrimary,
     emissive: signColors.arrowPrimary,
     emissiveIntensity: 1.4,
@@ -157,8 +165,8 @@ export function buildShortcutGates(course: Course, maxAnisotropy = 8): ShortcutG
     for (const pillarX of [leftAnchorX, rightAnchorX]) {
       const pillar = new THREE.Mesh(pillarGeom, frameMat);
       pillar.position.set(pillarX, gateHeight * 0.5, 0);
-      pillar.castShadow = true;
-      pillar.receiveShadow = true;
+      pillar.castShadow = castShadows;
+      pillar.receiveShadow = receiveShadows;
       entryGroup.add(pillar);
 
       const plinth = new THREE.Mesh(plinthGeom, borderMat);
@@ -168,7 +176,7 @@ export function buildShortcutGates(course: Course, maxAnisotropy = 8): ShortcutG
 
     const topBeam = new THREE.Mesh(beamGeom, frameMat);
     topBeam.position.set(centerAnchorX, gateHeight, 0);
-    topBeam.castShadow = true;
+    topBeam.castShadow = castShadows;
     entryGroup.add(topBeam);
 
     const topTrim = new THREE.Mesh(trimBeamGeom, borderMat);
@@ -182,7 +190,7 @@ export function buildShortcutGates(course: Course, maxAnisotropy = 8): ShortcutG
     const signTex = createShortcutSignTexture(branch.name, maxAnisotropy);
     texsToDispose.push(signTex);
 
-    const signMat = new THREE.MeshStandardMaterial({
+    const signMat = createSurfaceMaterial(graphicsPreset, {
       map: signTex,
       emissive: 0xffffff,
       emissiveMap: signTex,
@@ -198,7 +206,7 @@ export function buildShortcutGates(course: Course, maxAnisotropy = 8): ShortcutG
 
     const signBacking = new THREE.Mesh(backingGeom, frameMat);
     signBacking.position.set(signCenterX, gateHeight + 1.25, 0);
-    signBacking.castShadow = true;
+    signBacking.castShadow = castShadows;
     entryGroup.add(signBacking);
 
     const signFront = new THREE.Mesh(plateGeom, signMat);
@@ -214,7 +222,7 @@ export function buildShortcutGates(course: Course, maxAnisotropy = 8): ShortcutG
     const chevronBaseX = signCenterX + signW * 0.5 + 1.1;
     const chevronSpacing = 1.15;
     for (let c = 0; c < 3; c++) {
-      const chevMat = new THREE.MeshStandardMaterial({
+      const chevMat = createSurfaceMaterial(graphicsPreset, {
         color: signColors.arrowPrimary,
         emissive: signColors.arrowPrimary,
         emissiveIntensity: 1.8,
@@ -252,7 +260,7 @@ export function buildShortcutGates(course: Course, maxAnisotropy = 8): ShortcutG
 
     const mergePylon = new THREE.Mesh(mergePylonGeom, frameMat);
     mergePylon.position.set(mergePylonX, 1.7, 0);
-    mergePylon.castShadow = true;
+    mergePylon.castShadow = castShadows;
     mergeGroup.add(mergePylon);
 
     const mergeCap = new THREE.Mesh(mergeCapGeom, beaconMat);
@@ -260,7 +268,7 @@ export function buildShortcutGates(course: Course, maxAnisotropy = 8): ShortcutG
     mergeGroup.add(mergeCap);
 
     // Textless merge chevron pointing left back onto main lane
-    const mergeChevMat = new THREE.MeshStandardMaterial({
+    const mergeChevMat = createSurfaceMaterial(graphicsPreset, {
       color: signColors.arrowSecondary,
       emissive: signColors.arrowSecondary,
       emissiveIntensity: 1.5,

@@ -2,7 +2,8 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CONFIG } from '../../config';
+import { CONFIG, type GraphicsPreset } from '../../config';
+import { createSurfaceMaterial, type SurfaceMaterial } from '../materialFactory';
 
 export const SWATCH = {
   CASTLE_WALL: 0,
@@ -33,7 +34,7 @@ export interface FantasyDecorModule {
   getDrawCallCount: () => number;
 }
 
-export type FantasyLitMaterial = THREE.MeshStandardMaterial | THREE.MeshLambertMaterial;
+export type FantasyLitMaterial = SurfaceMaterial;
 
 export interface FantasyDecorMaterials {
   paletteMat: FantasyLitMaterial;
@@ -206,88 +207,59 @@ function createWaterfallTexture(maxAnisotropy: number): THREE.CanvasTexture {
 
 export function createFantasyDecorMaterials(
   maxAnisotropy: number,
-  safeMode = false,
+  graphicsPreset: GraphicsPreset = 'penuh',
 ): FantasyDecorMaterials {
+  const safeMode = graphicsPreset === 'hemat';
   const pal = CONFIG.fantasy.palette;
   const paletteTex = createPaletteAtlasTexture();
   const rainbowTex = createRainbowTexture();
   const waterfallTex = createWaterfallTexture(maxAnisotropy);
 
-  const paletteMat: FantasyLitMaterial = safeMode
-    ? new THREE.MeshLambertMaterial({ map: paletteTex })
-    : new THREE.MeshStandardMaterial({
-        map: paletteTex,
-        roughness: 0.52,
-        metalness: 0.06,
-      });
+  const paletteMat: FantasyLitMaterial = createSurfaceMaterial(graphicsPreset, {
+    map: paletteTex,
+    roughness: 0.52,
+    metalness: 0.06,
+  });
 
-  const instancedColorMat: FantasyLitMaterial = safeMode
-    ? new THREE.MeshLambertMaterial({ color: 0xffffff })
-    : new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        roughness: 0.44,
-        metalness: 0.06,
-      });
+  const instancedColorMat: FantasyLitMaterial = createSurfaceMaterial(graphicsPreset, {
+    color: 0xffffff,
+    roughness: 0.44,
+    metalness: 0.06,
+  });
 
-  const crystalCyanMat: FantasyLitMaterial = safeMode
-    ? new THREE.MeshLambertMaterial({
-        color: pal.crystalCyan,
-        emissive: pal.crystalCyan,
-        emissiveIntensity: 0.9,
-      })
-    : new THREE.MeshStandardMaterial({
-        color: pal.crystalCyan,
-        emissive: pal.crystalCyan,
-        emissiveIntensity: 0.9,
-        roughness: 0.16,
-        metalness: 0.2,
-      });
+  const crystalCyanMat: FantasyLitMaterial = createSurfaceMaterial(graphicsPreset, {
+    color: pal.crystalCyan,
+    emissive: pal.crystalCyan,
+    emissiveIntensity: 0.9,
+    roughness: 0.16,
+    metalness: 0.2,
+  });
 
-  const crystalMagentaMat: FantasyLitMaterial = safeMode
-    ? new THREE.MeshLambertMaterial({
-        color: pal.crystalMagenta,
-        emissive: pal.crystalMagenta,
-        emissiveIntensity: 0.9,
-      })
-    : new THREE.MeshStandardMaterial({
-        color: pal.crystalMagenta,
-        emissive: pal.crystalMagenta,
-        emissiveIntensity: 0.9,
-        roughness: 0.16,
-        metalness: 0.2,
-      });
+  const crystalMagentaMat: FantasyLitMaterial = createSurfaceMaterial(graphicsPreset, {
+    color: pal.crystalMagenta,
+    emissive: pal.crystalMagenta,
+    emissiveIntensity: 0.9,
+    roughness: 0.16,
+    metalness: 0.2,
+  });
 
-  const crystalYellowMat: FantasyLitMaterial = safeMode
-    ? new THREE.MeshLambertMaterial({
-        color: pal.crystalYellow,
-        emissive: pal.crystalYellow,
-        emissiveIntensity: 0.9,
-      })
-    : new THREE.MeshStandardMaterial({
-        color: pal.crystalYellow,
-        emissive: pal.crystalYellow,
-        emissiveIntensity: 0.9,
-        roughness: 0.16,
-        metalness: 0.2,
-      });
+  const crystalYellowMat: FantasyLitMaterial = createSurfaceMaterial(graphicsPreset, {
+    color: pal.crystalYellow,
+    emissive: pal.crystalYellow,
+    emissiveIntensity: 0.9,
+    roughness: 0.16,
+    metalness: 0.2,
+  });
 
-  const rainbowMat: FantasyLitMaterial = safeMode
-    ? new THREE.MeshLambertMaterial({
-        map: rainbowTex,
-        emissive: '#FFFFFF',
-        emissiveMap: rainbowTex,
-        emissiveIntensity: 0.62,
-        side: THREE.DoubleSide,
-      })
-    : new THREE.MeshStandardMaterial({
-        map: rainbowTex,
-        emissive: '#FFFFFF',
-        emissiveMap: rainbowTex,
-        emissiveIntensity: 0.62,
-        roughness: 0.35,
-        metalness: 0.0,
-        side: THREE.DoubleSide,
-      });
+  const rainbowMat: FantasyLitMaterial = createSurfaceMaterial(graphicsPreset, {
+    map: rainbowTex,
+    emissive: '#FFFFFF',
+    emissiveMap: rainbowTex,
+    emissiveIntensity: 0.62,
+    roughness: 0.35,
+    metalness: 0.0,
+    side: THREE.DoubleSide,
+  });
 
   const waterfallMat = new THREE.MeshBasicMaterial({
     map: waterfallTex,
@@ -298,26 +270,18 @@ export function createFantasyDecorMaterials(
     fog: false,
   });
 
-  const glowAccentMat: FantasyLitMaterial = safeMode
-    ? new THREE.MeshLambertMaterial({
-        color: pal.lampGlow,
-        emissive: pal.lampGlow,
-        emissiveIntensity: 1.45,
-      })
-    : new THREE.MeshStandardMaterial({
-        color: pal.lampGlow,
-        emissive: pal.lampGlow,
-        emissiveIntensity: 1.45,
-        roughness: 0.2,
-      });
+  const glowAccentMat: FantasyLitMaterial = createSurfaceMaterial(graphicsPreset, {
+    color: pal.lampGlow,
+    emissive: pal.lampGlow,
+    emissiveIntensity: 1.45,
+    roughness: 0.2,
+  });
 
-  const darkMetalMat: FantasyLitMaterial = safeMode
-    ? new THREE.MeshLambertMaterial({ color: pal.lampPost })
-    : new THREE.MeshStandardMaterial({
-        color: pal.lampPost,
-        roughness: 0.44,
-        metalness: 0.62,
-      });
+  const darkMetalMat: FantasyLitMaterial = createSurfaceMaterial(graphicsPreset, {
+    color: pal.lampPost,
+    roughness: 0.44,
+    metalness: 0.62,
+  });
 
   const allTextures: THREE.Texture[] = [paletteTex, rainbowTex, waterfallTex];
   const allMaterials: THREE.Material[] = [

@@ -2,9 +2,10 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CONFIG, type VisualPresetName } from '../../config';
+import { CONFIG, type GraphicsPreset, type VisualPresetName } from '../../config';
 import type { Course } from '../../core/course';
 import { createFantasyDecorManager } from '../fantasy/decorManager';
+import { createSurfaceMaterial } from '../materialFactory';
 import type { QualityLevel } from '../quality';
 import type { ThemeInstance, ThemeLightingConfig, ThemeSkyColors, WorldTheme } from './index';
 
@@ -235,7 +236,7 @@ export const fantasyLandTheme: WorldTheme = {
     _scene: THREE.Scene,
     maxAnisotropy: number,
     _presetName: VisualPresetName,
-    safeMode = false,
+    graphicsPreset: GraphicsPreset = 'penuh',
   ): ThemeInstance {
     const group = new THREE.Group();
     group.name = 'FantasyLandThemeGroup';
@@ -265,12 +266,15 @@ export const fantasyLandTheme: WorldTheme = {
     const bounds = course.getBounds();
     const cx = bounds.center.x;
     const cz = bounds.center.z;
-    const effectiveQuality: QualityLevel = safeMode ? 'mobile' : quality;
+    const effectivePreset: GraphicsPreset = graphicsPreset;
+    const isSafePreset = effectivePreset === 'hemat';
+    const effectiveQuality: QualityLevel = isSafePreset ? 'mobile' : quality;
     const qualityPreset = CONFIG.quality.levels[effectiveQuality];
     const densityScale = qualityPreset.propsDensityScale;
     const cloudDensityScale = qualityPreset.cloudDensityScale;
-    const shadowsEnabled = !safeMode && qualityPreset.shadowsEnabled;
-    const effectiveAnisotropy = safeMode ? Math.min(2, maxAnisotropy) : maxAnisotropy;
+    const shadowsEnabled = effectivePreset === 'penuh' && qualityPreset.shadowsEnabled;
+    const receiveShadows = effectivePreset === 'seimbang' || shadowsEnabled;
+    const effectiveAnisotropy = isSafePreset ? Math.min(2, maxAnisotropy) : maxAnisotropy;
 
     const spanX = bounds.max.x - bounds.min.x;
     const spanZ = bounds.max.z - bounds.min.z;
@@ -284,13 +288,11 @@ export const fantasyLandTheme: WorldTheme = {
     const grassRepeat = Math.max(18, Math.round((islandRadius * 2) / 28));
     const grassTex = trackTex(createGrassTexture(effectiveAnisotropy, grassRepeat));
     const grassMat = trackMat(
-      safeMode
-        ? new THREE.MeshLambertMaterial({ map: grassTex })
-        : new THREE.MeshStandardMaterial({
-            map: grassTex,
-            roughness: 0.84,
-            metalness: 0.0,
-          }),
+      createSurfaceMaterial(effectivePreset, {
+        map: grassTex,
+        roughness: 0.84,
+        metalness: 0.0,
+      }),
     );
 
     const meadowGeom = trackGeom(new THREE.CircleGeometry(islandRadius, 72));
@@ -298,7 +300,7 @@ export const fantasyLandTheme: WorldTheme = {
     const meadowMesh = new THREE.Mesh(meadowGeom, grassMat);
     meadowMesh.name = 'FantasyGrassMeadow';
     meadowMesh.position.set(cx, 0, cz);
-    meadowMesh.receiveShadow = shadowsEnabled;
+    meadowMesh.receiveShadow = receiveShadows;
     meadowMesh.castShadow = false;
     freezeStatic(meadowMesh);
     group.add(meadowMesh);
@@ -307,17 +309,15 @@ export const fantasyLandTheme: WorldTheme = {
       new THREE.CylinderGeometry(islandRadius, islandRadius + 6, 4.2, 72, 1, true),
     );
     const cliffMat = trackMat(
-      safeMode
-        ? new THREE.MeshLambertMaterial({ color: '#168F42' })
-        : new THREE.MeshStandardMaterial({
-            color: '#168F42',
-            roughness: 0.88,
-            metalness: 0.0,
-          }),
+      createSurfaceMaterial(effectivePreset, {
+        color: '#168F42',
+        roughness: 0.88,
+        metalness: 0.0,
+      }),
     );
     const cliffMesh = new THREE.Mesh(cliffGeom, cliffMat);
     cliffMesh.position.set(cx, -2.12, cz);
-    cliffMesh.receiveShadow = shadowsEnabled;
+    cliffMesh.receiveShadow = receiveShadows;
     freezeStatic(cliffMesh);
     group.add(cliffMesh);
 
@@ -327,13 +327,11 @@ export const fantasyLandTheme: WorldTheme = {
     const waterRepeat = Math.max(16, Math.round((waterRadius * 2) / 42));
     const waterTex = trackTex(createWaterTexture(effectiveAnisotropy, waterRepeat));
     const waterMat = trackMat(
-      safeMode
-        ? new THREE.MeshLambertMaterial({ map: waterTex })
-        : new THREE.MeshStandardMaterial({
-            map: waterTex,
-            roughness: 0.22,
-            metalness: 0.06,
-          }),
+      createSurfaceMaterial(effectivePreset, {
+        map: waterTex,
+        roughness: 0.22,
+        metalness: 0.06,
+      }),
     );
 
     const waterGeom = trackGeom(new THREE.RingGeometry(islandRadius - 1.5, waterRadius, 72, 1));
@@ -341,7 +339,7 @@ export const fantasyLandTheme: WorldTheme = {
     const waterMesh = new THREE.Mesh(waterGeom, waterMat);
     waterMesh.name = 'FantasyWaterRing';
     waterMesh.position.set(cx, -2.35, cz);
-    waterMesh.receiveShadow = shadowsEnabled;
+    waterMesh.receiveShadow = receiveShadows;
     freezeStatic(waterMesh);
     group.add(waterMesh);
 
@@ -378,7 +376,7 @@ export const fantasyLandTheme: WorldTheme = {
       course,
       effectiveQuality,
       effectiveAnisotropy,
-      safeMode,
+      effectivePreset,
     );
     group.add(decorManager.group);
 
@@ -469,30 +467,26 @@ export const fantasyLandTheme: WorldTheme = {
       const colGeom = trackGeom(new THREE.CylinderGeometry(1.15, 1.45, 1, 14));
       const plinthGeom = trackGeom(new THREE.CylinderGeometry(2.1, 2.5, 1.4, 16));
       const colMat = trackMat(
-        safeMode
-          ? new THREE.MeshLambertMaterial({ color: '#E2E8F0' })
-          : new THREE.MeshStandardMaterial({
-              color: '#E2E8F0',
-              roughness: 0.45,
-              metalness: 0.08,
-            }),
+        createSurfaceMaterial(effectivePreset, {
+          color: '#E2E8F0',
+          roughness: 0.45,
+          metalness: 0.08,
+        }),
       );
       const plinthMat = trackMat(
-        safeMode
-          ? new THREE.MeshLambertMaterial({ color: '#0A5CFF' })
-          : new THREE.MeshStandardMaterial({
-              color: '#0A5CFF',
-              roughness: 0.4,
-              metalness: 0.1,
-            }),
+        createSurfaceMaterial(effectivePreset, {
+          color: '#0A5CFF',
+          roughness: 0.4,
+          metalness: 0.1,
+        }),
       );
 
       const colInst = trackInst(new THREE.InstancedMesh(colGeom, colMat, supportSpots.length));
       const plinthInst = trackInst(new THREE.InstancedMesh(plinthGeom, plinthMat, supportSpots.length));
       colInst.castShadow = shadowsEnabled;
-      colInst.receiveShadow = shadowsEnabled;
+      colInst.receiveShadow = receiveShadows;
       plinthInst.castShadow = shadowsEnabled;
-      plinthInst.receiveShadow = shadowsEnabled;
+      plinthInst.receiveShadow = receiveShadows;
 
       const mtx = new THREE.Matrix4();
       const pos = new THREE.Vector3();
@@ -557,17 +551,15 @@ export const fantasyLandTheme: WorldTheme = {
         new THREE.SphereGeometry(1, 22, 12, 0, Math.PI * 2, 0, Math.PI * 0.52),
       );
       const hillMat = trackMat(
-        safeMode
-          ? new THREE.MeshLambertMaterial({ color: 0xffffff })
-          : new THREE.MeshStandardMaterial({
-              color: 0xffffff,
-              roughness: 0.86,
-              metalness: 0.0,
-            }),
+        createSurfaceMaterial(effectivePreset, {
+          color: 0xffffff,
+          roughness: 0.86,
+          metalness: 0.0,
+        }),
       );
       const hillInst = trackInst(new THREE.InstancedMesh(hillGeom, hillMat, hillPlacements.length));
       hillInst.castShadow = false;
-      hillInst.receiveShadow = shadowsEnabled;
+      hillInst.receiveShadow = receiveShadows;
 
       const mtx = new THREE.Matrix4();
       const pos = new THREE.Vector3();
@@ -622,13 +614,11 @@ export const fantasyLandTheme: WorldTheme = {
       const trunkGeom = trackGeom(new THREE.CylinderGeometry(0.55, 0.85, 5.2, 10));
       trunkGeom.translate(0, 2.6, 0);
       const trunkMat = trackMat(
-        safeMode
-          ? new THREE.MeshLambertMaterial({ color: '#7C4A26' })
-          : new THREE.MeshStandardMaterial({
-              color: '#7C4A26',
-              roughness: 0.78,
-              metalness: 0.02,
-            }),
+        createSurfaceMaterial(effectivePreset, {
+          color: '#7C4A26',
+          roughness: 0.78,
+          metalness: 0.02,
+        }),
       );
 
       const puffA = new THREE.SphereGeometry(2.6, 14, 12);
@@ -639,21 +629,19 @@ export const fantasyLandTheme: WorldTheme = {
       puffC.translate(1.3, 5.5, -0.5);
       const canopyGeom = trackGeom(mergeWithCleanup([puffA, puffB, puffC]));
       const canopyMat = trackMat(
-        safeMode
-          ? new THREE.MeshLambertMaterial({ color: 0xffffff })
-          : new THREE.MeshStandardMaterial({
-              color: 0xffffff,
-              roughness: 0.52,
-              metalness: 0.02,
-            }),
+        createSurfaceMaterial(effectivePreset, {
+          color: 0xffffff,
+          roughness: 0.52,
+          metalness: 0.02,
+        }),
       );
 
       const trunkInst = trackInst(new THREE.InstancedMesh(trunkGeom, trunkMat, treeSpots.length));
       const canopyInst = trackInst(new THREE.InstancedMesh(canopyGeom, canopyMat, treeSpots.length));
       trunkInst.castShadow = shadowsEnabled;
-      trunkInst.receiveShadow = shadowsEnabled;
+      trunkInst.receiveShadow = receiveShadows;
       canopyInst.castShadow = shadowsEnabled;
-      canopyInst.receiveShadow = shadowsEnabled;
+      canopyInst.receiveShadow = receiveShadows;
 
       const mtx = new THREE.Matrix4();
       const pos = new THREE.Vector3();
@@ -690,13 +678,11 @@ export const fantasyLandTheme: WorldTheme = {
     const mountainGeom = trackGeom(new THREE.ConeGeometry(1, 1, 6));
     mountainGeom.translate(0, 0.5, 0);
     const mountainMat = trackMat(
-      safeMode
-        ? new THREE.MeshLambertMaterial({ color: 0xffffff })
-        : new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            roughness: 0.88,
-            metalness: 0.0,
-          }),
+      createSurfaceMaterial(effectivePreset, {
+        color: 0xffffff,
+        roughness: 0.88,
+        metalness: 0.0,
+      }),
     );
     const mountainInst = trackInst(new THREE.InstancedMesh(mountainGeom, mountainMat, mountainCount));
     mountainInst.castShadow = false;
@@ -737,7 +723,7 @@ export const fantasyLandTheme: WorldTheme = {
     // ---------------------------------------------------------------------
     const cloudTex = trackTex(createCloudTexture());
     const cloudMat = trackMat(
-      safeMode
+      isSafePreset
         ? new THREE.MeshBasicMaterial({
             map: cloudTex,
             alphaTest: 0.45,
@@ -755,7 +741,7 @@ export const fantasyLandTheme: WorldTheme = {
           }),
     );
     const cloudGeom = trackGeom(new THREE.PlaneGeometry(54, 27));
-    const cloudCount = Math.max(safeMode ? 4 : 6, Math.round(20 * cloudDensityScale));
+    const cloudCount = Math.max(isSafePreset ? 4 : 6, Math.round(20 * cloudDensityScale));
     const clouds: CloudDriftItem[] = [];
     const cloudSpan = islandRadius * 1.55;
 
@@ -795,7 +781,7 @@ export const fantasyLandTheme: WorldTheme = {
     }
 
     let sunMesh: THREE.Mesh | null = null;
-    if (!safeMode) {
+    if (!isSafePreset) {
       const sunDir = new THREE.Vector3(
         CONFIG.lighting.sunOffset.x,
         CONFIG.lighting.sunOffset.y,

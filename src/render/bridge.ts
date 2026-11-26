@@ -2,8 +2,9 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
+import { CONFIG, VISUAL_PRESETS, type GraphicsPreset, type VisualPreset, type VisualPresetName } from '../config';
 import type { Course, Route, StyleRun, TrackFrame } from '../core/course';
+import { createSurfaceMaterial } from './materialFactory';
 
 export interface BridgeVisual {
   group: THREE.Group;
@@ -178,6 +179,7 @@ export function buildBridgeMesh(
   groundYAt: (x: number, z: number) => number,
   maxAnisotropy = 8,
   initialPreset: VisualPresetName = CONFIG.visual.activePreset,
+  graphicsPreset: GraphicsPreset = 'penuh',
 ): BridgeVisual {
   const group = new THREE.Group();
   group.name = 'BridgeGroup';
@@ -200,35 +202,43 @@ export function buildBridgeMesh(
 
   const bridgeCfg = CONFIG.styles.bridge;
   const preset: VisualPreset = VISUAL_PRESETS[initialPreset];
+  const castShadows = graphicsPreset === 'penuh';
+  const receiveShadows = graphicsPreset !== 'hemat';
 
   const bodyTex = createBridgeBodyTexture(maxAnisotropy);
   const whiteCableTex = createCableTexture(maxAnisotropy, '#FFFFFF');
   let accentCableTex = createCableTexture(maxAnisotropy, preset.colors.accent);
 
-  const whiteMat = new THREE.MeshPhysicalMaterial({
+  const whiteMat = createSurfaceMaterial(graphicsPreset, {
     map: bodyTex,
     color: 0xffffff,
     roughness: 0.26,
     metalness: 0.08,
     clearcoat: 0.72,
     clearcoatRoughness: 0.14,
+    physical: true,
+    specularHighlight: true,
   });
 
-  const accentMat = new THREE.MeshPhysicalMaterial({
+  const accentMat = createSurfaceMaterial(graphicsPreset, {
     map: accentCableTex,
     color: 0xffffff,
     roughness: 0.22,
     metalness: 0.1,
     clearcoat: 0.8,
     clearcoatRoughness: 0.12,
+    physical: true,
+    specularHighlight: true,
   });
 
-  const whiteCableMat = new THREE.MeshPhysicalMaterial({
+  const whiteCableMat = createSurfaceMaterial(graphicsPreset, {
     map: whiteCableTex,
     color: 0xffffff,
     roughness: 0.24,
     metalness: 0.16,
     clearcoat: 0.65,
+    physical: true,
+    specularHighlight: true,
   });
 
   const geomsToDispose: THREE.BufferGeometry[] = [];
@@ -294,8 +304,8 @@ export function buildBridgeMesh(
           const cableGeom = buildSweptCableGeometry(sideSpan, side, cableY, rad);
           geomsToDispose.push(cableGeom);
           const cableMesh = new THREE.Mesh(cableGeom, mat);
-          cableMesh.castShadow = true;
-          cableMesh.receiveShadow = true;
+          cableMesh.castShadow = castShadows;
+          cableMesh.receiveShadow = receiveShadows;
           cableMesh.updateMatrix();
           cableMesh.matrixAutoUpdate = false;
           group.add(cableMesh);
@@ -468,10 +478,10 @@ export function buildBridgeMesh(
   if (postMatrices.length > 0) {
     const postInst = new THREE.InstancedMesh(postGeom, whiteMat, postMatrices.length);
     const finialInst = new THREE.InstancedMesh(finialGeom, accentMat, finialMatrices.length);
-    postInst.castShadow = true;
-    postInst.receiveShadow = true;
-    finialInst.castShadow = true;
-    finialInst.receiveShadow = true;
+    postInst.castShadow = castShadows;
+    postInst.receiveShadow = receiveShadows;
+    finialInst.castShadow = castShadows;
+    finialInst.receiveShadow = receiveShadows;
     for (let i = 0; i < postMatrices.length; i++) {
       postInst.setMatrixAt(i, postMatrices[i]);
       finialInst.setMatrixAt(i, finialMatrices[i]);
@@ -487,8 +497,8 @@ export function buildBridgeMesh(
     const mergedWhite = mergeWithCleanup(whiteStructGeoms);
     geomsToDispose.push(mergedWhite);
     const whiteMesh = new THREE.Mesh(mergedWhite, whiteMat);
-    whiteMesh.castShadow = true;
-    whiteMesh.receiveShadow = true;
+    whiteMesh.castShadow = castShadows;
+    whiteMesh.receiveShadow = receiveShadows;
     whiteMesh.updateMatrix();
     whiteMesh.matrixAutoUpdate = false;
     group.add(whiteMesh);
@@ -498,8 +508,8 @@ export function buildBridgeMesh(
     const mergedAccent = mergeWithCleanup(accentStructGeoms);
     geomsToDispose.push(mergedAccent);
     const accentMesh = new THREE.Mesh(mergedAccent, accentMat);
-    accentMesh.castShadow = true;
-    accentMesh.receiveShadow = true;
+    accentMesh.castShadow = castShadows;
+    accentMesh.receiveShadow = receiveShadows;
     accentMesh.updateMatrix();
     accentMesh.matrixAutoUpdate = false;
     group.add(accentMesh);

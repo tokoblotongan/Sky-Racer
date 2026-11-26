@@ -1,8 +1,9 @@
 // src/render/tunnel.ts
 
 import * as THREE from 'three';
-import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
+import { CONFIG, VISUAL_PRESETS, type GraphicsPreset, type VisualPreset, type VisualPresetName } from '../config';
 import type { Course, Route, StyleRun, TrackFrame } from '../core/course';
+import { createSurfaceMaterial } from './materialFactory';
 import type { QualityLevel } from './quality';
 
 export interface TunnelVisual {
@@ -170,6 +171,7 @@ function buildSweptVaultMesh(
   wallThickness: number,
   interiorMaterial: THREE.Material,
   exteriorMaterial: THREE.Material,
+  receiveShadows: boolean,
 ): { interiorMesh: THREE.Mesh; exteriorMesh: THREE.Mesh } {
   const innerProf = buildArchProfile(innerRadius, interiorHeight);
   const outerProf = buildArchProfile(innerRadius + wallThickness, interiorHeight + wallThickness);
@@ -233,13 +235,13 @@ function buildSweptVaultMesh(
 
   const interiorMesh = new THREE.Mesh(innerGeom, interiorMaterial);
   interiorMesh.castShadow = false;
-  interiorMesh.receiveShadow = true;
+  interiorMesh.receiveShadow = receiveShadows;
   interiorMesh.updateMatrix();
   interiorMesh.matrixAutoUpdate = false;
 
   const exteriorMesh = new THREE.Mesh(outerGeom, exteriorMaterial);
   exteriorMesh.castShadow = false;
-  exteriorMesh.receiveShadow = true;
+  exteriorMesh.receiveShadow = receiveShadows;
   exteriorMesh.updateMatrix();
   exteriorMesh.matrixAutoUpdate = false;
 
@@ -314,6 +316,64 @@ function buildCeilingLightRibbon(
   return mesh;
 }
 
+function buildWallTrimRibbon(
+  frames: readonly TrackFrame[],
+  latOffset: number,
+  yHeight: number,
+  material: THREE.Material,
+): THREE.Mesh {
+  const halfH = 0.22;
+  const ringCount = frames.length;
+  const positions = new Float32Array(ringCount * 2 * 3);
+  const uvs = new Float32Array(ringCount * 2 * 2);
+  const indices: number[] = [];
+  const pt = new THREE.Vector3();
+
+  for (let r = 0; r < ringCount; r++) {
+    const f = frames[r];
+    const v = f.s / 10;
+
+    pt.copy(f.position).addScaledVector(f.right, latOffset).addScaledVector(f.up, yHeight - halfH);
+    const idxA = r * 2;
+    positions[idxA * 3] = pt.x;
+    positions[idxA * 3 + 1] = pt.y;
+    positions[idxA * 3 + 2] = pt.z;
+    uvs[idxA * 2] = 0;
+    uvs[idxA * 2 + 1] = v;
+
+    pt.copy(f.position).addScaledVector(f.right, latOffset).addScaledVector(f.up, yHeight + halfH);
+    const idxB = r * 2 + 1;
+    positions[idxB * 3] = pt.x;
+    positions[idxB * 3 + 1] = pt.y;
+    positions[idxB * 3 + 2] = pt.z;
+    uvs[idxB * 2] = 1;
+    uvs[idxB * 2 + 1] = v;
+  }
+
+  for (let r = 0; r < ringCount - 1; r++) {
+    const a = r * 2;
+    const b = a + 1;
+    const c = (r + 1) * 2;
+    const d = c + 1;
+    indices.push(a, b, c);
+    indices.push(b, d, c);
+  }
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geom.setIndex(indices);
+  geom.computeVertexNormals();
+  geom.computeBoundingSphere();
+
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.updateMatrix();
+  mesh.matrixAutoUpdate = false;
+  return mesh;
+}
+
 function buildRibGeometry(radius: number, interiorHeight: number): THREE.BufferGeometry {
   const springY = 2.4;
   const domeHeight = Math.max(3.5, interiorHeight - springY);
@@ -344,6 +404,8 @@ function buildRainbowPortalGroup(
   interiorHeight: number,
   geomsToDispose: THREE.BufferGeometry[],
   matsToDispose: THREE.Material[],
+  graphicsPreset: GraphicsPreset,
+  receiveShadows: boolean,
 ): THREE.Group {
   const portalGroup = new THREE.Group();
   const negFwd = frame.tangent.clone().negate();
@@ -373,20 +435,21 @@ function buildRainbowPortalGroup(
     bandGeom.scale(1, 1, 2.2);
     geomsToDispose.push(bandGeom);
 
-    const bandMat = new THREE.MeshPhysicalMaterial({
+    const bandMat = createSurfaceMaterial(graphicsPreset, {
       color: rainbowColors[i],
       emissive: rainbowColors[i],
-      emissiveIntensity: 0.22,
+      emissiveIntensity: graphicsPreset !== 'penuh' ? 0.35 : 0.22,
       roughness: 0.22,
       metalness: 0.08,
       clearcoat: 0.85,
       clearcoatRoughness: 0.1,
+      physical: true,
     });
     matsToDispose.push(bandMat);
 
     const bandMesh = new THREE.Mesh(bandGeom, bandMat);
     bandMesh.castShadow = false;
-    bandMesh.receiveShadow = true;
+    bandMesh.receiveShadow = receiveShadows;
     portalGroup.add(bandMesh);
   }
 
@@ -400,6 +463,7 @@ export function buildTunnelMesh(
   maxAnisotropy = 8,
   initialPreset: VisualPresetName = CONFIG.visual.activePreset,
   quality: QualityLevel = 'high',
+  graphicsPreset: GraphicsPreset = 'penuh',
 ): TunnelVisual {
   const group = new THREE.Group();
   group.name = 'TunnelGroup';
@@ -423,43 +487,51 @@ export function buildTunnelMesh(
 
   const tunnelCfg = CONFIG.styles.tunnel;
   const preset = VISUAL_PRESETS[initialPreset];
+  const isSimple = graphicsPreset !== 'penuh';
+  const receiveShadows = graphicsPreset !== 'hemat';
 
   const interiorTex = createTunnelInteriorTexture(maxAnisotropy);
   const exteriorTex = createTunnelExteriorTexture(maxAnisotropy);
   let lightTex = createCeilingLightTexture(maxAnisotropy, preset);
 
-  const interiorMat = new THREE.MeshPhysicalMaterial({
+  const interiorMat = createSurfaceMaterial(graphicsPreset, {
     map: interiorTex,
     color: 0xffffff,
-    emissive: new THREE.Color('#2E1065'),
-    emissiveIntensity: 0.55,
+    emissive: isSimple ? '#3B1E8C' : '#2E1065',
+    emissiveIntensity: isSimple ? 0.78 : 0.55,
     roughness: 0.34,
     metalness: 0.14,
     clearcoat: 0.5,
     side: THREE.FrontSide,
+    physical: true,
   });
+  if (isSimple) {
+    interiorMat.color.setScalar(CONFIG.safeMode.wallLift);
+  }
 
-  const exteriorMat = new THREE.MeshPhysicalMaterial({
+  const exteriorMat = createSurfaceMaterial(graphicsPreset, {
     map: exteriorTex,
     color: 0xffffff,
     roughness: 0.28,
     metalness: 0.16,
     clearcoat: 0.72,
     side: THREE.FrontSide,
+    physical: true,
   });
 
-  const ribMat = new THREE.MeshPhysicalMaterial({
+  const ribMat = createSurfaceMaterial(graphicsPreset, {
     color: 0x6d28d9,
-    emissive: new THREE.Color('#3B1E8C'),
-    emissiveIntensity: 0.35,
+    emissive: '#3B1E8C',
+    emissiveIntensity: isSimple ? 0.55 : 0.35,
     roughness: 0.25,
     metalness: 0.2,
     clearcoat: 0.65,
+    physical: true,
   });
 
-  const lightMat = new THREE.MeshStandardMaterial({
+  const lightMat = createSurfaceMaterial(graphicsPreset, {
     map: lightTex,
-    emissive: new THREE.Color(0xffffff),
+    emissive: 0xffffff,
     emissiveMap: lightTex,
     emissiveIntensity: 1.85,
     roughness: 0.2,
@@ -467,8 +539,21 @@ export function buildTunnelMesh(
     side: THREE.DoubleSide,
   });
 
+  const wallTrimMat = isSimple
+    ? createSurfaceMaterial(graphicsPreset, {
+        color: '#C4B5FD',
+        emissive: '#A78BFA',
+        emissiveIntensity: CONFIG.safeMode.wallTrimEmissive,
+        roughness: 0.3,
+        side: THREE.DoubleSide,
+      })
+    : null;
+
   const geomsToDispose: THREE.BufferGeometry[] = [];
   const matsToDispose: THREE.Material[] = [interiorMat, exteriorMat, ribMat, lightMat];
+  if (wallTrimMat) {
+    matsToDispose.push(wallTrimMat);
+  }
   const texsToDispose: THREE.Texture[] = [interiorTex, exteriorTex];
 
   const ribGeom = buildRibGeometry(tunnelCfg.radius, tunnelCfg.interiorHeight);
@@ -507,6 +592,7 @@ export function buildTunnelMesh(
       tunnelCfg.wallThickness,
       interiorMat,
       exteriorMat,
+      receiveShadows,
     );
     geomsToDispose.push(interiorMesh.geometry, exteriorMesh.geometry);
     group.add(interiorMesh, exteriorMesh);
@@ -524,6 +610,15 @@ export function buildTunnelMesh(
       );
       geomsToDispose.push(stripMesh.geometry);
       group.add(stripMesh);
+    }
+
+    if (wallTrimMat) {
+      const wallOffset = tunnelCfg.radius - 0.35;
+      for (const sideSign of [-1, 1]) {
+        const trimRibbon = buildWallTrimRibbon(runFrames, sideSign * wallOffset, 1.65, wallTrimMat);
+        geomsToDispose.push(trimRibbon.geometry);
+        group.add(trimRibbon);
+      }
     }
 
     // Structural ribs inside tunnel every ribSpacing meters
@@ -544,6 +639,8 @@ export function buildTunnelMesh(
       tunnelCfg.interiorHeight,
       geomsToDispose,
       matsToDispose,
+      graphicsPreset,
+      receiveShadows,
     );
     const endPortal = buildRainbowPortalGroup(
       runFrames[runFrames.length - 1],
@@ -551,6 +648,8 @@ export function buildTunnelMesh(
       tunnelCfg.interiorHeight,
       geomsToDispose,
       matsToDispose,
+      graphicsPreset,
+      receiveShadows,
     );
     group.add(startPortal, endPortal);
   }
@@ -558,7 +657,7 @@ export function buildTunnelMesh(
   if (ribMatrices.length > 0) {
     const ribInst = new THREE.InstancedMesh(ribGeom, ribMat, ribMatrices.length);
     ribInst.castShadow = false;
-    ribInst.receiveShadow = true;
+    ribInst.receiveShadow = receiveShadows;
     for (let i = 0; i < ribMatrices.length; i++) {
       ribInst.setMatrixAt(i, ribMatrices[i]);
     }

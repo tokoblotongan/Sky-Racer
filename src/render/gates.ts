@@ -2,8 +2,9 @@
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { CONFIG } from '../config';
+import { CONFIG, type GraphicsPreset } from '../config';
 import type { Course, TrackFrame } from '../core/course';
+import { createSurfaceMaterial, type SurfaceMaterial } from './materialFactory';
 
 export interface GatesVisual {
   group: THREE.Group;
@@ -16,8 +17,8 @@ export interface GatesVisual {
 type GateStatus = 'active' | 'upcoming' | 'passed';
 
 interface CheckpointGateEntry {
-  material: THREE.MeshPhysicalMaterial;
-  beaconMaterial: THREE.MeshStandardMaterial;
+  material: SurfaceMaterial;
+  beaconMaterial: SurfaceMaterial;
   status: GateStatus;
 }
 
@@ -97,9 +98,15 @@ function applyCheckpointStatus(entry: CheckpointGateEntry, status: GateStatus): 
   }
 }
 
-export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
+export function buildGates(
+  course: Course,
+  maxAnisotropy = 8,
+  graphicsPreset: GraphicsPreset = 'penuh',
+): GatesVisual {
   const cfg = CONFIG.course;
   const gateCfg = CONFIG.checkpointGate;
+  const castShadows = graphicsPreset === 'penuh';
+  const receiveShadows = graphicsPreset !== 'hemat';
   const group = new THREE.Group();
   group.name = 'GatesGroup';
 
@@ -125,7 +132,7 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
       false,
     );
 
-    const material = new THREE.MeshPhysicalMaterial({
+    const material = createSurfaceMaterial(graphicsPreset, {
       color: CONFIG.colors.accent,
       emissive: CONFIG.colors.accent,
       emissiveIntensity: 0.22,
@@ -133,11 +140,13 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
       clearcoatRoughness: 0.08,
       roughness: 0.22,
       metalness: 0.06,
+      physical: true,
+      specularHighlight: true,
     });
 
     const archMesh = new THREE.Mesh(archGeometry, material);
-    archMesh.castShadow = true;
-    archMesh.receiveShadow = true;
+    archMesh.castShadow = castShadows;
+    archMesh.receiveShadow = receiveShadows;
     gateGroup.add(archMesh);
 
     // Rounded base plinths anchoring the arch sides outside the guardrails
@@ -150,12 +159,12 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
     for (const side of [-1, 1]) {
       const plinth = new THREE.Mesh(plinthGeom, material);
       plinth.position.set(side * spanWidth * 0.5, 0.1, 0);
-      plinth.castShadow = true;
+      plinth.castShadow = castShadows;
       gateGroup.add(plinth);
     }
 
     // Small rounded top chevron beacon so active gate stands out clearly from afar
-    const beaconMaterial = new THREE.MeshStandardMaterial({
+    const beaconMaterial = createSurfaceMaterial(graphicsPreset, {
       color: CONFIG.colors.accent,
       emissive: CONFIG.colors.accent,
       emissiveIntensity: 0.3,
@@ -204,7 +213,7 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
     12,
     false,
   );
-  const finishTrimMat = new THREE.MeshPhysicalMaterial({
+  const finishTrimMat = createSurfaceMaterial(graphicsPreset, {
     color: CONFIG.colors.accent,
     emissive: CONFIG.colors.accent,
     emissiveIntensity: 0.45,
@@ -212,9 +221,10 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
     clearcoatRoughness: 0.08,
     roughness: 0.2,
     metalness: 0.08,
+    physical: true,
   });
   const finishArch = new THREE.Mesh(finishArchGeom, finishTrimMat);
-  finishArch.castShadow = true;
+  finishArch.castShadow = castShadows;
   finishGroup.add(finishArch);
 
   if (isClosed) {
@@ -225,7 +235,7 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
       3,
       0.1,
     );
-    const towerCapMat = new THREE.MeshStandardMaterial({
+    const towerCapMat = createSurfaceMaterial(graphicsPreset, {
       color: CONFIG.colors.rail,
       emissive: CONFIG.colors.rail,
       emissiveIntensity: 0.22,
@@ -235,7 +245,7 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
     for (const side of [-1, 1]) {
       const tower = new THREE.Mesh(towerGeom, towerCapMat);
       tower.position.set(side * finishSpanW * 0.5, finishHeight * 0.37, 0);
-      tower.castShadow = true;
+      tower.castShadow = castShadows;
       finishGroup.add(tower);
     }
   }
@@ -245,7 +255,7 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
     checkerTexture.wrapS = THREE.RepeatWrapping;
     checkerTexture.repeat.set(2, 1);
   }
-  const bannerMaterial = new THREE.MeshPhysicalMaterial({
+  const bannerMaterial = createSurfaceMaterial(graphicsPreset, {
     map: checkerTexture,
     emissive: 0xffffff,
     emissiveMap: checkerTexture,
@@ -253,6 +263,7 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
     clearcoat: 0.9,
     clearcoatRoughness: 0.1,
     roughness: 0.22,
+    physical: true,
   });
   const bannerWidth = finishFrame.width + (isClosed ? 1.4 : 0.9);
   const bannerHeight = gateCfg.bannerHeight * (isClosed ? 1.25 : 1);
@@ -265,7 +276,7 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
   );
   const bannerMesh = new THREE.Mesh(bannerGeom, bannerMaterial);
   bannerMesh.position.set(0, finishHeight - (isClosed ? 0.42 : 0.53), 0);
-  bannerMesh.castShadow = true;
+  bannerMesh.castShadow = castShadows;
   finishGroup.add(bannerMesh);
 
   if (!isClosed) {
@@ -274,7 +285,7 @@ export function buildGates(course: Course, maxAnisotropy = 8): GatesVisual {
     const stripMesh = new THREE.Mesh(stripGeom, bannerMaterial);
     stripMesh.rotation.x = -Math.PI / 2;
     stripMesh.position.set(0, 0.015, 0);
-    stripMesh.receiveShadow = true;
+    stripMesh.receiveShadow = receiveShadows;
     finishGroup.add(stripMesh);
   }
 

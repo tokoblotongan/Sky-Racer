@@ -1,10 +1,11 @@
 // src/render/car.ts
 
 import * as THREE from 'three';
-import { CONFIG, VISUAL_PRESETS, type VisualPresetName } from '../config';
+import { CONFIG, VISUAL_PRESETS, type GraphicsPreset, type VisualPresetName } from '../config';
 import type { CarState } from '../core/physics';
 import type { CarDesignId } from './carDesigns';
 import { getCachedCarGeometryBundle, type WheelGeomSet } from './carGeometry';
+import { createSurfaceMaterial } from './materialFactory';
 
 export interface CarColorPalette {
   body?: string;
@@ -17,6 +18,7 @@ export interface BuildCarMeshOptions {
   colors?: CarColorPalette;
   maxAnisotropy?: number;
   presetName?: VisualPresetName;
+  graphicsPreset?: GraphicsPreset;
 }
 
 export interface CarVisual {
@@ -125,6 +127,7 @@ function createWheelInstance(
   },
   side: -1 | 1,
   camberRad: number,
+  shadowsEnabled: boolean,
 ): WheelControl {
   const steerPivot = new THREE.Group();
   const camberGroup = new THREE.Group();
@@ -150,16 +153,16 @@ function createWheelInstance(
   spinMesh.add(wheelFaceHolder);
 
   const tireMesh = new THREE.Mesh(geomSet.tireGeom, materials.tire);
-  tireMesh.castShadow = true;
-  tireMesh.receiveShadow = true;
+  tireMesh.castShadow = shadowsEnabled;
+  tireMesh.receiveShadow = shadowsEnabled;
   wheelFaceHolder.add(tireMesh);
 
   const rimMesh = new THREE.Mesh(geomSet.rimGeom, materials.rim);
-  rimMesh.castShadow = true;
+  rimMesh.castShadow = shadowsEnabled;
   wheelFaceHolder.add(rimMesh);
 
   const spokeMesh = new THREE.Mesh(geomSet.spokeGeom, materials.rim);
-  spokeMesh.castShadow = true;
+  spokeMesh.castShadow = shadowsEnabled;
   wheelFaceHolder.add(spokeMesh);
 
   const hubMesh = new THREE.Mesh(geomSet.hubGeom, materials.hub);
@@ -176,6 +179,8 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   const visualCfg = cfg.visual;
   const designId: CarDesignId = options.designId ?? visualCfg.designId;
   const initialPresetName: VisualPresetName = options.presetName ?? CONFIG.visual.activePreset;
+  const graphicsPreset: GraphicsPreset = options.graphicsPreset ?? 'penuh';
+  const carShadowsEnabled = graphicsPreset !== 'hemat';
   const maxAnisotropy = options.maxAnisotropy ?? 8;
 
   const activePreset = VISUAL_PRESETS[initialPresetName];
@@ -229,47 +234,59 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
     initialColors.accent,
   );
 
-  const bodyMaterial = new THREE.MeshPhysicalMaterial({
+  const bodyMaterial = createSurfaceMaterial(graphicsPreset, {
     map: bodyTexture,
     clearcoat: visualCfg.clearcoat,
     clearcoatRoughness: visualCfg.clearcoatRoughness,
     roughness: visualCfg.roughness,
     metalness: visualCfg.metalness,
     envMapIntensity: visualCfg.envMapIntensity,
+    physical: true,
+    specularHighlight: true,
+    shininess: 38,
   });
   ownedMaterials.push(bodyMaterial);
 
-  const paintSolidMaterial = new THREE.MeshPhysicalMaterial({
+  const paintSolidMaterial = createSurfaceMaterial(graphicsPreset, {
     color: initialColors.body,
     clearcoat: visualCfg.clearcoat,
     clearcoatRoughness: visualCfg.clearcoatRoughness,
     roughness: visualCfg.roughness,
     metalness: visualCfg.metalness,
     envMapIntensity: visualCfg.envMapIntensity,
+    physical: true,
+    specularHighlight: true,
+    shininess: 38,
   });
   ownedMaterials.push(paintSolidMaterial);
 
-  const accentMaterial = new THREE.MeshPhysicalMaterial({
+  const accentMaterial = createSurfaceMaterial(graphicsPreset, {
     color: initialColors.accent,
     clearcoat: visualCfg.clearcoat,
     clearcoatRoughness: 0.08,
     roughness: 0.22,
     metalness: 0.14,
     envMapIntensity: visualCfg.envMapIntensity,
+    physical: true,
+    specularHighlight: true,
+    shininess: 42,
   });
   ownedMaterials.push(accentMaterial);
 
-  const glassMaterial = new THREE.MeshPhysicalMaterial({
+  const glassMaterial = createSurfaceMaterial(graphicsPreset, {
     color: activePreset.car.cabinColorHex,
     clearcoat: 1.0,
     clearcoatRoughness: 0.04,
     roughness: 0.06,
     metalness: 0.2,
     envMapIntensity: 1.35,
+    physical: true,
+    specularHighlight: true,
+    shininess: 80,
   });
   ownedMaterials.push(glassMaterial);
 
-  const trimMaterial = new THREE.MeshStandardMaterial({
+  const trimMaterial = createSurfaceMaterial(graphicsPreset, {
     color: activePreset.car.bumperColorHex,
     roughness: 0.48,
     metalness: 0.28,
@@ -277,7 +294,7 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   });
   ownedMaterials.push(trimMaterial);
 
-  const wellMaterial = new THREE.MeshStandardMaterial({
+  const wellMaterial = createSurfaceMaterial(graphicsPreset, {
     color: 0x0b0e14,
     roughness: 0.94,
     metalness: 0.02,
@@ -285,7 +302,7 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   });
   ownedMaterials.push(wellMaterial);
 
-  const headlightMaterial = new THREE.MeshStandardMaterial({
+  const headlightMaterial = createSurfaceMaterial(graphicsPreset, {
     color: cfg.headlightColorHex,
     emissive: cfg.headlightColorHex,
     emissiveIntensity: cfg.headlightEmissiveIntensity,
@@ -293,7 +310,7 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   });
   ownedMaterials.push(headlightMaterial);
 
-  const taillightMaterial = new THREE.MeshStandardMaterial({
+  const taillightMaterial = createSurfaceMaterial(graphicsPreset, {
     color: cfg.taillightColorHex,
     emissive: cfg.taillightColorHex,
     emissiveIntensity: cfg.taillightEmissiveIntensity,
@@ -301,7 +318,7 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   });
   ownedMaterials.push(taillightMaterial);
 
-  const underglowMaterial = new THREE.MeshStandardMaterial({
+  const underglowMaterial = createSurfaceMaterial(graphicsPreset, {
     color: activePreset.car.exhaustGlowColorHex,
     emissive: activePreset.car.exhaustGlowColorHex,
     emissiveIntensity: 1.15,
@@ -320,7 +337,7 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   });
   ownedMaterials.push(exhaustGlowMaterial);
 
-  const exhaustCoreMaterial = new THREE.MeshStandardMaterial({
+  const exhaustCoreMaterial = createSurfaceMaterial(graphicsPreset, {
     color: activePreset.car.exhaustGlowColorHex,
     emissive: activePreset.car.exhaustGlowColorHex,
     emissiveIntensity: cfg.exhaustEmissiveIntensity,
@@ -328,7 +345,7 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   });
   ownedMaterials.push(exhaustCoreMaterial);
 
-  const tireMaterial = new THREE.MeshStandardMaterial({
+  const tireMaterial = createSurfaceMaterial(graphicsPreset, {
     color: activePreset.car.tireColorHex,
     roughness: 0.86,
     metalness: 0.04,
@@ -336,17 +353,20 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   });
   ownedMaterials.push(tireMaterial);
 
-  const rimMaterial = new THREE.MeshPhysicalMaterial({
+  const rimMaterial = createSurfaceMaterial(graphicsPreset, {
     color: activePreset.car.rimColorHex,
     metalness: cfg.rimMetalness,
     roughness: cfg.rimRoughness,
     clearcoat: 0.65,
     clearcoatRoughness: 0.08,
     envMapIntensity: 1.35,
+    physical: true,
+    specularHighlight: true,
+    shininess: 64,
   });
   ownedMaterials.push(rimMaterial);
 
-  const discMaterial = new THREE.MeshStandardMaterial({
+  const discMaterial = createSurfaceMaterial(graphicsPreset, {
     color: 0x9aa4b2,
     metalness: 0.86,
     roughness: 0.34,
@@ -354,7 +374,7 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   });
   ownedMaterials.push(discMaterial);
 
-  const caliperMaterial = new THREE.MeshStandardMaterial({
+  const caliperMaterial = createSurfaceMaterial(graphicsPreset, {
     color: initialColors.accent,
     roughness: 0.32,
     metalness: 0.25,
@@ -364,27 +384,27 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
 
   // 1. Sculpted superellipse loft body + painted roof cap + arch flares
   const bodyMesh = new THREE.Mesh(bundle.bodyGeom, bodyMaterial);
-  bodyMesh.castShadow = true;
-  bodyMesh.receiveShadow = true;
+  bodyMesh.castShadow = carShadowsEnabled;
+  bodyMesh.receiveShadow = carShadowsEnabled;
   sprungBody.add(bodyMesh);
 
   const roofMesh = new THREE.Mesh(bundle.cabin.roofGeom, bodyMaterial);
-  roofMesh.castShadow = true;
-  roofMesh.receiveShadow = true;
+  roofMesh.castShadow = carShadowsEnabled;
+  roofMesh.receiveShadow = carShadowsEnabled;
   sprungBody.add(roofMesh);
 
   const glassMesh = new THREE.Mesh(bundle.cabin.glassGeom, glassMaterial);
-  glassMesh.castShadow = true;
-  glassMesh.receiveShadow = true;
+  glassMesh.castShadow = carShadowsEnabled;
+  glassMesh.receiveShadow = carShadowsEnabled;
   sprungBody.add(glassMesh);
 
   const cabinTrimMesh = new THREE.Mesh(bundle.cabin.trimGeom, trimMaterial);
-  cabinTrimMesh.castShadow = true;
+  cabinTrimMesh.castShadow = carShadowsEnabled;
   sprungBody.add(cabinTrimMesh);
 
   const archFlareMesh = new THREE.Mesh(bundle.arch.flareGeom, paintSolidMaterial);
-  archFlareMesh.castShadow = true;
-  archFlareMesh.receiveShadow = true;
+  archFlareMesh.castShadow = carShadowsEnabled;
+  archFlareMesh.receiveShadow = carShadowsEnabled;
   sprungBody.add(archFlareMesh);
 
   const wheelWellMesh = new THREE.Mesh(bundle.arch.wellGeom, wellMaterial);
@@ -401,24 +421,24 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   sprungBody.add(grilleMesh);
 
   const splitterMesh = new THREE.Mesh(bundle.details.splitterGeom, trimMaterial);
-  splitterMesh.castShadow = true;
+  splitterMesh.castShadow = carShadowsEnabled;
   sprungBody.add(splitterMesh);
 
   const mirrorMesh = new THREE.Mesh(bundle.details.mirrorGeom, paintSolidMaterial);
-  mirrorMesh.castShadow = true;
+  mirrorMesh.castShadow = carShadowsEnabled;
   sprungBody.add(mirrorMesh);
 
   const diffuserMesh = new THREE.Mesh(bundle.details.diffuserGeom, trimMaterial);
-  diffuserMesh.castShadow = true;
+  diffuserMesh.castShadow = carShadowsEnabled;
   sprungBody.add(diffuserMesh);
 
   const spoilerBodyMesh = new THREE.Mesh(bundle.details.spoilerBodyGeom, paintSolidMaterial);
-  spoilerBodyMesh.castShadow = true;
-  spoilerBodyMesh.receiveShadow = true;
+  spoilerBodyMesh.castShadow = carShadowsEnabled;
+  spoilerBodyMesh.receiveShadow = carShadowsEnabled;
   sprungBody.add(spoilerBodyMesh);
 
   const spoilerAccentMesh = new THREE.Mesh(bundle.details.spoilerAccentGeom, accentMaterial);
-  spoilerAccentMesh.castShadow = true;
+  spoilerAccentMesh.castShadow = carShadowsEnabled;
   sprungBody.add(spoilerAccentMesh);
 
   const underglowMesh = new THREE.Mesh(bundle.details.underglowGeom, underglowMaterial);
@@ -433,7 +453,7 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
     const exX = side * ex.xOffset;
     const pipe = new THREE.Mesh(bundle.details.exhaustPipeGeom, rimMaterial);
     pipe.position.set(exX, ex.y, ex.z - ex.length * 0.22);
-    pipe.castShadow = true;
+    pipe.castShadow = carShadowsEnabled;
     sprungBody.add(pipe);
 
     const core = new THREE.Mesh(bundle.details.exhaustCoreGeom, exhaustCoreMaterial);
@@ -466,19 +486,19 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   const frontCamber = wSpec.frontCamberRad || visualCfg.wheelDetail.camberRad;
   const rearCamber = wSpec.rearCamberRad || visualCfg.wheelDetail.camberRad;
 
-  const fl = createWheelInstance(bundle.wheels.front, wheelMats, -1, frontCamber);
+  const fl = createWheelInstance(bundle.wheels.front, wheelMats, -1, frontCamber, carShadowsEnabled);
   fl.steerPivot.position.set(-wSpec.frontTrackHalfWidth, wSpec.frontRadius, wSpec.frontOffsetZ);
   root.add(fl.steerPivot);
 
-  const fr = createWheelInstance(bundle.wheels.front, wheelMats, 1, frontCamber);
+  const fr = createWheelInstance(bundle.wheels.front, wheelMats, 1, frontCamber, carShadowsEnabled);
   fr.steerPivot.position.set(wSpec.frontTrackHalfWidth, wSpec.frontRadius, wSpec.frontOffsetZ);
   root.add(fr.steerPivot);
 
-  const rl = createWheelInstance(bundle.wheels.rear, wheelMats, -1, rearCamber);
+  const rl = createWheelInstance(bundle.wheels.rear, wheelMats, -1, rearCamber, carShadowsEnabled);
   rl.steerPivot.position.set(-wSpec.rearTrackHalfWidth, wSpec.rearRadius, wSpec.rearOffsetZ);
   root.add(rl.steerPivot);
 
-  const rr = createWheelInstance(bundle.wheels.rear, wheelMats, 1, rearCamber);
+  const rr = createWheelInstance(bundle.wheels.rear, wheelMats, 1, rearCamber, carShadowsEnabled);
   rr.steerPivot.position.set(wSpec.rearTrackHalfWidth, wSpec.rearRadius, wSpec.rearOffsetZ);
   root.add(rr.steerPivot);
 

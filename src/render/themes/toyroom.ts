@@ -1,7 +1,7 @@
 // src/render/themes/toyroom.ts
 
 import * as THREE from 'three';
-import { VISUAL_PRESETS, type VisualPresetName } from '../../config';
+import { VISUAL_PRESETS, type GraphicsPreset, type VisualPresetName } from '../../config';
 import type { Course } from '../../core/course';
 import { buildProps } from '../props';
 import type { QualityLevel } from '../quality';
@@ -44,9 +44,16 @@ export const toyroomTheme: WorldTheme = {
     _scene: THREE.Scene,
     maxAnisotropy: number,
     presetName: VisualPresetName,
-    safeMode = false,
+    graphicsPreset: GraphicsPreset = 'penuh',
   ): ThemeInstance {
-    const propsVisual = buildProps(course, quality, maxAnisotropy, presetName, safeMode);
+    const propsVisual = buildProps(
+      course,
+      quality,
+      maxAnisotropy,
+      presetName,
+      graphicsPreset === 'hemat',
+      graphicsPreset,
+    );
     return {
       id: 'toyroom',
       group: propsVisual.group,

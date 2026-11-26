@@ -3,8 +3,9 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CONFIG, type VisualPreset, type VisualPresetName } from '../config';
+import { CONFIG, type GraphicsPreset, type VisualPreset, type VisualPresetName } from '../config';
 import type { Course, CourseBounds } from '../core/course';
+import { createSurfaceMaterial } from './materialFactory';
 import type { QualityLevel } from './quality';
 import { getTheme, type ThemeInstance } from './themes';
 import { probeCapabilitiesFromGl, type WebGlDiagnostics } from '../ui/reportOverlay';
@@ -35,6 +36,7 @@ export interface SceneContext {
   camera: THREE.PerspectiveCamera;
   isSoftwareGl: boolean;
   safeMode: boolean;
+  graphicsPreset: GraphicsPreset;
   rendererFallbackUsed: boolean;
   maxAnisotropy: number;
   getDiagnostics: () => WebGlDiagnostics;
@@ -46,6 +48,8 @@ export interface SceneContext {
   updateSunShadowTarget: (focusPos: THREE.Vector3) => void;
   setQuality: (level: QualityLevel) => void;
   applyPalette: (name: VisualPresetName) => void;
+  setExposureBrightness: (mult: number) => void;
+  getExposureBrightness: () => number;
   getGroundY: (x: number, z: number) => number;
   getViewportSize: () => { width: number; height: number };
   dispose: () => void;
@@ -382,6 +386,7 @@ function disposeObjectResources(root: THREE.Object3D): void {
           mat instanceof THREE.MeshStandardMaterial ||
           mat instanceof THREE.MeshPhysicalMaterial ||
           mat instanceof THREE.MeshLambertMaterial ||
+          mat instanceof THREE.MeshPhongMaterial ||
           mat instanceof THREE.MeshBasicMaterial
         ) {
           if (mat.map) textures.add(mat.map);
@@ -400,8 +405,11 @@ export function createSceneContext(
   container: HTMLElement,
   initialQuality: QualityLevel = 'high',
   safeMode = false,
+  graphicsPreset?: GraphicsPreset,
 ): SceneContext {
-  const effectiveInitialQuality: QualityLevel = safeMode ? 'mobile' : initialQuality;
+  const requestedPreset: GraphicsPreset = safeMode ? 'hemat' : (graphicsPreset ?? 'penuh');
+  const requestedSafeOnly = requestedPreset === 'hemat';
+  const effectiveInitialQuality: QualityLevel = requestedSafeOnly ? 'mobile' : initialQuality;
   const initialQualityPreset = CONFIG.quality.levels[effectiveInitialQuality];
   const vis = CONFIG.visual;
   let activePresetName: VisualPresetName = vis.activePreset;
@@ -413,8 +421,8 @@ export function createSceneContext(
 
   try {
     createdRenderer = new THREE.WebGLRenderer({
-      antialias: !safeMode && initialQualityPreset.antialias,
-      powerPreference: safeMode ? 'default' : 'high-performance',
+      antialias: !requestedSafeOnly && initialQualityPreset.antialias,
+      powerPreference: requestedSafeOnly ? 'default' : 'high-performance',
     });
   } catch (err1) {
     attemptErrors.push(err1 instanceof Error ? err1.message : String(err1 ?? 'WebGL tier 1 failed'));
@@ -437,7 +445,11 @@ export function createSceneContext(
   const isSoftwareGl = /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(
     initialDiag.unmaskedRenderer,
   );
-  const effectiveSafeMode = safeMode || rendererFallbackUsed || isSoftwareGl;
+  const effectivePreset: GraphicsPreset =
+    requestedSafeOnly || rendererFallbackUsed || isSoftwareGl ? 'hemat' : requestedPreset;
+  const effectiveSafeMode = effectivePreset === 'hemat';
+  const isBalanced = effectivePreset === 'seimbang';
+  const isFull = effectivePreset === 'penuh';
   const activePresetLevel: QualityLevel = effectiveSafeMode ? 'mobile' : effectiveInitialQuality;
   const activeQualityPreset = CONFIG.quality.levels[activePresetLevel];
 
@@ -451,16 +463,18 @@ export function createSceneContext(
   };
   const initViewport = measureViewport();
 
+  let userBrightnessMultiplier = 1.0;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = activePreset.exposure;
+  renderer.toneMapping = isFull ? THREE.ACESFilmicToneMapping : THREE.LinearToneMapping;
+  renderer.toneMappingExposure = activePreset.exposure * userBrightnessMultiplier;
   renderer.setPixelRatio(
     effectiveSafeMode
       ? 1
       : Math.min(window.devicePixelRatio || 1, activeQualityPreset.pixelRatioMax),
   );
   renderer.setSize(initViewport.width, initViewport.height);
-  const initialShadowsEnabled = !effectiveSafeMode && activeQualityPreset.shadowsEnabled;
+  const initialShadowsEnabled =
+    !effectiveSafeMode && (isBalanced || activeQualityPreset.shadowsEnabled);
   renderer.shadowMap.enabled = initialShadowsEnabled;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.appendChild(renderer.domElement);
@@ -492,7 +506,7 @@ export function createSceneContext(
   scene.fog = fogEnabled ? ensureDebugFog() : null;
 
   let envRenderTarget: THREE.WebGLRenderTarget | null = null;
-  if (!effectiveSafeMode) {
+  if (isFull) {
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const roomEnvironment = new RoomEnvironment();
     envRenderTarget = pmremGenerator.fromScene(roomEnvironment, CONFIG.renderer.envBlur);
@@ -525,9 +539,14 @@ export function createSceneContext(
   const snappedTarget = new THREE.Vector3();
 
   let currentPixelRatioMax: number = activeQualityPreset.pixelRatioMax;
-  let currentShadowMapSize: number =
-    activeQualityPreset.shadowMapSize > 0 ? activeQualityPreset.shadowMapSize : 256;
-  let currentShadowFollowRadius: number = activeQualityPreset.shadowFollowRadius;
+  let currentShadowMapSize: number = isBalanced
+    ? CONFIG.quality.balancedShadowMapSize
+    : activeQualityPreset.shadowMapSize > 0
+      ? activeQualityPreset.shadowMapSize
+      : 256;
+  let currentShadowFollowRadius: number = isBalanced
+    ? CONFIG.quality.balancedShadowRadius
+    : activeQualityPreset.shadowFollowRadius;
 
   const sunLight = new THREE.DirectionalLight(activePreset.sunColor, activePreset.sunIntensity);
   sunLight.position.copy(sunOffsetVec);
@@ -548,10 +567,24 @@ export function createSceneContext(
   const hemiLight = new THREE.HemisphereLight(
     activePreset.hemisphereSkyColor,
     activePreset.hemisphereGroundColor,
-    activePreset.hemisphereIntensity,
+    isFull ? activePreset.hemisphereIntensity : Math.max(activePreset.hemisphereIntensity, CONFIG.safeMode.hemiIntensity),
   );
   hemiLight.position.set(0, 120, 0);
   scene.add(hemiLight);
+
+  if (!isFull) {
+    const ambientFallbackLight = new THREE.AmbientLight(0xffffff, CONFIG.safeMode.ambientIntensity);
+    scene.add(ambientFallbackLight);
+
+    const fillDirLight = new THREE.DirectionalLight(0xffffff, CONFIG.safeMode.dirIntensity);
+    fillDirLight.position.set(
+      CONFIG.safeMode.dirOffset.x,
+      CONFIG.safeMode.dirOffset.y,
+      CONFIG.safeMode.dirOffset.z,
+    );
+    fillDirLight.castShadow = false;
+    scene.add(fillDirLight);
+  }
 
   // Room shell: seamless floor + 4 walls + baseboards + ceiling with full anisotropic textures
   let plankRepeatX: number = CONFIG.floor.textureRepeat;
@@ -566,7 +599,7 @@ export function createSceneContext(
     plankRepeatZ,
     maxTextureSize,
   );
-  const floorMaterial = new THREE.MeshStandardMaterial({
+  const floorMaterial = createSurfaceMaterial(effectivePreset, {
     map: woodColorMap,
     roughnessMap: woodRoughnessMap,
     roughness: CONFIG.floor.roughness,
@@ -579,11 +612,14 @@ export function createSceneContext(
     maxAnisotropy,
     maxTextureSize,
   );
-  const backWallMat = new THREE.MeshStandardMaterial({
+  const backWallMat = createSurfaceMaterial(effectivePreset, {
     map: backWallTex,
     roughness: 0.9,
     metalness: 0.0,
   });
+  if (!isFull) {
+    backWallMat.color.setScalar(CONFIG.safeMode.wallLift);
+  }
 
   let sideWallTex = createWallTexture(
     activePreset.room.sideWallColor,
@@ -591,13 +627,16 @@ export function createSceneContext(
     maxAnisotropy,
     maxTextureSize,
   );
-  const sideWallMat = new THREE.MeshStandardMaterial({
+  const sideWallMat = createSurfaceMaterial(effectivePreset, {
     map: sideWallTex,
     roughness: 0.9,
     metalness: 0.0,
   });
+  if (!isFull) {
+    sideWallMat.color.setScalar(CONFIG.safeMode.wallLift);
+  }
 
-  const baseboardMat = new THREE.MeshStandardMaterial({
+  const baseboardMat = createSurfaceMaterial(effectivePreset, {
     color: activePreset.room.baseboardColor,
     roughness: 0.66,
     metalness: 0.02,
@@ -610,13 +649,22 @@ export function createSceneContext(
     ceilingRepeatZ,
     maxTextureSize,
   );
-  const ceilingMat = new THREE.MeshStandardMaterial({
+  const ceilingMat = createSurfaceMaterial(effectivePreset, {
     map: ceilingTex,
     roughness: 0.88,
     metalness: 0.0,
-    emissive: new THREE.Color(activePreset.room.ceilingColor),
-    emissiveIntensity: 0.18,
+    emissive: activePreset.room.ceilingColor,
+    emissiveIntensity: isFull ? 0.18 : 0.38,
   });
+
+  const wallTrimLightMat = !isFull
+    ? createSurfaceMaterial(effectivePreset, {
+        color: '#FFFDF7',
+        emissive: '#E2E8F0',
+        emissiveIntensity: CONFIG.safeMode.wallTrimEmissive,
+        roughness: 0.4,
+      })
+    : null;
 
   const roomShellGroup = new THREE.Group();
   roomShellGroup.name = 'RoomShellGroup';
@@ -645,7 +693,7 @@ export function createSceneContext(
     const floorMesh = new THREE.Mesh(floorGeom, floorMaterial);
     floorMesh.name = 'RoomFloor';
     floorMesh.position.set(dim.centerX, 0, dim.centerZ);
-    floorMesh.receiveShadow = true;
+    floorMesh.receiveShadow = !effectiveSafeMode;
     floorMesh.castShadow = false;
     floorMesh.updateMatrix();
     floorMesh.matrixAutoUpdate = false;
@@ -667,6 +715,7 @@ export function createSceneContext(
     const backWallGeoms: THREE.BufferGeometry[] = [];
     const sideWallGeoms: THREE.BufferGeometry[] = [];
     const trimGeoms: THREE.BufferGeometry[] = [];
+    const lightTrimGeoms: THREE.BufferGeometry[] = [];
 
     for (const wd of backFrontWallDefs) {
       const wg = new THREE.BoxGeometry(wd.w, wallH, wd.d);
@@ -682,6 +731,12 @@ export function createSceneContext(
       const cb = new THREE.BoxGeometry(wd.w - 1, 4.2, wd.d + 1.4);
       cb.translate(wd.x, dim.height - 2.1, wd.z);
       trimGeoms.push(cb);
+
+      if (wallTrimLightMat) {
+        const lb = new THREE.BoxGeometry(wd.w - 2, 1.8, wd.d + 0.8);
+        lb.translate(wd.x, 24, wd.z);
+        lightTrimGeoms.push(lb);
+      }
     }
 
     for (const wd of sideWallDefs) {
@@ -696,6 +751,12 @@ export function createSceneContext(
       const cb = new THREE.BoxGeometry(wd.w + 1.4, 4.2, wd.d - 1);
       cb.translate(wd.x, dim.height - 2.1, wd.z);
       trimGeoms.push(cb);
+
+      if (wallTrimLightMat) {
+        const lb = new THREE.BoxGeometry(wd.w + 0.8, 1.8, wd.d - 2);
+        lb.translate(wd.x, 24, wd.z);
+        lightTrimGeoms.push(lb);
+      }
     }
 
     const backGeom = mergeRoomGeoms(backWallGeoms);
@@ -703,7 +764,7 @@ export function createSceneContext(
     const backWallsMesh = new THREE.Mesh(backGeom, backWallMat);
     backWallsMesh.name = 'RoomBackFrontWalls';
     backWallsMesh.castShadow = false;
-    backWallsMesh.receiveShadow = true;
+    backWallsMesh.receiveShadow = !effectiveSafeMode;
     backWallsMesh.updateMatrix();
     backWallsMesh.matrixAutoUpdate = false;
     roomShellGroup.add(backWallsMesh);
@@ -713,7 +774,7 @@ export function createSceneContext(
     const sideWallsMesh = new THREE.Mesh(sideGeom, sideWallMat);
     sideWallsMesh.name = 'RoomSideWalls';
     sideWallsMesh.castShadow = false;
-    sideWallsMesh.receiveShadow = true;
+    sideWallsMesh.receiveShadow = !effectiveSafeMode;
     sideWallsMesh.updateMatrix();
     sideWallsMesh.matrixAutoUpdate = false;
     roomShellGroup.add(sideWallsMesh);
@@ -723,10 +784,22 @@ export function createSceneContext(
     const trimMesh = new THREE.Mesh(trimGeom, baseboardMat);
     trimMesh.name = 'RoomBaseboardsAndCrown';
     trimMesh.castShadow = false;
-    trimMesh.receiveShadow = true;
+    trimMesh.receiveShadow = !effectiveSafeMode;
     trimMesh.updateMatrix();
     trimMesh.matrixAutoUpdate = false;
     roomShellGroup.add(trimMesh);
+
+    if (wallTrimLightMat && lightTrimGeoms.length > 0) {
+      const lightTrimGeom = mergeRoomGeoms(lightTrimGeoms);
+      roomGeometries.push(lightTrimGeom);
+      const lightTrimMesh = new THREE.Mesh(lightTrimGeom, wallTrimLightMat);
+      lightTrimMesh.name = 'RoomWallEmissiveTrim';
+      lightTrimMesh.castShadow = false;
+      lightTrimMesh.receiveShadow = false;
+      lightTrimMesh.updateMatrix();
+      lightTrimMesh.matrixAutoUpdate = false;
+      roomShellGroup.add(lightTrimMesh);
+    }
 
     ceilingRepeatX = Math.max(4, Math.round(floorW / 95));
     ceilingRepeatZ = Math.max(4, Math.round(floorD / 95));
@@ -785,7 +858,7 @@ export function createSceneContext(
         0.2,
         2.5,
       );
-      renderer.toneMappingExposure = currentExposure;
+      renderer.toneMappingExposure = currentExposure * userBrightnessMultiplier;
       updateVisualDebugOverlay();
     } else if (event.code === 'BracketRight') {
       currentExposure = THREE.MathUtils.clamp(
@@ -793,7 +866,7 @@ export function createSceneContext(
         0.2,
         2.5,
       );
-      renderer.toneMappingExposure = currentExposure;
+      renderer.toneMappingExposure = currentExposure * userBrightnessMultiplier;
       updateVisualDebugOverlay();
     }
   };
@@ -870,6 +943,19 @@ export function createSceneContext(
     }
   }
 
+  function setExposureBrightness(mult: number): void {
+    userBrightnessMultiplier = THREE.MathUtils.clamp(
+      mult,
+      CONFIG.safeMode.brightnessMin,
+      CONFIG.safeMode.brightnessMax,
+    );
+    renderer.toneMappingExposure = currentExposure * userBrightnessMultiplier;
+  }
+
+  function getExposureBrightness(): number {
+    return userBrightnessMultiplier;
+  }
+
   function applyThemeAtmosphere(): void {
     const theme = getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom');
     const sky = theme.getSkyColors(activePresetName);
@@ -878,7 +964,7 @@ export function createSceneContext(
     roomShellGroup.visible = lighting.showRoomShell;
 
     currentExposure = lighting.exposure;
-    renderer.toneMappingExposure = currentExposure;
+    renderer.toneMappingExposure = currentExposure * userBrightnessMultiplier;
 
     scene.background = new THREE.Color(sky.skyHorizon);
     skyDome.material.uniforms.uSkyTop.value.set(sky.skyTop);
@@ -889,14 +975,16 @@ export function createSceneContext(
       debugFog.color.set(sky.fogColor);
     }
 
-    scene.environmentIntensity = effectiveSafeMode ? 0 : lighting.envIntensity;
+    scene.environmentIntensity = isFull ? lighting.envIntensity : 0;
 
     sunLight.color.set(lighting.sunColor);
     sunLight.intensity = lighting.sunIntensity;
 
     hemiLight.color.set(lighting.hemisphereSkyColor);
     hemiLight.groundColor.set(lighting.hemisphereGroundColor);
-    hemiLight.intensity = lighting.hemisphereIntensity;
+    hemiLight.intensity = isFull
+      ? lighting.hemisphereIntensity
+      : Math.max(lighting.hemisphereIntensity, CONFIG.safeMode.hemiIntensity);
   }
 
   function setTheme(course: Course, quality: QualityLevel): void {
@@ -918,7 +1006,7 @@ export function createSceneContext(
       scene,
       maxAnisotropy,
       activePresetName,
-      effectiveSafeMode,
+      effectivePreset,
     );
     scene.add(activeTheme.group);
 
@@ -973,13 +1061,16 @@ export function createSceneContext(
       effectiveSafeMode ? 1 : Math.min(window.devicePixelRatio || 1, currentPixelRatioMax),
     );
 
-    const shadowsEnabled = !effectiveSafeMode && preset.shadowsEnabled;
+    const shadowsEnabled = !effectiveSafeMode && (isBalanced || preset.shadowsEnabled);
     renderer.shadowMap.enabled = shadowsEnabled;
     sunLight.castShadow = shadowsEnabled;
 
+    const targetRadius = isBalanced
+      ? CONFIG.quality.balancedShadowRadius
+      : preset.shadowFollowRadius;
     let frustumChanged = false;
-    if (currentShadowFollowRadius !== preset.shadowFollowRadius) {
-      currentShadowFollowRadius = preset.shadowFollowRadius;
+    if (currentShadowFollowRadius !== targetRadius) {
+      currentShadowFollowRadius = targetRadius;
       sunLight.shadow.camera.left = -currentShadowFollowRadius;
       sunLight.shadow.camera.right = currentShadowFollowRadius;
       sunLight.shadow.camera.top = currentShadowFollowRadius;
@@ -987,7 +1078,11 @@ export function createSceneContext(
       frustumChanged = true;
     }
 
-    const nextShadowSize = preset.shadowMapSize > 0 ? preset.shadowMapSize : 256;
+    const nextShadowSize = isBalanced
+      ? CONFIG.quality.balancedShadowMapSize
+      : preset.shadowMapSize > 0
+        ? preset.shadowMapSize
+        : 256;
     if (currentShadowMapSize !== nextShadowSize) {
       currentShadowMapSize = nextShadowSize;
       sunLight.shadow.mapSize.set(currentShadowMapSize, currentShadowMapSize);
@@ -1080,7 +1175,9 @@ export function createSceneContext(
     woodColorMap = nextWood.colorMap;
     woodRoughnessMap = nextWood.roughnessMap;
     floorMaterial.map = woodColorMap;
-    floorMaterial.roughnessMap = woodRoughnessMap;
+    if ('roughnessMap' in floorMaterial) {
+      floorMaterial.roughnessMap = woodRoughnessMap;
+    }
     floorMaterial.needsUpdate = true;
     prevWoodColor.dispose();
     prevWoodRough.dispose();
@@ -1093,6 +1190,9 @@ export function createSceneContext(
       maxTextureSize,
     );
     backWallMat.map = backWallTex;
+    if (!isFull) {
+      backWallMat.color.setScalar(CONFIG.safeMode.wallLift);
+    }
     backWallMat.needsUpdate = true;
     prevBackTex.dispose();
 
@@ -1104,6 +1204,9 @@ export function createSceneContext(
       maxTextureSize,
     );
     sideWallMat.map = sideWallTex;
+    if (!isFull) {
+      sideWallMat.color.setScalar(CONFIG.safeMode.wallLift);
+    }
     sideWallMat.needsUpdate = true;
     prevSideTex.dispose();
 
@@ -1134,6 +1237,7 @@ export function createSceneContext(
     camera,
     isSoftwareGl,
     safeMode: effectiveSafeMode,
+    graphicsPreset: effectivePreset,
     rendererFallbackUsed,
     maxAnisotropy,
     getDiagnostics: () => probeCapabilitiesFromGl(renderer.getContext()),
@@ -1145,6 +1249,8 @@ export function createSceneContext(
     updateSunShadowTarget,
     setQuality,
     applyPalette,
+    setExposureBrightness,
+    getExposureBrightness,
     getGroundY,
     getViewportSize,
     dispose,

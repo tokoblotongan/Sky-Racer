@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { setAudioPaused } from './audio/audioManager';
 import { createSound, type SoundSnapshot } from './audio/sound';
-import { CONFIG, type VisualPresetName } from './config';
+import { CONFIG, type GraphicsPreset, type VisualPresetName } from './config';
 import { buildCourseConfigFromDefinition, Course, type TrackFrame } from './core/course';
 import { createWrongWayDetector } from './core/wrongWay';
 import { getCourse, getLastCourseId, listCourses, setLastCourseId } from './courses';
@@ -65,6 +65,7 @@ import {
   createHud,
   disposeHud,
   hideAirtimePopup,
+  hideBenchmarkResults,
   hideCountdownOverlay,
   hideFinishScreen,
   hideLapPopup,
@@ -72,10 +73,11 @@ import {
   hideModalScreens,
   hideSplitPopup,
   hideZoneToast,
+  setGraphicsUiState,
   setHudProgressCheckpoints,
-  setSafeModeUi,
   setStartButtonLoading,
   showAirtimePopup,
+  showBenchmarkResults,
   showContextLostOverlay,
   showCountdownOverlay,
   showFinishScreen,
@@ -89,6 +91,7 @@ import {
   updateHud,
   updateTitleScreen,
   type HudViewModel,
+  type PresetBenchmarkEntry,
 } from './ui/hud';
 import {
   disposeReportOverlay,
@@ -280,6 +283,38 @@ function detectMobileOrAndroid(): boolean {
   return isMobileUa || hasCoarsePointer || hasTouchPoints;
 }
 
+function parseStoredPreset(raw: string | null): GraphicsPreset | null {
+  if (raw === 'hemat' || raw === 'seimbang' || raw === 'penuh') {
+    return raw;
+  }
+  return null;
+}
+
+function getDefaultBrightnessForPreset(preset: GraphicsPreset): number {
+  if (preset === 'penuh') {
+    return CONFIG.safeMode.brightnessDefaultFull;
+  }
+  if (preset === 'seimbang') {
+    return CONFIG.safeMode.brightnessDefaultBalanced;
+  }
+  return CONFIG.safeMode.brightnessDefaultSafe;
+}
+
+function loadUserBrightness(preset: GraphicsPreset): number {
+  const raw = safeStorageGet(CONFIG.safeMode.brightnessStorageKey);
+  if (raw !== null) {
+    const parsed = Number.parseFloat(raw);
+    if (Number.isFinite(parsed)) {
+      return THREE.MathUtils.clamp(
+        parsed,
+        CONFIG.safeMode.brightnessMin,
+        CONFIG.safeMode.brightnessMax,
+      );
+    }
+  }
+  return getDefaultBrightnessForPreset(preset);
+}
+
 export async function bootstrap(): Promise<void> {
   const foundContainer = document.getElementById('app');
   if (!foundContainer) {
@@ -296,11 +331,6 @@ export async function bootstrap(): Promise<void> {
   if (urlSafe) {
     safeReasons.push('url:?safe');
   }
-  const normalOkStored = safeStorageGet(CONFIG.safeMode.normalOkStorageKey) === '1';
-  let trialActive = !urlSafe && safeStorageGet(CONFIG.safeMode.normalTrialStorageKey) === '1';
-  if (!urlSafe && isMobileDevice && !normalOkStored && !trialActive) {
-    safeReasons.push('mobile-default');
-  }
 
   const addSafeReason = (reason: string): void => {
     if (reason && !safeReasons.includes(reason)) {
@@ -308,9 +338,20 @@ export async function bootstrap(): Promise<void> {
     }
   };
 
+  const storedPreset = parseStoredPreset(safeStorageGet(CONFIG.safeMode.presetStorageKey));
+  let manualPresetSelected = !urlSafe && storedPreset !== null;
+  const initialRequestedPreset: GraphicsPreset = urlSafe
+    ? 'hemat'
+    : storedPreset ?? (isMobileDevice ? 'seimbang' : 'penuh');
+
   const detectedQuality = detectInitialQuality(CONFIG.quality);
-  const initialSafeRequested = safeReasons.length > 0;
-  let sceneCtx: SceneContext = createSceneContext(container, detectedQuality, initialSafeRequested);
+  let sceneCtx: SceneContext = createSceneContext(
+    container,
+    initialRequestedPreset === 'hemat' ? 'mobile' : detectedQuality,
+    initialRequestedPreset === 'hemat',
+    initialRequestedPreset,
+  );
+  let graphicsPreset: GraphicsPreset = sceneCtx.graphicsPreset;
   let safeMode = sceneCtx.safeMode;
   if (sceneCtx.rendererFallbackUsed) {
     addSafeReason('webgl-fallback');
@@ -318,10 +359,9 @@ export async function bootstrap(): Promise<void> {
   if (sceneCtx.isSoftwareGl) {
     addSafeReason('software-gl');
   }
-  if (safeMode) {
-    trialActive = false;
-    safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
-  }
+
+  let userBrightness = loadUserBrightness(graphicsPreset);
+  sceneCtx.setExposureBrightness(userBrightness);
 
   const debugOverlay = createDebugOverlay(container);
   const sound = createSound();
@@ -345,8 +385,12 @@ export async function bootstrap(): Promise<void> {
   let onConfirmFromUi: () => void = () => {};
   let onReturnToMenuFromUi: () => void = () => {};
   let onClearRecordsFromUi: () => void = () => {};
-  let onTryFullGraphicsFromUi: () => void = () => {};
-  let onUseSafeModeFromUi: () => void = () => {};
+  let onSelectPresetFromUi: (preset: GraphicsPreset) => void = () => {};
+  let onChangeBrightnessFromUi: (value: number) => void = () => {};
+  let onResetBrightnessFromUi: () => void = () => {};
+  let onMeasureLumaFromUi: () => number | null = () => null;
+  let onRunBenchFromUi: () => void = () => {};
+  let onGearMuteFromUi: () => void = () => {};
   let onOpenReportFromUi: () => void = () => {};
 
   const hud = createHud(container, {
@@ -377,11 +421,36 @@ export async function bootstrap(): Promise<void> {
     onClearRecords: () => {
       onClearRecordsFromUi();
     },
-    onTryFullGraphics: () => {
-      onTryFullGraphicsFromUi();
+    onSelectGraphicsPreset: (preset) => {
+      onSelectPresetFromUi(preset);
     },
-    onUseSafeMode: () => {
-      onUseSafeModeFromUi();
+    onChangeBrightness: (value) => {
+      onChangeBrightnessFromUi(value);
+    },
+    onResetBrightness: () => {
+      onResetBrightnessFromUi();
+    },
+    onMeasureLuminance: () => onMeasureLumaFromUi(),
+    onRunPresetBenchmark: () => {
+      onRunBenchFromUi();
+    },
+    onGearCheckpointReset: () => {
+      touchControls.triggerCheckpointReset();
+    },
+    onGearRestartRace: () => {
+      touchControls.triggerRestartRace();
+    },
+    onGearToggleMute: () => {
+      onGearMuteFromUi();
+    },
+    onGearToggleSteerMode: () => {
+      touchControls.toggleSteerMode();
+    },
+    onGearToggleAutoThrottle: () => {
+      touchControls.toggleAutoThrottle();
+    },
+    onGearToggleFullscreen: () => {
+      void touchControls.toggleFullscreen();
     },
     onOpenReport: () => {
       onOpenReportFromUi();
@@ -424,13 +493,18 @@ export async function bootstrap(): Promise<void> {
     sceneCtx.maxAnisotropy,
     activePreset,
     safeMode,
+    graphicsPreset,
   );
   sceneCtx.scene.add(trackVisual.group);
 
-  let gates: GatesVisual = buildGates(course, sceneCtx.maxAnisotropy);
+  let gates: GatesVisual = buildGates(course, sceneCtx.maxAnisotropy, graphicsPreset);
   sceneCtx.scene.add(gates.group);
 
-  let shortcutGateVisual: ShortcutGateVisual = buildShortcutGates(course, sceneCtx.maxAnisotropy);
+  let shortcutGateVisual: ShortcutGateVisual = buildShortcutGates(
+    course,
+    sceneCtx.maxAnisotropy,
+    graphicsPreset,
+  );
   sceneCtx.scene.add(shortcutGateVisual.group);
 
   let orbitRadius = Math.max(
@@ -443,6 +517,7 @@ export async function bootstrap(): Promise<void> {
     designId: activeCarDesign,
     maxAnisotropy: sceneCtx.maxAnisotropy,
     presetName: activePreset,
+    graphicsPreset,
   });
   sceneCtx.scene.add(carVisual.group);
 
@@ -474,6 +549,7 @@ export async function bootstrap(): Promise<void> {
     (x, z) => sceneCtx.getGroundY(x, z),
     sceneCtx.maxAnisotropy,
     activePreset,
+    graphicsPreset,
   );
   sceneCtx.scene.add(bridgeVisual.group);
 
@@ -482,6 +558,7 @@ export async function bootstrap(): Promise<void> {
     sceneCtx.maxAnisotropy,
     activePreset,
     initialQuality,
+    graphicsPreset,
   );
   sceneCtx.scene.add(tunnelVisual.group);
 
@@ -489,6 +566,7 @@ export async function bootstrap(): Promise<void> {
     course,
     sceneCtx.maxAnisotropy,
     activePreset,
+    graphicsPreset,
   );
   sceneCtx.scene.add(trackAccentsVisual.group);
 
@@ -499,7 +577,8 @@ export async function bootstrap(): Promise<void> {
     sceneCtx.camera,
     initialQuality,
     sceneCtx.isSoftwareGl,
-    safeMode,
+    graphicsPreset,
+    isMobileDevice,
   );
   const initialViewport = sceneCtx.getViewportSize();
   postfx.resize(initialViewport.width, initialViewport.height);
@@ -518,6 +597,7 @@ export async function bootstrap(): Promise<void> {
   function applyPalette(name: VisualPresetName): void {
     activePreset = name;
     sceneCtx.applyPalette(name);
+    sceneCtx.setExposureBrightness(userBrightness);
     trackVisual.applyPalette(name);
     bridgeVisual.applyPalette(name);
     tunnelVisual.applyPalette(name);
@@ -580,6 +660,7 @@ export async function bootstrap(): Promise<void> {
       designId: activeCarDesign,
       maxAnisotropy: sceneCtx.maxAnisotropy,
       presetName: activePreset,
+      graphicsPreset,
     });
     carVisual.group.position.copy(prevPos);
     carVisual.group.quaternion.copy(prevQuat);
@@ -611,6 +692,7 @@ export async function bootstrap(): Promise<void> {
   function handleWindowResize(): void {
     const { width, height } = sceneCtx.getViewportSize();
     postfx.resize(width, height);
+    updateHud(hud, hudViewModel);
   }
   function handleWindowOrientationChange(): void {
     handleWindowResize();
@@ -718,8 +800,14 @@ export async function bootstrap(): Promise<void> {
   let firstFrameChecked = false;
   let reportOpenedForSafeErrors = false;
   let lastReportRefreshMs = 0;
-  let trialCleanElapsedSec = 0;
-  let lastTrialUiSec = -1;
+  let initialProbeActive =
+    isMobileDevice && !urlSafe && !manualPresetSelected && graphicsPreset === 'seimbang';
+  let initialProbeElapsedSec = 0;
+  let fullSlowElapsedSec = 0;
+  let benchmarkRunning = false;
+  let benchmarkSampling = false;
+  let benchmarkFrameSamplesMs: number[] = [];
+  let benchmarkErrorCount = 0;
   let wallCountdownTimerId = 0;
   let startWatchdogTimerId = 0;
   let watchdogFiredForRace = false;
@@ -752,18 +840,17 @@ export async function bootstrap(): Promise<void> {
     }
   }
 
-  function syncSafeModeTitleUi(): void {
-    const remSec = trialActive
-      ? Math.max(1, Math.ceil(CONFIG.safeMode.normalTrialSec - trialCleanElapsedSec))
-      : undefined;
-    setSafeModeUi(hud, {
-      safeMode,
-      isMobileDevice,
-      trialActive,
-      trialSecRemaining: remSec,
+  function syncGraphicsUi(measuredLuma?: number | null): void {
+    setGraphicsUiState(hud, {
+      preset: graphicsPreset,
+      brightness: userBrightness,
+      touchPrefs: touchControls.getPrefs(),
+      probeActive: initialProbeActive,
+      benchmarkRunning,
+      measuredLuma,
     });
   }
-  syncSafeModeTitleUi();
+  syncGraphicsUi();
 
   function buildReportSnapshot(overrides?: Partial<DeviceReportSnapshot>): DeviceReportSnapshot {
     let diag;
@@ -823,7 +910,7 @@ export async function bootstrap(): Promise<void> {
     });
     courseSelect?.setSelected(previewDef.id);
     courseSelect?.refreshRecords();
-    syncSafeModeTitleUi();
+    syncGraphicsUi();
   }
 
   function clearPendingCourseSwitch(hideOverlay = true): void {
@@ -874,7 +961,7 @@ export async function bootstrap(): Promise<void> {
     } catch {
       // Ignore audio resume errors
     }
-    void rebuildGraphicsPipeline(safeMode, 'webglcontextrestored');
+    void rebuildGraphicsPipeline(graphicsPreset, 'webglcontextrestored');
   };
 
   function bindCanvasContextEvents(canvas: HTMLCanvasElement): void {
@@ -977,7 +1064,13 @@ export async function bootstrap(): Promise<void> {
       showLoadingOverlay(hud, 'Memuat arena...', 55);
     }
 
-    trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy, activePreset, safeMode);
+    trackVisual = buildTrackMesh(
+      course,
+      sceneCtx.maxAnisotropy,
+      activePreset,
+      safeMode,
+      graphicsPreset,
+    );
     sceneCtx.scene.add(trackVisual.group);
 
     bridgeVisual = buildBridgeMesh(
@@ -985,6 +1078,7 @@ export async function bootstrap(): Promise<void> {
       (x, z) => sceneCtx.getGroundY(x, z),
       sceneCtx.maxAnisotropy,
       activePreset,
+      graphicsPreset,
     );
     sceneCtx.scene.add(bridgeVisual.group);
 
@@ -993,6 +1087,7 @@ export async function bootstrap(): Promise<void> {
       sceneCtx.maxAnisotropy,
       activePreset,
       safeMode ? 'mobile' : qualityManager.getLevel(),
+      graphicsPreset,
     );
     sceneCtx.scene.add(tunnelVisual.group);
 
@@ -1000,13 +1095,18 @@ export async function bootstrap(): Promise<void> {
       showLoadingOverlay(hud, 'Memuat arena...', 75);
     }
 
-    trackAccentsVisual = buildTrackAccents(course, sceneCtx.maxAnisotropy, activePreset);
+    trackAccentsVisual = buildTrackAccents(
+      course,
+      sceneCtx.maxAnisotropy,
+      activePreset,
+      graphicsPreset,
+    );
     sceneCtx.scene.add(trackAccentsVisual.group);
 
-    gates = buildGates(course, sceneCtx.maxAnisotropy);
+    gates = buildGates(course, sceneCtx.maxAnisotropy, graphicsPreset);
     sceneCtx.scene.add(gates.group);
 
-    shortcutGateVisual = buildShortcutGates(course, sceneCtx.maxAnisotropy);
+    shortcutGateVisual = buildShortcutGates(course, sceneCtx.maxAnisotropy, graphicsPreset);
     shortcutGateVisual.applyPalette(activePreset);
     sceneCtx.scene.add(shortcutGateVisual.group);
 
@@ -1195,7 +1295,10 @@ export async function bootstrap(): Promise<void> {
     scheduleLoopStart();
   }
 
-  async function rebuildGraphicsPipeline(targetSafeMode: boolean, reason?: string): Promise<void> {
+  async function rebuildGraphicsPipeline(
+    targetPreset: GraphicsPreset,
+    reason?: string,
+  ): Promise<void> {
     if (disposed || rebuilding) {
       return;
     }
@@ -1217,12 +1320,13 @@ export async function bootstrap(): Promise<void> {
     qualityManager.dispose();
     prevSceneCtx.dispose();
 
+    const targetSafeMode = targetPreset === 'hemat';
     const targetInitialQuality: QualityLevel = targetSafeMode
       ? 'mobile'
       : detectInitialQuality(CONFIG.quality);
 
     try {
-      sceneCtx = createSceneContext(container, targetInitialQuality, targetSafeMode);
+      sceneCtx = createSceneContext(container, targetInitialQuality, targetSafeMode, targetPreset);
     } catch (err) {
       if (err instanceof RendererInitError) {
         showReportOverlay(
@@ -1239,6 +1343,7 @@ export async function bootstrap(): Promise<void> {
       throw err;
     }
 
+    graphicsPreset = sceneCtx.graphicsPreset;
     safeMode = sceneCtx.safeMode;
     if (sceneCtx.rendererFallbackUsed) {
       addSafeReason('webgl-fallback');
@@ -1246,10 +1351,9 @@ export async function bootstrap(): Promise<void> {
     if (sceneCtx.isSoftwareGl) {
       addSafeReason('software-gl');
     }
-    if (safeMode) {
-      trialActive = false;
-      safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
-    }
+
+    userBrightness = loadUserBrightness(graphicsPreset);
+    sceneCtx.setExposureBrightness(userBrightness);
 
     bindCanvasContextEvents(sceneCtx.renderer.domElement);
     qualityManager = createActiveQualityManager(safeMode);
@@ -1257,9 +1361,16 @@ export async function bootstrap(): Promise<void> {
     sceneCtx.setRoomBounds(bounds);
     sceneCtx.setQuality(activeQuality);
     sceneCtx.setTheme(course, activeQuality);
+    sceneCtx.setExposureBrightness(userBrightness);
     sceneCtx.setOrbitTarget(bounds.center, orbitRadius, CONFIG.camera.orbitHeight);
 
-    trackVisual = buildTrackMesh(course, sceneCtx.maxAnisotropy, activePreset, safeMode);
+    trackVisual = buildTrackMesh(
+      course,
+      sceneCtx.maxAnisotropy,
+      activePreset,
+      safeMode,
+      graphicsPreset,
+    );
     sceneCtx.scene.add(trackVisual.group);
 
     bridgeVisual = buildBridgeMesh(
@@ -1267,23 +1378,35 @@ export async function bootstrap(): Promise<void> {
       (x, z) => sceneCtx.getGroundY(x, z),
       sceneCtx.maxAnisotropy,
       activePreset,
+      graphicsPreset,
     );
     sceneCtx.scene.add(bridgeVisual.group);
 
-    tunnelVisual = buildTunnelMesh(course, sceneCtx.maxAnisotropy, activePreset, activeQuality);
+    tunnelVisual = buildTunnelMesh(
+      course,
+      sceneCtx.maxAnisotropy,
+      activePreset,
+      activeQuality,
+      graphicsPreset,
+    );
     sceneCtx.scene.add(tunnelVisual.group);
 
-    trackAccentsVisual = buildTrackAccents(course, sceneCtx.maxAnisotropy, activePreset);
+    trackAccentsVisual = buildTrackAccents(
+      course,
+      sceneCtx.maxAnisotropy,
+      activePreset,
+      graphicsPreset,
+    );
     sceneCtx.scene.add(trackAccentsVisual.group);
 
-    gates = buildGates(course, sceneCtx.maxAnisotropy);
+    gates = buildGates(course, sceneCtx.maxAnisotropy, graphicsPreset);
     for (let i = 0; i < raceState.nextCheckpointIndex; i++) {
       gates.setPassed(i);
     }
     gates.setActive(raceState.nextCheckpointIndex);
     sceneCtx.scene.add(gates.group);
 
-    shortcutGateVisual = buildShortcutGates(course, sceneCtx.maxAnisotropy);
+    shortcutGateVisual = buildShortcutGates(course, sceneCtx.maxAnisotropy, graphicsPreset);
     shortcutGateVisual.applyPalette(activePreset);
     sceneCtx.scene.add(shortcutGateVisual.group);
 
@@ -1291,6 +1414,7 @@ export async function bootstrap(): Promise<void> {
       designId: activeCarDesign,
       maxAnisotropy: sceneCtx.maxAnisotropy,
       presetName: activePreset,
+      graphicsPreset,
     });
     sceneCtx.scene.add(carVisual.group);
 
@@ -1319,16 +1443,18 @@ export async function bootstrap(): Promise<void> {
       sceneCtx.camera,
       activeQuality,
       sceneCtx.isSoftwareGl,
-      safeMode,
+      graphicsPreset,
+      isMobileDevice,
     );
     const vp = sceneCtx.getViewportSize();
     postfx.resize(vp.width, vp.height);
 
     consecutiveErrorCount = 0;
     firstFrameChecked = false;
+    fullSlowElapsedSec = 0;
     lastFrameMs = performance.now();
     accumulator = 0;
-    syncSafeModeTitleUi();
+    syncGraphicsUi();
     if (isReportOverlayOpen()) {
       updateReportOverlay(buildReportSnapshot());
     }
@@ -1337,53 +1463,163 @@ export async function bootstrap(): Promise<void> {
     scheduleLoopStart();
   }
 
-  async function downgradeToSafeMode(reason: string): Promise<void> {
-    if (disposed || rebuilding) {
-      return;
-    }
-    trialActive = false;
-    trialCleanElapsedSec = 0;
-    safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
-    safeStorageRemove(CONFIG.safeMode.normalOkStorageKey);
-    addSafeReason(reason);
-    showSafeModeNotice(hud, 'Mode aman aktif');
-    await rebuildGraphicsPipeline(true, reason);
-  }
-
-  onTryFullGraphicsFromUi = (): void => {
-    if (disposed || rebuilding || !safeMode) {
-      return;
-    }
-    trialActive = true;
-    trialCleanElapsedSec = 0;
-    lastTrialUiSec = CONFIG.safeMode.normalTrialSec;
-    safeStorageSet(CONFIG.safeMode.normalTrialStorageKey, '1');
-    const idx = safeReasons.indexOf('mobile-default');
-    if (idx !== -1) {
-      safeReasons.splice(idx, 1);
-    }
-    void rebuildGraphicsPipeline(false).then(() => {
-      if (safeMode) {
-        trialActive = false;
-        safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
-        showSafeModeNotice(hud, 'Mode aman aktif (perangkat membatasi grafis penuh)');
-      } else {
-        showSafeModeNotice(hud, `Menguji grafis penuh (${CONFIG.safeMode.normalTrialSec} dtk)...`);
-      }
-      syncSafeModeTitleUi();
-    });
-  };
-
-  onUseSafeModeFromUi = (): void => {
+  async function downgradeGraphicsOnFailure(reason: string): Promise<void> {
     if (disposed || rebuilding || safeMode) {
       return;
     }
-    trialActive = false;
-    trialCleanElapsedSec = 0;
-    safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
-    safeStorageRemove(CONFIG.safeMode.normalOkStorageKey);
-    showSafeModeNotice(hud, 'Mode aman aktif');
-    void rebuildGraphicsPipeline(true, 'manual');
+    initialProbeActive = false;
+    fullSlowElapsedSec = 0;
+    addSafeReason(reason);
+    if (graphicsPreset === 'penuh') {
+      showSafeModeNotice(hud, 'Preset diturunkan ke Seimbang agar tetap lancar');
+      await rebuildGraphicsPipeline('seimbang', reason);
+    } else {
+      showSafeModeNotice(hud, 'Mode hemat aktif');
+      await rebuildGraphicsPipeline('hemat', reason);
+    }
+  }
+
+  onSelectPresetFromUi = (nextPreset: GraphicsPreset): void => {
+    if (disposed || rebuilding || benchmarkRunning || nextPreset === graphicsPreset) {
+      return;
+    }
+    if (urlSafe && nextPreset !== 'hemat') {
+      showSafeModeNotice(hud, 'URL ?safe aktif: hanya mode Hemat');
+      return;
+    }
+    initialProbeActive = false;
+    manualPresetSelected = true;
+    safeStorageSet(CONFIG.safeMode.presetStorageKey, nextPreset);
+    void rebuildGraphicsPipeline(nextPreset, `manual-${nextPreset}`).then(() => {
+      if (graphicsPreset !== nextPreset) {
+        showSafeModeNotice(hud, 'Perangkat membatasi preset penuh, mode Hemat aktif');
+      } else {
+        const label =
+          nextPreset === 'hemat' ? 'Hemat' : nextPreset === 'seimbang' ? 'Seimbang' : 'Penuh';
+        showSafeModeNotice(hud, `Preset ${label} aktif`);
+      }
+      syncGraphicsUi();
+    });
+  };
+
+  onChangeBrightnessFromUi = (value: number): void => {
+    userBrightness = THREE.MathUtils.clamp(
+      value,
+      CONFIG.safeMode.brightnessMin,
+      CONFIG.safeMode.brightnessMax,
+    );
+    safeStorageSet(CONFIG.safeMode.brightnessStorageKey, userBrightness.toFixed(2));
+    sceneCtx.setExposureBrightness(userBrightness);
+    syncGraphicsUi();
+  };
+
+  onResetBrightnessFromUi = (): void => {
+    safeStorageRemove(CONFIG.safeMode.brightnessStorageKey);
+    userBrightness = getDefaultBrightnessForPreset(graphicsPreset);
+    sceneCtx.setExposureBrightness(userBrightness);
+    syncGraphicsUi();
+  };
+
+  onMeasureLumaFromUi = (): number | null => {
+    const luma = postfx.measureAverageLuminance();
+    syncGraphicsUi(luma);
+    return luma;
+  };
+
+  onGearMuteFromUi = (): void => {
+    sound.unlock();
+    const nextMuted = sound.toggleMute();
+    touchControls.setMutedVisual(nextMuted);
+    syncGraphicsUi();
+  };
+
+  onRunBenchFromUi = (): void => {
+    if (disposed || rebuilding || benchmarkRunning || contextLost) {
+      return;
+    }
+    const runSequence = async (): Promise<void> => {
+      const priorPreset = graphicsPreset;
+      const priorProbe = initialProbeActive;
+      initialProbeActive = false;
+      benchmarkRunning = true;
+      hideBenchmarkResults(hud);
+      syncGraphicsUi();
+
+      const phases: GraphicsPreset[] = ['hemat', 'seimbang', 'penuh'];
+      const entries: PresetBenchmarkEntry[] = [];
+
+      try {
+        for (const phasePreset of phases) {
+          if (disposed || contextLost) {
+            break;
+          }
+          await rebuildGraphicsPipeline(phasePreset, `bench-${phasePreset}`);
+          if (disposed || contextLost) {
+            break;
+          }
+          benchmarkFrameSamplesMs = [];
+          benchmarkErrorCount = 0;
+          benchmarkSampling = true;
+          syncGraphicsUi();
+
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, 3000);
+          });
+
+          benchmarkSampling = false;
+          const samples = benchmarkFrameSamplesMs;
+          const avgFrameMs =
+            samples.length > 0
+              ? samples.reduce((acc, v) => acc + v, 0) / samples.length
+              : qualityManager.getAverageFrameMs();
+          const avgFps = avgFrameMs > 0.1 ? 1000 / avgFrameMs : 0;
+          const luma = postfx.measureAverageLuminance();
+          entries.push({
+            preset: graphicsPreset,
+            avgFps,
+            avgFrameMs,
+            luma,
+            errorCount: benchmarkErrorCount,
+          });
+        }
+
+        if (!disposed && !contextLost && graphicsPreset !== priorPreset) {
+          await rebuildGraphicsPipeline(priorPreset, 'bench-restore');
+        }
+      } finally {
+        benchmarkSampling = false;
+        benchmarkRunning = false;
+        initialProbeActive = priorProbe && graphicsPreset === 'seimbang' && !manualPresetSelected;
+      }
+
+      if (disposed || contextLost) {
+        return;
+      }
+      const measuredLuma = postfx.measureAverageLuminance();
+      const penuhEntry = entries.find((e) => e.preset === 'penuh');
+      const seimbangEntry = entries.find((e) => e.preset === 'seimbang');
+      const recommendedPreset: GraphicsPreset =
+        penuhEntry &&
+        penuhEntry.errorCount === 0 &&
+        penuhEntry.avgFrameMs <= CONFIG.quality.initialProbeBalancedMaxMs
+          ? 'penuh'
+          : seimbangEntry &&
+              seimbangEntry.errorCount === 0 &&
+              seimbangEntry.avgFrameMs <= CONFIG.quality.initialProbeBalancedMaxMs
+            ? 'seimbang'
+            : 'hemat';
+
+      syncGraphicsUi(measuredLuma);
+      showBenchmarkResults(hud, {
+        activePreset: graphicsPreset,
+        recommendedPreset,
+        measuredLuma,
+        targetLuma: CONFIG.safeMode.targetLuma,
+        entries,
+      });
+    };
+
+    void runSequence();
   };
 
   function pumpWallCountdown(): void {
@@ -1438,10 +1674,10 @@ export async function bootstrap(): Promise<void> {
         watchdogFiredForRace = true;
         logErrorOverlay('render watchdog: 0 frame dalam 1.5 detik setelah Mulai');
         if (!safeMode) {
-          void downgradeToSafeMode('start-watchdog').then(() => {
+          void downgradeGraphicsOnFailure('start-watchdog').then(() => {
             showReportOverlay(
               buildReportSnapshot({
-                headline: 'Mode aman aktif (render sempat macet)',
+                headline: 'Preset grafis diturunkan (render sempat macet)',
               }),
             );
           });
@@ -1487,7 +1723,12 @@ export async function bootstrap(): Promise<void> {
     setPaused(document.hidden || touchControls.isPortraitBlocked());
   }
 
-  const unbindTouchStatus = touchControls.onStatusChange(syncPauseState);
+  const handleTouchStatusChange = (): void => {
+    syncPauseState();
+    syncGraphicsUi();
+  };
+
+  const unbindTouchStatus = touchControls.onStatusChange(handleTouchStatusChange);
   document.addEventListener('visibilitychange', syncPauseState);
   syncPauseState();
 
@@ -2021,31 +2262,46 @@ export async function bootstrap(): Promise<void> {
             logErrorOverlay(
               `GL/FB check failed: ${diag.glError} / ${diag.framebufferStatus}`,
             );
-            void downgradeToSafeMode('gl-error-first-frame');
+            void downgradeGraphicsOnFailure('gl-error-first-frame');
             return;
           }
         }
 
-        if (!safeMode && trialActive) {
-          trialCleanElapsedSec += frameDt;
-          const nextRemaining = Math.max(
-            0,
-            Math.ceil(CONFIG.safeMode.normalTrialSec - trialCleanElapsedSec),
-          );
-          if (nextRemaining !== lastTrialUiSec) {
-            lastTrialUiSec = nextRemaining;
-            syncSafeModeTitleUi();
-          }
-          if (trialCleanElapsedSec >= CONFIG.safeMode.normalTrialSec) {
-            trialActive = false;
-            safeStorageSet(CONFIG.safeMode.normalOkStorageKey, '1');
-            safeStorageRemove(CONFIG.safeMode.normalTrialStorageKey);
-            syncSafeModeTitleUi();
-            showSafeModeNotice(hud, 'Grafis penuh aktif');
+        qualityManager.update(frameDt);
+        if (benchmarkSampling && rawDt > 0 && rawDt < 0.5) {
+          benchmarkFrameSamplesMs.push(rawDt * 1000);
+        }
+
+        if (initialProbeActive && !benchmarkRunning && graphicsPreset === 'seimbang') {
+          initialProbeElapsedSec += frameDt;
+          if (initialProbeElapsedSec >= CONFIG.quality.initialProbeSec) {
+            initialProbeActive = false;
+            const avgMs = qualityManager.getAverageFrameMs();
+            if (avgMs > CONFIG.quality.initialProbeBalancedMaxMs) {
+              showSafeModeNotice(hud, 'Mode Hemat aktif agar frame rate lancar');
+              void rebuildGraphicsPipeline('hemat', 'initial-probe-slow');
+              return;
+            }
+            syncGraphicsUi();
           }
         }
 
-        qualityManager.update(frameDt);
+        if (graphicsPreset === 'penuh' && !benchmarkRunning && !urlSafe) {
+          const avgMs = qualityManager.getAverageFrameMs();
+          if (avgMs > CONFIG.quality.fullAutoDowngradeMs) {
+            fullSlowElapsedSec += frameDt;
+            if (fullSlowElapsedSec >= CONFIG.quality.fullAutoDowngradeSec) {
+              fullSlowElapsedSec = 0;
+              void downgradeGraphicsOnFailure('auto-slow-full');
+              return;
+            }
+          } else {
+            fullSlowElapsedSec = 0;
+          }
+        } else {
+          fullSlowElapsedSec = 0;
+        }
+
         debugOverlay?.update(
           nowMs,
           currState,
@@ -2064,11 +2320,14 @@ export async function bootstrap(): Promise<void> {
       }
     } catch (err) {
       consecutiveErrorCount++;
+      if (benchmarkSampling) {
+        benchmarkErrorCount++;
+      }
       const info = extractErrorInfo(err);
       logErrorOverlay(info.message, info.file, info.line);
       if (consecutiveErrorCount >= CONFIG.safeMode.consecutiveErrorLimit) {
         if (!safeMode) {
-          void downgradeToSafeMode('5x-frame-error');
+          void downgradeGraphicsOnFailure('5x-frame-error');
           return;
         } else if (!reportOpenedForSafeErrors) {
           reportOpenedForSafeErrors = true;

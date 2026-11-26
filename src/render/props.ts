@@ -2,8 +2,9 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CONFIG, VISUAL_PRESETS, type VisualPreset, type VisualPresetName } from '../config';
+import { CONFIG, VISUAL_PRESETS, type GraphicsPreset, type VisualPreset, type VisualPresetName } from '../config';
 import type { Course } from '../core/course';
+import { createSurfaceMaterial } from './materialFactory';
 import type { QualityLevel } from './quality';
 import { computeRoomDimensions } from './scene';
 
@@ -291,17 +292,21 @@ function buildPropsAssembly(
   maxAnisotropy: number,
   presetName: VisualPresetName,
   safeMode = false,
+  graphicsPreset?: GraphicsPreset,
 ): PropsAssembly {
   const cfg = CONFIG.props;
   const preset = VISUAL_PRESETS[presetName];
   const pal = preset.room;
   const propColors = pal.propColors;
-  const effectiveQuality: QualityLevel = safeMode ? 'mobile' : qualityLevel;
+  const effectivePreset: GraphicsPreset = safeMode ? 'hemat' : (graphicsPreset ?? 'penuh');
+  const isSafePreset = effectivePreset === 'hemat';
+  const effectiveQuality: QualityLevel = isSafePreset ? 'mobile' : qualityLevel;
   const qualityPreset = CONFIG.quality.levels[effectiveQuality];
   const densityScale = cfg.density * qualityPreset.propsDensityScale;
   const propsChunkSize = Math.max(40, CONFIG.render.propsChunkLength);
   const viewDistance = qualityPreset.viewDistance;
-  const shadowsEnabled = !safeMode && qualityPreset.shadowsEnabled;
+  const shadowsEnabled = effectivePreset === 'penuh' && qualityPreset.shadowsEnabled;
+  const receiveShadows = effectivePreset === 'seimbang' || shadowsEnabled;
   const fadeMargin = Math.max(1, CONFIG.render.cullFadeMargin);
 
   const group = new THREE.Group();
@@ -455,7 +460,7 @@ function buildPropsAssembly(
   // 1. Giant Sunlit Window + Sunbeams on +X Wall (walls & baseboards are in scene.ts)
   // =========================================================================
   const woodDarkMat = trackMat(
-    new THREE.MeshStandardMaterial({
+    createSurfaceMaterial(effectivePreset, {
       color: pal.woodDark,
       roughness: 0.68,
       metalness: 0.02,
@@ -463,7 +468,7 @@ function buildPropsAssembly(
     }),
   );
   const woodLightMat = trackMat(
-    new THREE.MeshStandardMaterial({
+    createSurfaceMaterial(effectivePreset, {
       color: pal.woodLight,
       roughness: 0.64,
       metalness: 0.02,
@@ -493,7 +498,7 @@ function buildPropsAssembly(
   group.add(windowPane);
 
   const windowFrameMat = trackMat(
-    new THREE.MeshStandardMaterial({
+    createSurfaceMaterial(effectivePreset, {
       color: pal.windowFrame,
       roughness: 0.55,
       metalness: 0.04,
@@ -524,7 +529,7 @@ function buildPropsAssembly(
   freezeStatic(windowFrameMesh);
   group.add(windowFrameMesh);
 
-  if (!safeMode) {
+  if (!isSafePreset) {
     const sunbeamTex = trackTex(createSunbeamTexture());
     const sunbeamMat = trackMat(
       new THREE.MeshBasicMaterial({
@@ -568,7 +573,7 @@ function buildPropsAssembly(
   // =========================================================================
   const rugTex = trackTex(createRugTexture(maxAnisotropy, preset));
   const rugMat = trackMat(
-    new THREE.MeshStandardMaterial({
+    createSurfaceMaterial(effectivePreset, {
       map: rugTex,
       roughness: 0.94,
       metalness: 0.0,
@@ -583,7 +588,7 @@ function buildPropsAssembly(
   const mainRug = new THREE.Mesh(mainRugGeom, rugMat);
   mainRug.position.set(roomCenterX + 8, 0.025, roomCenterZ - 12);
   mainRug.castShadow = false;
-  mainRug.receiveShadow = true;
+  mainRug.receiveShadow = receiveShadows;
   freezeStatic(mainRug);
   group.add(mainRug);
 
@@ -654,7 +659,7 @@ function buildPropsAssembly(
     const capGeom = trackGeom(new THREE.BoxGeometry(3.6, 0.45, 3.6));
 
     const pillarPastelMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         color: 0xffffff,
         roughness: 0.58,
         metalness: 0.04,
@@ -674,11 +679,11 @@ function buildPropsAssembly(
       const capInst = new THREE.InstancedMesh(capGeom, woodDarkMat, list.length);
 
       baseInst.castShadow = shadowsEnabled;
-      baseInst.receiveShadow = shadowsEnabled;
+      baseInst.receiveShadow = receiveShadows;
       colInst.castShadow = shadowsEnabled;
-      colInst.receiveShadow = shadowsEnabled;
+      colInst.receiveShadow = receiveShadows;
       capInst.castShadow = shadowsEnabled;
-      capInst.receiveShadow = shadowsEnabled;
+      capInst.receiveShadow = receiveShadows;
 
       list.forEach((spot, i) => {
         const capH = 0.45;
@@ -748,21 +753,21 @@ function buildPropsAssembly(
   const lampSpot = tryPickHeroSpot(roomCenterX + 148, roomCenterZ - 148, 20);
   {
     const lampMetalMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         color: pal.lampMetal,
         roughness: 0.35,
         metalness: 0.65,
       }),
     );
     const lampShadeMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         color: pal.lampShade,
         roughness: 0.55,
         metalness: 0.08,
       }),
     );
     const lampBulbMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         color: pal.sunbeamColor,
         emissive: pal.sunbeamColor,
         emissiveIntensity: 1.4,
@@ -808,9 +813,9 @@ function buildPropsAssembly(
       shadowsEnabled &&
       Math.hypot(lampSpot.x - roomCenterX, lampSpot.z - roomCenterZ) <= cfg.shadowDistance + 30;
     lampMetalMesh.castShadow = castLampShadow;
-    lampMetalMesh.receiveShadow = shadowsEnabled;
+    lampMetalMesh.receiveShadow = receiveShadows;
     shadeMesh.castShadow = castLampShadow;
-    shadeMesh.receiveShadow = shadowsEnabled;
+    shadeMesh.receiveShadow = receiveShadows;
     freezeStatic(lampMetalMesh);
     freezeStatic(shadeMesh);
     freezeStatic(bulbMesh);
@@ -862,7 +867,7 @@ function buildPropsAssembly(
     }
 
     const shelfBooksMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         color: propColors[3 % propColors.length],
         roughness: 0.72,
         metalness: 0.02,
@@ -877,9 +882,9 @@ function buildPropsAssembly(
     shelfGroup.position.set(shelfSpot.x, 0, shelfSpot.z);
     shelfGroup.rotation.y = Math.PI * 0.25;
     shelfMesh.castShadow = false;
-    shelfMesh.receiveShadow = true;
+    shelfMesh.receiveShadow = receiveShadows;
     shelfBooksMesh.castShadow = false;
-    shelfBooksMesh.receiveShadow = true;
+    shelfBooksMesh.receiveShadow = receiveShadows;
     freezeStatic(shelfMesh);
     freezeStatic(shelfBooksMesh);
     shelfGroup.add(shelfMesh, shelfBooksMesh);
@@ -948,14 +953,14 @@ function buildPropsAssembly(
     const pageGeom = trackGeom(mergeWithCleanup(pageParts));
 
     const coverMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         color: 0xffffff,
         roughness: 0.7,
         metalness: 0.02,
       }),
     );
     const pageMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         color: pal.paperCream,
         roughness: 0.85,
         metalness: 0.0,
@@ -967,9 +972,9 @@ function buildPropsAssembly(
       const coverInst = new THREE.InstancedMesh(coverGeom, coverMat, list.length);
       const pageInst = new THREE.InstancedMesh(pageGeom, pageMat, list.length);
       coverInst.castShadow = shadowsEnabled;
-      coverInst.receiveShadow = shadowsEnabled;
+      coverInst.receiveShadow = receiveShadows;
       pageInst.castShadow = false;
-      pageInst.receiveShadow = shadowsEnabled;
+      pageInst.receiveShadow = receiveShadows;
 
       list.forEach((p, idx) => {
         instPos.set(p.x, 0, p.z);
@@ -1006,14 +1011,14 @@ function buildPropsAssembly(
       ),
     );
     const canBodyMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         map: canTex,
         roughness: 0.44,
         metalness: 0.14,
       }),
     );
     const canRimMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         color: pal.lampMetal,
         roughness: 0.32,
         metalness: 0.72,
@@ -1037,9 +1042,9 @@ function buildPropsAssembly(
       const bodyInst = new THREE.InstancedMesh(bodyGeom, canBodyMat, list.length);
       const rimInst = new THREE.InstancedMesh(rimGeom, canRimMat, list.length);
       bodyInst.castShadow = shadowsEnabled;
-      bodyInst.receiveShadow = shadowsEnabled;
+      bodyInst.receiveShadow = receiveShadows;
       rimInst.castShadow = false;
-      rimInst.receiveShadow = shadowsEnabled;
+      rimInst.receiveShadow = receiveShadows;
 
       list.forEach((p, idx) => {
         instPos.set(p.x, 0, p.z);
@@ -1094,14 +1099,14 @@ function buildPropsAssembly(
     const pencilTipGeom = trackGeom(mergeWithCleanup(pencilTipParts));
 
     const cupMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         color: 0xffffff,
         roughness: 0.56,
         metalness: 0.04,
       }),
     );
     const tipMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         color: propColors[propColors.length - 1],
         roughness: 0.65,
       }),
@@ -1114,9 +1119,9 @@ function buildPropsAssembly(
       const tipInst = new THREE.InstancedMesh(pencilTipGeom, tipMat, list.length);
 
       cupInst.castShadow = shadowsEnabled;
-      cupInst.receiveShadow = shadowsEnabled;
+      cupInst.receiveShadow = receiveShadows;
       pencilInst.castShadow = shadowsEnabled;
-      pencilInst.receiveShadow = shadowsEnabled;
+      pencilInst.receiveShadow = receiveShadows;
       tipInst.castShadow = false;
 
       list.forEach((p, idx) => {
@@ -1162,7 +1167,7 @@ function buildPropsAssembly(
         createLetterBlockTexture(spec.letter, spec.ink, preset, maxAnisotropy),
       );
       return trackMat(
-        new THREE.MeshStandardMaterial({
+        createSurfaceMaterial(effectivePreset, {
           map: tex,
           roughness: 0.65,
           metalness: 0.02,
@@ -1180,8 +1185,8 @@ function buildPropsAssembly(
       const chunkBuckets = bucketByChunk(buckets[b]);
       for (const { chunkGroup, list } of chunkBuckets.values()) {
         const inst = new THREE.InstancedMesh(blockGeom, mat, list.length);
-        inst.castShadow = true;
-        inst.receiveShadow = true;
+        inst.castShadow = shadowsEnabled;
+        inst.receiveShadow = receiveShadows;
         list.forEach((p, idx) => {
           instPos.set(p.x, 0, p.z);
           instQuat.setFromAxisAngle(beamUpRef, p.yaw);
@@ -1205,7 +1210,7 @@ function buildPropsAssembly(
     ballGeom.translate(0, 6.2, 0);
     const ballTex = trackTex(createToyBallTexture(preset, maxAnisotropy));
     const ballMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         map: ballTex,
         roughness: 0.42,
         metalness: 0.04,
@@ -1216,7 +1221,7 @@ function buildPropsAssembly(
     for (const { chunkGroup, list } of chunkBuckets.values()) {
       const ballInst = new THREE.InstancedMesh(ballGeom, ballMat, list.length);
       ballInst.castShadow = shadowsEnabled;
-      ballInst.receiveShadow = shadowsEnabled;
+      ballInst.receiveShadow = receiveShadows;
 
       list.forEach((p, idx) => {
         instPos.set(p.x, 0, p.z);
@@ -1246,7 +1251,7 @@ function buildPropsAssembly(
     const paperGeom = trackGeom(mergeWithCleanup(sheetParts));
     const paperTex = trackTex(createPaperTexture(preset, maxAnisotropy));
     const paperMat = trackMat(
-      new THREE.MeshStandardMaterial({
+      createSurfaceMaterial(effectivePreset, {
         map: paperTex,
         roughness: 0.86,
         metalness: 0.0,
@@ -1257,7 +1262,7 @@ function buildPropsAssembly(
     for (const { chunkGroup, list } of chunkBuckets.values()) {
       const paperInst = new THREE.InstancedMesh(paperGeom, paperMat, list.length);
       paperInst.castShadow = false;
-      paperInst.receiveShadow = true;
+      paperInst.receiveShadow = receiveShadows;
 
       list.forEach((p, idx) => {
         instPos.set(p.x, 0, p.z);
@@ -1329,12 +1334,20 @@ export function buildProps(
   maxAnisotropy = 8,
   initialPreset: VisualPresetName = CONFIG.visual.activePreset,
   safeMode = false,
+  graphicsPreset?: GraphicsPreset,
 ): PropsVisual {
   const outerGroup = new THREE.Group();
   outerGroup.name = 'RoomPropsRoot';
 
   let currentPreset = initialPreset;
-  let activeAssembly = buildPropsAssembly(course, qualityLevel, maxAnisotropy, currentPreset, safeMode);
+  let activeAssembly = buildPropsAssembly(
+    course,
+    qualityLevel,
+    maxAnisotropy,
+    currentPreset,
+    safeMode,
+    graphicsPreset,
+  );
   outerGroup.add(activeAssembly.group);
 
   function update(cameraPos: THREE.Vector3): void {
@@ -1348,7 +1361,14 @@ export function buildProps(
     currentPreset = name;
     outerGroup.remove(activeAssembly.group);
     activeAssembly.dispose();
-    activeAssembly = buildPropsAssembly(course, qualityLevel, maxAnisotropy, currentPreset, safeMode);
+    activeAssembly = buildPropsAssembly(
+      course,
+      qualityLevel,
+      maxAnisotropy,
+      currentPreset,
+      safeMode,
+      graphicsPreset,
+    );
     outerGroup.add(activeAssembly.group);
   }
 

@@ -388,8 +388,9 @@
   user-select: none;
 }
 
+.sr-hud.hud--compact .sr-debug-metrics,
 .sr-hud.hud--touch .sr-debug-metrics {
-  top: calc(max(10px, env(safe-area-inset-top, 0px)) + 108px);
+  top: calc(max(6px, env(safe-area-inset-top, 0px)) + 48px);
 }
 
 /* Center overlay wrapper */
@@ -834,11 +835,21 @@
 
 .sr-title-gfx-bar {
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  width: 100%;
+  max-width: 490px;
+}
+
+.sr-title-gfx-row {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding-top: 4px;
 }
 
 .sr-title-gfx-status {
@@ -847,11 +858,103 @@
   letter-spacing: 0.03em;
 }
 
+.sr-preset-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+}
+
+.sr-preset-btn {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sr-text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.sr-preset-btn--active {
+  background: rgba(var(--sr-cyan-rgb), 0.25);
+  color: var(--sr-accent-yellow);
+  box-shadow: inset 0 0 0 1px rgba(var(--sr-cyan-rgb), 0.6);
+}
+
+.sr-title-brightness-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.sr-title-brightness-label {
+  font-size: 11px;
+  color: var(--sr-text-muted);
+}
+
+.sr-brightness-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.sr-brightness-slider {
+  flex: 1 1 110px;
+  min-width: 96px;
+  max-width: 170px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--sr-accent-cyan);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.sr-brightness-val {
+  min-width: 32px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--sr-accent-yellow);
+}
+
+.sr-title-debug-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.sr-luma-readout {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--sr-accent-cyan);
+}
+
 .sr-btn-compact {
   min-height: 32px;
   padding: 5px 12px;
   border-radius: 9px;
   font-size: clamp(11px, 1.3vw, 12.5px);
+}
+
+.sr-btn-mini {
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  border-width: 1px;
+  font-size: 10.5px;
 }
 
 .sr-title-version-btn {
@@ -1445,13 +1548,209 @@
   max-width: 440px;
 }
 
-/* Mobile Touch HUD mode (hud--touch) */
+/* Top-right gear button & quick popover (shown in compact/mobile HUD only) */
+.sr-gear-wrap {
+  display: none;
+  position: absolute;
+  top: max(6px, env(safe-area-inset-top, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  z-index: 36;
+  pointer-events: auto;
+}
+
+.sr-gear-btn {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  color: var(--sr-accent-cyan);
+  background: rgba(15, 23, 42, var(--sr-mobile-panel-opacity, 0.68));
+  border-color: rgba(var(--sr-cyan-rgb), 0.45);
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.sr-gear-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.sr-gear-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(244px, calc(100vw - 16px));
+  max-height: calc(100dvh - 64px);
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(var(--sr-cyan-rgb), 0.5);
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+  touch-action: pan-y;
+}
+
+.sr-gear-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sr-gear-row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sr-gear-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sr-text-muted);
+}
+
+.sr-gear-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.sr-gear-action-btn {
+  min-height: 32px;
+  padding: 4px 5px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  background: rgba(30, 41, 59, 0.9);
+  color: var(--sr-text-primary);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.sr-gear-action-btn--on {
+  border-color: rgba(var(--sr-cyan-rgb), 0.8);
+  background: rgba(var(--sr-cyan-rgb), 0.22);
+  color: var(--sr-accent-yellow);
+}
+
+.sr-gear-action-btn--muted {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.25);
+}
+
+.sr-gear-preset-seg {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.sr-gear-preset-seg .sr-preset-btn {
+  flex: 1 1 0;
+  text-align: center;
+  padding: 5px 4px;
+}
+
+.sr-gear-debug-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* Preset benchmark modal */
+.sr-bench-overlay {
+  z-index: 48;
+  background: rgba(15, 23, 42, 0.65);
+  pointer-events: auto;
+}
+
+.sr-bench-card {
+  width: min(92vw, 420px);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(15, 23, 42, 0.96);
+  border-color: rgba(var(--sr-cyan-rgb), 0.55);
+  pointer-events: auto;
+}
+
+.sr-bench-title {
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: var(--sr-accent-yellow);
+  text-align: center;
+}
+
+.sr-bench-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sr-bench-meta {
+  font-size: 11px;
+  color: var(--sr-text-muted);
+  text-align: center;
+}
+
+.sr-bench-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sr-bench-row {
+  display: grid;
+  grid-template-columns: 76px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-bench-row--active {
+  border-color: rgba(var(--sr-cyan-rgb), 0.7);
+  background: rgba(var(--sr-cyan-rgb), 0.14);
+}
+
+.sr-bench-name {
+  color: var(--sr-accent-yellow);
+}
+
+.sr-bench-actions {
+  display: flex;
+  justify-content: center;
+}
+
+/* Compact & Mobile Touch HUD mode (hud--compact / hud--touch) */
 .sr-hud.hud--touch .sr-hud-bottom-left,
 .sr-hud.hud--touch .sr-title-controls,
 .sr-hud.hud--touch .sr-title-prompt-key,
 .sr-hud.hud--touch .sr-finish-key-hint,
+.sr-hud.hud--compact .sr-audio-btn,
 .sr-hud.hud--touch .sr-audio-btn {
   display: none !important;
+}
+
+.sr-hud.hud--compact .sr-gear-wrap {
+  display: block;
 }
 
 .sr-hud.hud--touch .sr-title-prompt-touch {
@@ -1462,100 +1761,134 @@
   display: flex;
 }
 
-/* Move speedometer & boost gauge to top-left & scale down so thumbs never cover it */
-.sr-hud.hud--touch .sr-hud-bottom-right {
-  top: max(10px, env(safe-area-inset-top, 0px));
-  left: max(12px, env(safe-area-inset-left, 0px));
+.sr-hud.hud--compact .sr-hud-panel:not(.sr-title-card):not(.sr-finish-card):not(.sr-gear-popover):not(.sr-bench-card) {
+  background: rgba(15, 23, 42, var(--sr-mobile-panel-opacity, 0.68));
+}
+
+/* Compact top bar: single row <= 7dvh, clear of top-right gear button */
+.sr-hud.hud--compact .sr-hud-top {
+  top: max(6px, env(safe-area-inset-top, 0px));
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: calc(max(8px, env(safe-area-inset-right, 0px)) + 46px);
+  transform: none;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 5px;
+  max-height: var(--sr-mobile-top-max-dvh, 7dvh);
+}
+
+.sr-hud.hud--compact:not(.hud--portrait) .sr-hud-top {
+  left: calc(max(8px, env(safe-area-inset-left, 0px)) + 102px);
+}
+
+.sr-hud.hud--compact .sr-timer-card {
+  padding: 4px 9px;
+  border-radius: 10px;
+}
+
+.sr-hud.hud--compact .sr-timer-label {
+  display: none;
+}
+
+.sr-hud.hud--compact.hud--portrait .sr-timer-sub {
+  display: none;
+}
+
+.sr-hud.hud--compact .sr-timer-value {
+  font-size: clamp(15px, 2.4vw, 20px);
+}
+
+.sr-hud.hud--compact .sr-timer-lap,
+.sr-hud.hud--compact .sr-timer-best,
+.sr-hud.hud--compact .sr-timer-best-lap {
+  font-size: 9px;
+}
+
+.sr-hud.hud--compact .sr-lap-slot,
+.sr-hud.hud--compact .sr-checkpoint-slot {
+  padding: 4px 8px;
+  font-size: clamp(11px, 1.8vw, 15px);
+  border-radius: 10px;
+}
+
+.sr-hud.hud--compact .sr-progress-wrap {
+  top: calc(max(6px, env(safe-area-inset-top, 0px)) + 36px);
+  width: min(42vw, 220px);
+}
+
+.sr-hud.hud--compact.hud--portrait .sr-progress-wrap {
+  left: calc(50% - 18px);
+  width: min(54vw, 230px);
+}
+
+.sr-hud.hud--compact .sr-toast-lane {
+  top: calc(max(6px, env(safe-area-inset-top, 0px)) + 44px);
+}
+
+.sr-hud.hud--compact .sr-toast {
+  padding: 3px 10px;
+  font-size: clamp(11px, 2.3vh, 16px);
+}
+
+.sr-hud.hud--compact .sr-toast--zone {
+  font-size: clamp(12px, 2.5vh, 17px);
+}
+
+.sr-hud.hud--compact .sr-toast--wrong-way {
+  font-size: clamp(12px, 2.6vh, 18px);
+}
+
+/* Compact speedometer & boost gauge: top-left in landscape, bottom-left above steer zone in portrait */
+.sr-hud.hud--compact:not(.hud--portrait) .sr-hud-bottom-right {
+  top: max(6px, env(safe-area-inset-top, 0px));
+  left: max(8px, env(safe-area-inset-left, 0px));
   right: auto;
   bottom: auto;
-  transform: none;
-  opacity: var(--sr-speedo-opacity, 0.6);
-  padding: 6px 10px;
-  gap: 4px;
+  transform: scale(0.76);
+  transform-origin: top left;
+  opacity: var(--sr-mobile-speedo-opacity, 0.45);
+  padding: 6px 9px;
+  gap: 3px;
   border-radius: 12px;
 }
 
-.sr-hud.hud--touch .sr-speedo {
+.sr-hud.hud--compact.hud--portrait .sr-hud-bottom-right {
+  top: auto;
+  right: auto;
+  left: max(8px, env(safe-area-inset-left, 0px));
+  bottom: calc(max(12px, env(safe-area-inset-bottom, 0px)) + clamp(116px, 24dvh, 162px));
+  transform: scale(0.74);
+  transform-origin: bottom left;
+  opacity: var(--sr-mobile-speedo-opacity, 0.45);
+  padding: 6px 9px;
+  gap: 3px;
+  border-radius: 12px;
+}
+
+.sr-hud.hud--compact .sr-speedo {
   width: clamp(74px, 11vw, 94px);
   height: clamp(64px, 9.5vw, 82px);
 }
 
-.sr-hud.hud--touch .sr-speedo-readout {
+.sr-hud.hud--compact .sr-speedo-readout {
   padding-top: 6px;
 }
 
-.sr-hud.hud--touch .sr-speedo-value {
+.sr-hud.hud--compact .sr-speedo-value {
   font-size: clamp(19px, 2.7vw, 25px);
 }
 
-.sr-hud.hud--touch .sr-speedo-unit {
+.sr-hud.hud--compact .sr-speedo-unit {
   font-size: 9px;
 }
 
-.sr-hud.hud--touch .sr-boost-header {
+.sr-hud.hud--compact .sr-boost-header,
+.sr-hud.hud--compact .sr-boost-state {
   font-size: 8px;
 }
 
-.sr-hud.hud--touch .sr-boost-state {
-  font-size: 8px;
-}
-
-.sr-hud.hud--touch .sr-boost-bar {
+.sr-hud.hud--compact .sr-boost-bar {
   height: 6px;
-}
-
-/* Keep center timer + CP compact & overlap-free on 640x360 landscape screens */
-.sr-hud.hud--touch .sr-hud-top {
-  top: max(6px, env(safe-area-inset-top, 0px));
-  gap: 8px;
-}
-
-.sr-hud.hud--touch .sr-timer-card {
-  padding: 4px 10px;
-  border-radius: 12px;
-}
-
-.sr-hud.hud--touch .sr-timer-label {
-  font-size: 9px;
-}
-
-.sr-hud.hud--touch .sr-timer-value {
-  font-size: clamp(16px, 2.5vw, 22px);
-}
-
-.sr-hud.hud--touch .sr-timer-lap,
-.sr-hud.hud--touch .sr-timer-best,
-.sr-hud.hud--touch .sr-timer-best-lap {
-  font-size: 9px;
-}
-
-.sr-hud.hud--touch .sr-lap-slot,
-.sr-hud.hud--touch .sr-checkpoint-slot {
-  padding: 5px 9px;
-  font-size: clamp(12px, 1.8vw, 16px);
-  border-radius: 12px;
-}
-
-.sr-hud.hud--touch .sr-progress-wrap {
-  top: calc(max(6px, env(safe-area-inset-top, 0px)) + 40px);
-  width: min(38vw, 220px);
-}
-
-.sr-hud.hud--touch .sr-toast-lane {
-  top: calc(max(6px, env(safe-area-inset-top, 0px)) + 50px);
-}
-
-.sr-hud.hud--touch .sr-toast {
-  padding: 3px 10px;
-  font-size: clamp(11px, 2.4vh, 16px);
-}
-
-.sr-hud.hud--touch .sr-toast--zone {
-  font-size: clamp(12px, 2.7vh, 18px);
-}
-
-.sr-hud.hud--touch .sr-toast--wrong-way {
-  font-size: clamp(12px, 2.8vh, 18px);
 }
 
 @media (max-height: 440px) {

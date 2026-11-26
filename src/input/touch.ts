@@ -23,6 +23,14 @@ export interface TouchPresses {
   mute: boolean;
 }
 
+export interface TouchControlPrefs {
+  steerMode: SteerMode;
+  autoThrottle: boolean;
+  muted: boolean;
+  fullscreen: boolean;
+  fullscreenSupported: boolean;
+}
+
 export interface TouchControls {
   getState: () => TouchControlState;
   consumePresses: () => TouchPresses;
@@ -32,6 +40,12 @@ export interface TouchControls {
   isEnabled: () => boolean;
   isPortraitBlocked: () => boolean;
   setMutedVisual: (muted: boolean) => void;
+  triggerCheckpointReset: () => void;
+  triggerRestartRace: () => void;
+  toggleSteerMode: () => SteerMode;
+  toggleAutoThrottle: () => boolean;
+  toggleFullscreen: () => Promise<boolean>;
+  getPrefs: () => TouchControlPrefs;
   onStatusChange: (cb: () => void) => () => void;
   dispose: () => void;
 }
@@ -173,7 +187,9 @@ export function createTouchControls(
   let visible = true;
   let phase: RacePhase = 'TITLE';
   let disposed = false;
-  let portraitDismissed = false;
+  let portraitHintShown = false;
+  let portraitHintActive = false;
+  let portraitHintTimerId = 0;
   let orientationResizeTimerId = 0;
 
   const statusCallbacks = new Set<() => void>();
@@ -191,17 +207,6 @@ export function createTouchControls(
   let brakePointerId: number | null = null;
   let driftPointerId: number | null = null;
   let gasPointerId: number | null = null;
-
-  let resetPointerId: number | null = null;
-  let resetDownAt = 0;
-  let restartPointerId: number | null = null;
-  let restartDownAt = 0;
-  let restartRafId = 0;
-  let restartTriggeredInHold = false;
-
-  let mutePointerId: number | null = null;
-  let steerModePointerId: number | null = null;
-  let autoPointerId: number | null = null;
   let confirmPointerId: number | null = null;
 
   const queuedPresses: TouchPresses = {
@@ -223,7 +228,6 @@ export function createTouchControls(
   root.style.setProperty('--sr-stick-radius', `${config.stickMaxRadius}px`);
 
   const fullscreenSupported = hasFullscreenSupport(rootElement);
-  const restartCircumference = 2 * Math.PI * 22;
 
   root.innerHTML = `
     <div class="sr-touch-confirm-backdrop sr-touch-hidden"></div>
@@ -277,64 +281,8 @@ export function createTouchControls(
       </button>
     </div>
 
-    <div class="sr-touch-topbar">
-      <button type="button" class="sr-touch-util-btn sr-touch-util-reset" aria-label="Reset ke checkpoint" title="Reset checkpoint">
-        <svg class="sr-touch-util-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 12a8 8 0 1 0 2.5-5.8L4 8.5M4 4v4.5h4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span class="sr-touch-util-text">CP</span>
-      </button>
-      <button type="button" class="sr-touch-util-btn sr-touch-util-restart" aria-label="Tahan untuk ulang balapan" title="Tahan untuk ulang">
-        <svg class="sr-touch-restart-ring" viewBox="0 0 48 48" aria-hidden="true">
-          <circle
-            class="sr-touch-restart-ring-fill"
-            cx="24"
-            cy="24"
-            r="22"
-            stroke-dasharray="${restartCircumference.toFixed(2)}"
-            stroke-dashoffset="${restartCircumference.toFixed(2)}"
-          />
-        </svg>
-        <svg class="sr-touch-util-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5 19V5l13 7-13 7z" fill="currentColor" />
-        </svg>
-        <span class="sr-touch-util-text">ULANG</span>
-      </button>
-      <button type="button" class="sr-touch-util-btn sr-touch-util-mute" aria-label="Suara">
-        <svg class="sr-touch-util-icon sr-touch-icon-on" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 9.5v5h4l5 4.5V5L8 9.5H4z" fill="currentColor" />
-          <path d="M16.2 8.8a4.8 4.8 0 0 1 0 6.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" />
-        </svg>
-        <svg class="sr-touch-util-icon sr-touch-icon-off" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 9.5v5h4l5 4.5V5L8 9.5H4z" fill="currentColor" />
-          <path d="M16.5 9l4.5 6M21 9l-4.5 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-        </svg>
-        <span class="sr-touch-util-text">SUARA</span>
-      </button>
-      <button type="button" class="sr-touch-util-btn sr-touch-util-steer-mode" aria-label="Ganti mode kemudi">
-        <svg class="sr-touch-util-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2.2" />
-          <circle cx="12" cy="12" r="2.2" fill="currentColor" />
-          <path d="M12 5v4M6 15l4-2M18 15l-4-2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-        </svg>
-        <span class="sr-touch-util-text sr-touch-steer-mode-text">STIK</span>
-      </button>
-      <button type="button" class="sr-touch-util-btn sr-touch-util-auto" aria-label="Gas otomatis">
-        <svg class="sr-touch-util-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M13 3L6 14h5l-1 7 8-12h-5l0-6z" fill="currentColor" />
-        </svg>
-        <span class="sr-touch-util-text">AUTO</span>
-      </button>
-      <button type="button" class="sr-touch-util-btn sr-touch-util-fs ${fullscreenSupported ? '' : 'sr-touch-hidden'}" aria-label="Layar penuh">
-        <svg class="sr-touch-util-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span class="sr-touch-util-text">FULL</span>
-      </button>
-    </div>
-
     <div class="sr-touch-portrait-banner sr-touch-hidden" role="status" aria-live="polite">
-      <span class="sr-touch-portrait-banner-text">Putar HP ke landscape untuk pengalaman terbaik</span>
+      <span class="sr-touch-portrait-banner-text">Putar HP ke landscape</span>
       <button type="button" class="sr-touch-portrait-dismiss" aria-label="Tutup imbauan">&times;</button>
     </div>
   `;
@@ -353,15 +301,6 @@ export function createTouchControls(
   const brakeBtnEl = root.querySelector('.sr-touch-btn-brake') as HTMLButtonElement;
   const gasBtnEl = root.querySelector('.sr-touch-btn-gas') as HTMLButtonElement;
 
-  const topbarEl = root.querySelector('.sr-touch-topbar') as HTMLElement;
-  const resetBtnEl = root.querySelector('.sr-touch-util-reset') as HTMLButtonElement;
-  const restartBtnEl = root.querySelector('.sr-touch-util-restart') as HTMLButtonElement;
-  const restartRingEl = root.querySelector('.sr-touch-restart-ring-fill') as SVGCircleElement;
-  const muteBtnEl = root.querySelector('.sr-touch-util-mute') as HTMLButtonElement;
-  const steerModeBtnEl = root.querySelector('.sr-touch-util-steer-mode') as HTMLButtonElement;
-  const steerModeTextEl = root.querySelector('.sr-touch-steer-mode-text') as HTMLElement;
-  const autoBtnEl = root.querySelector('.sr-touch-util-auto') as HTMLButtonElement;
-  const fsBtnEl = root.querySelector('.sr-touch-util-fs') as HTMLButtonElement;
   const portraitBannerEl = root.querySelector('.sr-touch-portrait-banner') as HTMLElement;
   const portraitDismissEl = root.querySelector('.sr-touch-portrait-dismiss') as HTMLButtonElement;
 
@@ -393,16 +332,13 @@ export function createTouchControls(
     stickKnobEl.style.transform = 'translate3d(0px, 0px, 0px)';
   }
 
-  function cancelRestartHold(): void {
-    restartPointerId = null;
-    restartDownAt = 0;
-    restartTriggeredInHold = false;
-    if (restartRafId) {
-      window.cancelAnimationFrame(restartRafId);
-      restartRafId = 0;
+  function hidePortraitBanner(): void {
+    portraitHintActive = false;
+    if (portraitHintTimerId !== 0) {
+      window.clearTimeout(portraitHintTimerId);
+      portraitHintTimerId = 0;
     }
-    restartBtnEl.classList.remove('sr-touch-is-pressed', 'sr-touch-holding');
-    restartRingEl.style.strokeDashoffset = restartCircumference.toFixed(2);
+    portraitBannerEl.classList.add('sr-touch-hidden');
   }
 
   function clearAllActiveInputs(): void {
@@ -416,10 +352,6 @@ export function createTouchControls(
     brakePointerId = null;
     driftPointerId = null;
     gasPointerId = null;
-    resetPointerId = null;
-    mutePointerId = null;
-    steerModePointerId = null;
-    autoPointerId = null;
     confirmPointerId = null;
 
     leftBtnEl.classList.remove('sr-touch-is-pressed');
@@ -427,12 +359,6 @@ export function createTouchControls(
     brakeBtnEl.classList.remove('sr-touch-is-pressed');
     driftBtnEl.classList.remove('sr-touch-is-pressed');
     gasBtnEl.classList.remove('sr-touch-is-pressed');
-    resetBtnEl.classList.remove('sr-touch-is-pressed');
-    muteBtnEl.classList.remove('sr-touch-is-pressed');
-    steerModeBtnEl.classList.remove('sr-touch-is-pressed');
-    autoBtnEl.classList.remove('sr-touch-is-pressed');
-
-    cancelRestartHold();
   }
 
   function syncUiState(): void {
@@ -448,32 +374,34 @@ export function createTouchControls(
     }
 
     const isPortrait = Boolean(active && config.orientationHint && vh > vw);
-    if (!isPortrait) {
-      portraitDismissed = false;
-    }
-    const showPortraitBanner = isPortrait && !portraitDismissed && phase !== 'TITLE' && phase !== 'FINISH';
-    portraitBannerEl.classList.toggle('sr-touch-hidden', !showPortraitBanner);
-
     const isDrivingPhase = phase === 'COUNTDOWN' || phase === 'RACING';
     const isTitlePhase = phase === 'TITLE';
-    const isFinishPhase = phase === 'FINISH';
 
-    // Hide all touch controls when FINISH results screen is displayed so nothing overlaps it
-    topbarEl.classList.toggle('sr-touch-hidden', isFinishPhase);
+    if (!isPortrait || !isDrivingPhase) {
+      hidePortraitBanner();
+    } else if (!portraitHintShown) {
+      portraitHintShown = true;
+      portraitHintActive = true;
+      portraitBannerEl.classList.remove('sr-touch-hidden');
+      if (portraitHintTimerId !== 0) {
+        window.clearTimeout(portraitHintTimerId);
+      }
+      portraitHintTimerId = window.setTimeout(() => {
+        hidePortraitBanner();
+      }, config.portraitToastDurationMs);
+    } else {
+      portraitBannerEl.classList.toggle('sr-touch-hidden', !portraitHintActive);
+    }
+
     confirmBackdropEl.classList.toggle('sr-touch-hidden', !isTitlePhase);
     steerZoneEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
     actionsEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
-    resetBtnEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
-    restartBtnEl.classList.toggle('sr-touch-hidden', !isDrivingPhase);
 
     const isStick = steerMode === 'stick';
     stickBaseEl.classList.toggle('sr-touch-hidden', !isStick);
     steerButtonsEl.classList.toggle('sr-touch-hidden', isStick);
-    steerModeTextEl.textContent = isStick ? 'STIK' : 'TOMBOL';
 
     gasBtnEl.classList.toggle('sr-touch-hidden', autoThrottle);
-    autoBtnEl.classList.toggle('sr-touch-auto-on', autoThrottle);
-    muteBtnEl.classList.toggle('sr-touch-is-muted', mutedVisual);
 
     if (isStick && stickPointerId === null) {
       positionIdleStick();
@@ -599,186 +527,6 @@ export function createTouchControls(
     gasPointerId = id;
   });
 
-  // Reset checkpoint button (short tap <= resetTapMaxMs)
-  function onResetDown(e: PointerEvent): void {
-    if (resetPointerId !== null) return;
-    e.preventDefault();
-    e.stopPropagation();
-    resetPointerId = e.pointerId;
-    resetDownAt = performance.now();
-    safeCapture(resetBtnEl, e.pointerId);
-    resetBtnEl.classList.add('sr-touch-is-pressed');
-  }
-  function onResetUp(e: PointerEvent): void {
-    if (e.pointerId !== resetPointerId) return;
-    const elapsed = performance.now() - resetDownAt;
-    safeRelease(resetBtnEl, e.pointerId);
-    resetPointerId = null;
-    resetBtnEl.classList.remove('sr-touch-is-pressed');
-    if (e.type === 'pointerup' && elapsed <= config.resetTapMaxMs && phase === 'RACING') {
-      queuedPresses.reset = true;
-    }
-  }
-  resetBtnEl.addEventListener('pointerdown', onResetDown);
-  resetBtnEl.addEventListener('pointerup', onResetUp);
-  resetBtnEl.addEventListener('pointercancel', onResetUp);
-  resetBtnEl.addEventListener('lostpointercapture', onResetUp);
-
-  // Hold-to-restart button (restartHoldMs = 600 ms with progress ring)
-  function tickRestartHold(): void {
-    if (restartPointerId === null || disposed) {
-      return;
-    }
-    const elapsed = performance.now() - restartDownAt;
-    const progress = clamp(elapsed / Math.max(100, config.restartHoldMs), 0, 1);
-    const offset = restartCircumference * (1 - progress);
-    restartRingEl.style.strokeDashoffset = offset.toFixed(2);
-
-    if (progress >= 1 && !restartTriggeredInHold) {
-      restartTriggeredInHold = true;
-      queuedPresses.restart = true;
-      triggerVibrate(config.haptics.boostMs);
-      cancelRestartHold();
-      return;
-    }
-
-    restartRafId = window.requestAnimationFrame(tickRestartHold);
-  }
-
-  function onRestartDown(e: PointerEvent): void {
-    if (restartPointerId !== null || phase === 'TITLE') return;
-    e.preventDefault();
-    e.stopPropagation();
-    restartPointerId = e.pointerId;
-    restartDownAt = performance.now();
-    restartTriggeredInHold = false;
-    safeCapture(restartBtnEl, e.pointerId);
-    restartBtnEl.classList.add('sr-touch-is-pressed', 'sr-touch-holding');
-    restartRafId = window.requestAnimationFrame(tickRestartHold);
-  }
-
-  function onRestartEnd(e: PointerEvent): void {
-    if (e.pointerId !== restartPointerId) return;
-    safeRelease(restartBtnEl, e.pointerId);
-    cancelRestartHold();
-  }
-
-  restartBtnEl.addEventListener('pointerdown', onRestartDown);
-  restartBtnEl.addEventListener('pointerup', onRestartEnd);
-  restartBtnEl.addEventListener('pointercancel', onRestartEnd);
-  restartBtnEl.addEventListener('lostpointercapture', onRestartEnd);
-
-  // Mute, Steer Mode, Auto-Throttle utility buttons
-  function bindTapButton(
-    btn: HTMLButtonElement,
-    getId: () => number | null,
-    setId: (id: number | null) => void,
-    onTap: () => void,
-  ): () => void {
-    const onDown = (e: PointerEvent): void => {
-      if (getId() !== null) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setId(e.pointerId);
-      safeCapture(btn, e.pointerId);
-      btn.classList.add('sr-touch-is-pressed');
-    };
-    const onEnd = (e: PointerEvent): void => {
-      if (e.pointerId !== getId()) return;
-      safeRelease(btn, e.pointerId);
-      setId(null);
-      btn.classList.remove('sr-touch-is-pressed');
-      if (e.type === 'pointerup') {
-        onTap();
-      }
-    };
-    btn.addEventListener('pointerdown', onDown);
-    btn.addEventListener('pointerup', onEnd);
-    btn.addEventListener('pointercancel', onEnd);
-    btn.addEventListener('lostpointercapture', onEnd);
-
-    return () => {
-      btn.removeEventListener('pointerdown', onDown);
-      btn.removeEventListener('pointerup', onEnd);
-      btn.removeEventListener('pointercancel', onEnd);
-      btn.removeEventListener('lostpointercapture', onEnd);
-    };
-  }
-
-  const unbindMute = bindTapButton(
-    muteBtnEl,
-    () => mutePointerId,
-    (id) => {
-      mutePointerId = id;
-    },
-    () => {
-      queuedPresses.mute = true;
-    },
-  );
-
-  const unbindSteerMode = bindTapButton(
-    steerModeBtnEl,
-    () => steerModePointerId,
-    (id) => {
-      steerModePointerId = id;
-    },
-    () => {
-      steerMode = steerMode === 'stick' ? 'buttons' : 'stick';
-      clearAllActiveInputs();
-      saveTouchPrefs(config, steerMode, autoThrottle, mutedVisual);
-      syncUiState();
-    },
-  );
-
-  const unbindAuto = bindTapButton(
-    autoBtnEl,
-    () => autoPointerId,
-    (id) => {
-      autoPointerId = id;
-    },
-    () => {
-      autoThrottle = !autoThrottle;
-      gasPointerId = null;
-      gasBtnEl.classList.remove('sr-touch-is-pressed');
-      saveTouchPrefs(config, steerMode, autoThrottle, mutedVisual);
-      syncUiState();
-    },
-  );
-
-  // Fullscreen button uses click so requestFullscreen + orientation lock have proper user activation
-  function onFullscreenPointerDown(e: PointerEvent): void {
-    e.stopPropagation();
-  }
-
-  async function onFullscreenClick(e: MouseEvent): Promise<void> {
-    e.stopPropagation();
-    if (!fullscreenSupported) return;
-    try {
-      if (isFullscreenActive()) {
-        const doc = document as Document & { webkitExitFullscreen?: () => Promise<void> | void };
-        if (typeof doc.exitFullscreen === 'function') {
-          await doc.exitFullscreen();
-        } else if (typeof doc.webkitExitFullscreen === 'function') {
-          await doc.webkitExitFullscreen();
-        }
-      } else {
-        const el = rootElement as HTMLElement & {
-          webkitRequestFullscreen?: () => Promise<void> | void;
-        };
-        if (typeof el.requestFullscreen === 'function') {
-          await el.requestFullscreen();
-        } else if (typeof el.webkitRequestFullscreen === 'function') {
-          await el.webkitRequestFullscreen();
-        }
-        requestLandscapeOrientation();
-      }
-    } catch {
-      // Ignore fullscreen denial errors
-    }
-  }
-  fsBtnEl.addEventListener('pointerdown', onFullscreenPointerDown);
-  fsBtnEl.addEventListener('click', onFullscreenClick);
-
   // Tap-anywhere outside Title card to confirm start on TITLE screen
   function onConfirmDown(e: PointerEvent): void {
     if (confirmPointerId !== null) return;
@@ -803,8 +551,7 @@ export function createTouchControls(
   function onDismissPortraitBanner(e: Event): void {
     e.preventDefault();
     e.stopPropagation();
-    portraitDismissed = true;
-    syncUiState();
+    hidePortraitBanner();
   }
   portraitDismissEl.addEventListener('pointerdown', (e) => e.stopPropagation());
   portraitDismissEl.addEventListener('click', onDismissPortraitBanner);
@@ -1027,8 +774,81 @@ export function createTouchControls(
       return;
     }
     mutedVisual = muted;
-    muteBtnEl.classList.toggle('sr-touch-is-muted', mutedVisual);
     saveTouchPrefs(config, steerMode, autoThrottle, mutedVisual);
+    emitStatusChange();
+  }
+
+  function triggerCheckpointReset(): void {
+    if (phase === 'RACING') {
+      queuedPresses.reset = true;
+    }
+  }
+
+  function triggerRestartRace(): void {
+    if (phase !== 'TITLE') {
+      queuedPresses.restart = true;
+      triggerVibrate(config.haptics.boostMs);
+    }
+  }
+
+  function toggleSteerMode(): SteerMode {
+    steerMode = steerMode === 'stick' ? 'buttons' : 'stick';
+    clearAllActiveInputs();
+    saveTouchPrefs(config, steerMode, autoThrottle, mutedVisual);
+    syncUiState();
+    emitStatusChange();
+    return steerMode;
+  }
+
+  function toggleAutoThrottle(): boolean {
+    autoThrottle = !autoThrottle;
+    gasPointerId = null;
+    gasBtnEl.classList.remove('sr-touch-is-pressed');
+    saveTouchPrefs(config, steerMode, autoThrottle, mutedVisual);
+    syncUiState();
+    emitStatusChange();
+    return autoThrottle;
+  }
+
+  async function toggleFullscreen(): Promise<boolean> {
+    if (!fullscreenSupported) {
+      return false;
+    }
+    try {
+      if (isFullscreenActive()) {
+        const doc = document as Document & { webkitExitFullscreen?: () => Promise<void> | void };
+        if (typeof doc.exitFullscreen === 'function') {
+          await doc.exitFullscreen();
+        } else if (typeof doc.webkitExitFullscreen === 'function') {
+          await doc.webkitExitFullscreen();
+        }
+      } else {
+        const el = rootElement as HTMLElement & {
+          webkitRequestFullscreen?: () => Promise<void> | void;
+        };
+        if (typeof el.requestFullscreen === 'function') {
+          await el.requestFullscreen();
+        } else if (typeof el.webkitRequestFullscreen === 'function') {
+          await el.webkitRequestFullscreen();
+        }
+        requestLandscapeOrientation();
+      }
+    } catch {
+      // Ignore fullscreen denial errors
+    }
+    const active = isFullscreenActive();
+    emitStatusChange();
+    return active;
+  }
+
+  function getPrefs(): TouchControlPrefs {
+    return {
+      steerMode,
+      autoThrottle,
+      muted: mutedVisual,
+      fullscreen: isFullscreenActive(),
+      fullscreenSupported,
+    };
   }
 
   function onStatusChange(cb: () => void): () => void {
@@ -1046,6 +866,7 @@ export function createTouchControls(
     }
     disposed = true;
     clearAllActiveInputs();
+    hidePortraitBanner();
     statusCallbacks.clear();
 
     steerZoneEl.removeEventListener('pointerdown', onSteerZonePointerDown);
@@ -1059,22 +880,6 @@ export function createTouchControls(
     unbindBrake();
     unbindDrift();
     unbindGas();
-    unbindMute();
-    unbindSteerMode();
-    unbindAuto();
-
-    resetBtnEl.removeEventListener('pointerdown', onResetDown);
-    resetBtnEl.removeEventListener('pointerup', onResetUp);
-    resetBtnEl.removeEventListener('pointercancel', onResetUp);
-    resetBtnEl.removeEventListener('lostpointercapture', onResetUp);
-
-    restartBtnEl.removeEventListener('pointerdown', onRestartDown);
-    restartBtnEl.removeEventListener('pointerup', onRestartEnd);
-    restartBtnEl.removeEventListener('pointercancel', onRestartEnd);
-    restartBtnEl.removeEventListener('lostpointercapture', onRestartEnd);
-
-    fsBtnEl.removeEventListener('pointerdown', onFullscreenPointerDown);
-    fsBtnEl.removeEventListener('click', onFullscreenClick);
 
     confirmBackdropEl.removeEventListener('pointerdown', onConfirmDown);
     confirmBackdropEl.removeEventListener('pointerup', onConfirmEnd);
@@ -1110,6 +915,12 @@ export function createTouchControls(
     isEnabled: () => enabled && visible,
     isPortraitBlocked: () => false,
     setMutedVisual,
+    triggerCheckpointReset,
+    triggerRestartRace,
+    toggleSteerMode,
+    toggleAutoThrottle,
+    toggleFullscreen,
+    getPrefs,
     onStatusChange,
     dispose,
   };

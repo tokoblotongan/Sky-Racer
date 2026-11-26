@@ -1,8 +1,9 @@
 // src/ui/hud.ts
 
-import { CONFIG } from '../config';
+import { CONFIG, type GraphicsPreset } from '../config';
 import type { RacePhase, FinishResultData } from '../core/state';
 import type { CourseMedals } from '../courses/types';
+import type { TouchControlPrefs } from '../input/touch';
 import {
   formatMedalLabel,
   type CourseRecords,
@@ -66,7 +67,43 @@ export interface HudCallbacks {
   onClearRecords?: () => void;
   onTryFullGraphics?: () => void;
   onUseSafeMode?: () => void;
+  onSelectGraphicsPreset?: (preset: GraphicsPreset) => void;
+  onChangeBrightness?: (value: number) => void;
+  onResetBrightness?: () => void;
+  onMeasureLuminance?: () => number | null;
+  onRunPresetBenchmark?: () => void;
+  onGearCheckpointReset?: () => void;
+  onGearRestartRace?: () => void;
+  onGearToggleMute?: () => void;
+  onGearToggleSteerMode?: () => void;
+  onGearToggleAutoThrottle?: () => void;
+  onGearToggleFullscreen?: () => void;
   onOpenReport?: () => void;
+}
+
+export interface GraphicsUiState {
+  preset: GraphicsPreset;
+  brightness: number;
+  touchPrefs?: TouchControlPrefs;
+  probeActive?: boolean;
+  benchmarkRunning?: boolean;
+  measuredLuma?: number | null;
+}
+
+export interface PresetBenchmarkEntry {
+  preset: GraphicsPreset;
+  avgFps: number;
+  avgFrameMs: number;
+  luma: number | null;
+  errorCount: number;
+}
+
+export interface PresetBenchmarkReport {
+  activePreset: GraphicsPreset;
+  recommendedPreset: GraphicsPreset;
+  measuredLuma: number | null;
+  targetLuma: number;
+  entries: PresetBenchmarkEntry[];
 }
 
 export interface DebugMetricsSnapshot {
@@ -126,9 +163,38 @@ export interface HudHandle {
   titleClearTextEl: HTMLElement;
   titleGfxBarEl: HTMLElement;
   titleGfxStatusEl: HTMLElement;
-  titleFullGfxBtnEl: HTMLButtonElement;
-  titleSafeModeBtnEl: HTMLButtonElement;
+  titlePresetBtns: Record<GraphicsPreset, HTMLButtonElement>;
+  titleBrightnessInputEl: HTMLInputElement;
+  titleBrightnessValEl: HTMLElement;
+  titleBrightnessResetEl: HTMLButtonElement;
+  titleDebugBarEl: HTMLElement;
+  titleLumaBtnEl: HTMLButtonElement;
+  titleBenchBtnEl: HTMLButtonElement;
+  titleLumaTextEl: HTMLElement;
   titleVersionBtnEl: HTMLButtonElement;
+  gearWrapEl: HTMLElement;
+  gearBtnEl: HTMLButtonElement;
+  gearPopoverEl: HTMLElement;
+  gearRaceActionsEl: HTMLElement;
+  gearCpBtnEl: HTMLButtonElement;
+  gearRestartBtnEl: HTMLButtonElement;
+  gearMuteBtnEl: HTMLButtonElement;
+  gearSteerBtnEl: HTMLButtonElement;
+  gearAutoBtnEl: HTMLButtonElement;
+  gearFsBtnEl: HTMLButtonElement;
+  gearPresetBtns: Record<GraphicsPreset, HTMLButtonElement>;
+  gearBrightnessInputEl: HTMLInputElement;
+  gearBrightnessValEl: HTMLElement;
+  gearBrightnessResetEl: HTMLButtonElement;
+  gearDebugRowEl: HTMLElement;
+  gearLumaBtnEl: HTMLButtonElement;
+  gearBenchBtnEl: HTMLButtonElement;
+  gearLumaTextEl: HTMLElement;
+  gearAutoCloseTimerId: number | null;
+  gearOpen: boolean;
+  benchOverlayEl: HTMLElement;
+  benchBodyEl: HTMLElement;
+  benchCloseBtnEl: HTMLButtonElement;
   safeBannerEl: HTMLElement;
   safeBannerTimerId: number | null;
   countdownEl: HTMLElement;
@@ -174,6 +240,8 @@ export interface HudHandle {
   lastWrongWay: boolean | null;
   lastMuted: boolean | null;
   lastTouchActive: boolean | null;
+  lastCompact: boolean | null;
+  lastPortrait: boolean | null;
   lastTimeSeconds: number;
   lastToastTickMs: number;
   hintManualExpanded: boolean | null;
@@ -255,6 +323,9 @@ function applyHudConfigCssVars(root: HTMLElement): void {
   const cfg = CONFIG.hud;
   root.style.setProperty('--sr-panel-opacity', String(cfg.panelOpacity));
   root.style.setProperty('--sr-panel-border-opacity', String(cfg.panelBorderOpacity));
+  root.style.setProperty('--sr-mobile-panel-opacity', String(cfg.mobilePanelOpacity));
+  root.style.setProperty('--sr-mobile-speedo-opacity', String(cfg.mobileSpeedoOpacity));
+  root.style.setProperty('--sr-mobile-top-max-dvh', `${cfg.mobileTopMaxHeightPct}dvh`);
   root.style.setProperty('--sr-toast-bg-opacity', String(cfg.toastBgOpacity));
   root.style.setProperty('--sr-toast-border-opacity', String(cfg.toastBorderOpacity));
   root.style.setProperty('--sr-toast-fade-in', `${cfg.toastFadeInMs}ms`);
@@ -385,6 +456,53 @@ export function createHud(
       </div>
     </div>
 
+    <div class="sr-gear-wrap">
+      <button type="button" class="sr-hud-panel sr-gear-btn" aria-label="Pengaturan dan menu cepat" aria-expanded="false" title="Pengaturan">
+        <svg class="sr-gear-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 8.75a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5Z" fill="none" stroke="currentColor" stroke-width="2" />
+          <path d="M19.4 13.5a7.9 7.9 0 0 0 .06-1.5c0-.51-.02-1.01-.06-1.5l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.4 7.4 0 0 0-2.6-1.5l-.36-2.54a.5.5 0 0 0-.49-.42h-3.84a.5.5 0 0 0-.49.42l-.36 2.54a7.4 7.4 0 0 0-2.6 1.5l-2.39-.96a.5.5 0 0 0-.61.22L2.45 8.28a.5.5 0 0 0 .12.64L4.6 10.5c-.04.49-.06.99-.06 1.5s.02 1.01.06 1.5l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.4.31.61.22l2.39-.96c.78.64 1.66 1.15 2.6 1.5l.36 2.54c.04.24.25.42.49.42h3.84c.24 0 .45-.18.49-.42l.36-2.54a7.4 7.4 0 0 0 2.6-1.5l2.39.96c.21.09.48 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+        </svg>
+      </button>
+      <div class="sr-hud-panel sr-gear-popover sr-hud-hidden" role="dialog" aria-label="Menu Cepat">
+        <div class="sr-gear-section sr-gear-race-actions sr-hud-hidden">
+          <div class="sr-gear-label">Kontrol Balap</div>
+          <div class="sr-gear-action-grid">
+            <button type="button" class="sr-gear-action-btn sr-gear-cp-btn">CP</button>
+            <button type="button" class="sr-gear-action-btn sr-gear-restart-btn">ULANG</button>
+            <button type="button" class="sr-gear-action-btn sr-gear-mute-btn">SUARA</button>
+            <button type="button" class="sr-gear-action-btn sr-gear-steer-btn">STIK</button>
+            <button type="button" class="sr-gear-action-btn sr-gear-auto-btn">AUTO</button>
+            <button type="button" class="sr-gear-action-btn sr-gear-fs-btn">FULL</button>
+          </div>
+        </div>
+        <div class="sr-gear-section">
+          <div class="sr-gear-label">Preset Grafis</div>
+          <div class="sr-preset-seg sr-gear-preset-seg">
+            <button type="button" class="sr-preset-btn" data-preset="hemat">Hemat</button>
+            <button type="button" class="sr-preset-btn" data-preset="seimbang">Seimbang</button>
+            <button type="button" class="sr-preset-btn" data-preset="penuh">Penuh</button>
+          </div>
+        </div>
+        <div class="sr-gear-section">
+          <div class="sr-gear-row-between">
+            <label class="sr-gear-label" for="srGearBrightness">Kecerahan</label>
+            <span class="sr-brightness-val sr-gear-brightness-val">1.15</span>
+          </div>
+          <div class="sr-brightness-row">
+            <input id="srGearBrightness" class="sr-brightness-slider sr-gear-brightness-slider" type="range" min="${CONFIG.safeMode.brightnessMin}" max="${CONFIG.safeMode.brightnessMax}" step="0.05" value="${CONFIG.safeMode.brightnessDefaultBalanced}" />
+            <button type="button" class="sr-btn sr-btn-secondary sr-btn-mini sr-gear-brightness-reset">Reset</button>
+          </div>
+        </div>
+        <div class="sr-gear-section sr-gear-debug-row sr-hud-hidden">
+          <div class="sr-gear-debug-actions">
+            <button type="button" class="sr-btn sr-btn-secondary sr-btn-mini sr-gear-luma-btn">Ukur kecerahan</button>
+            <button type="button" class="sr-btn sr-btn-secondary sr-btn-mini sr-gear-bench-btn">Uji preset</button>
+          </div>
+          <div class="sr-luma-readout sr-gear-luma-text"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="sr-overlay-center sr-title-screen">
       <div class="sr-hud-panel sr-title-card">
         <div class="sr-title-kicker">Stunt Track Time Trial</div>
@@ -439,12 +557,28 @@ export function createHud(
         <div class="sr-title-touch-controls">
           <span class="sr-hint-item">Kemudi kiri</span>
           <span class="sr-hint-item">Rem &amp; drift kanan</span>
-          <span class="sr-hint-item">Tahan untuk ulang</span>
+          <span class="sr-hint-item">Menu ⚙ kanan atas</span>
         </div>
-        <div class="sr-title-gfx-bar sr-hud-hidden">
-          <span class="sr-title-gfx-status">Mode aman aktif</span>
-          <button type="button" class="sr-btn sr-btn-secondary sr-btn-compact sr-title-fullgfx-btn">Coba grafis penuh</button>
-          <button type="button" class="sr-btn sr-btn-secondary sr-btn-compact sr-title-safemode-btn sr-hud-hidden">Mode aman</button>
+        <div class="sr-title-gfx-bar">
+          <div class="sr-title-gfx-row">
+            <span class="sr-title-gfx-status">Grafis: Seimbang</span>
+            <div class="sr-preset-seg sr-title-preset-seg">
+              <button type="button" class="sr-preset-btn" data-preset="hemat">Hemat</button>
+              <button type="button" class="sr-preset-btn" data-preset="seimbang">Seimbang</button>
+              <button type="button" class="sr-preset-btn" data-preset="penuh">Penuh</button>
+            </div>
+          </div>
+          <div class="sr-title-brightness-row">
+            <label class="sr-title-brightness-label" for="srTitleBrightness">Kecerahan</label>
+            <input id="srTitleBrightness" class="sr-brightness-slider sr-title-brightness-slider" type="range" min="${CONFIG.safeMode.brightnessMin}" max="${CONFIG.safeMode.brightnessMax}" step="0.05" value="${CONFIG.safeMode.brightnessDefaultBalanced}" />
+            <span class="sr-brightness-val sr-title-brightness-val">1.15</span>
+            <button type="button" class="sr-btn sr-btn-secondary sr-btn-mini sr-title-brightness-reset">Reset</button>
+          </div>
+          <div class="sr-title-debug-bar sr-hud-hidden">
+            <button type="button" class="sr-btn sr-btn-secondary sr-btn-mini sr-title-luma-btn">Ukur kecerahan</button>
+            <button type="button" class="sr-btn sr-btn-secondary sr-btn-mini sr-title-bench-btn">Uji preset</button>
+            <span class="sr-luma-readout sr-title-luma-text"></span>
+          </div>
         </div>
       </div>
       <button type="button" class="sr-title-version-btn" aria-label="Versi build">v${getBuildId()}</button>
@@ -458,6 +592,16 @@ export function createHud(
 
     <div class="sr-overlay-center sr-loading-overlay sr-hud-hidden" aria-live="polite">
       <div class="sr-hud-panel sr-loading-pill">Memuat arena...</div>
+    </div>
+
+    <div class="sr-overlay-center sr-bench-overlay sr-hud-hidden" role="dialog" aria-modal="true">
+      <div class="sr-hud-panel sr-bench-card">
+        <div class="sr-bench-title">Hasil Uji Preset</div>
+        <div class="sr-bench-body"></div>
+        <div class="sr-bench-actions">
+          <button type="button" class="sr-btn sr-btn-primary sr-btn-compact sr-bench-close-btn">Tutup</button>
+        </div>
+      </div>
     </div>
 
     <div class="sr-overlay-center sr-contextlost-overlay sr-hud-hidden" role="alertdialog" aria-modal="true">
@@ -536,13 +680,84 @@ export function createHud(
   const titleClearTextEl = root.querySelector('.sr-title-clear-text') as HTMLElement;
   const titleGfxBarEl = root.querySelector('.sr-title-gfx-bar') as HTMLElement;
   const titleGfxStatusEl = root.querySelector('.sr-title-gfx-status') as HTMLElement;
-  const titleFullGfxBtnEl = root.querySelector('.sr-title-fullgfx-btn') as HTMLButtonElement;
-  const titleSafeModeBtnEl = root.querySelector('.sr-title-safemode-btn') as HTMLButtonElement;
+  const titlePresetBtns: Record<GraphicsPreset, HTMLButtonElement> = {
+    hemat: root.querySelector('.sr-title-preset-seg [data-preset="hemat"]') as HTMLButtonElement,
+    seimbang: root.querySelector('.sr-title-preset-seg [data-preset="seimbang"]') as HTMLButtonElement,
+    penuh: root.querySelector('.sr-title-preset-seg [data-preset="penuh"]') as HTMLButtonElement,
+  };
+  const titleBrightnessInputEl = root.querySelector('.sr-title-brightness-slider') as HTMLInputElement;
+  const titleBrightnessValEl = root.querySelector('.sr-title-brightness-val') as HTMLElement;
+  const titleBrightnessResetEl = root.querySelector('.sr-title-brightness-reset') as HTMLButtonElement;
+  const titleDebugBarEl = root.querySelector('.sr-title-debug-bar') as HTMLElement;
+  const titleLumaBtnEl = root.querySelector('.sr-title-luma-btn') as HTMLButtonElement;
+  const titleBenchBtnEl = root.querySelector('.sr-title-bench-btn') as HTMLButtonElement;
+  const titleLumaTextEl = root.querySelector('.sr-title-luma-text') as HTMLElement;
   const titleVersionBtnEl = root.querySelector('.sr-title-version-btn') as HTMLButtonElement;
+
+  const gearWrapEl = root.querySelector('.sr-gear-wrap') as HTMLElement;
+  const gearBtnEl = root.querySelector('.sr-gear-btn') as HTMLButtonElement;
+  const gearPopoverEl = root.querySelector('.sr-gear-popover') as HTMLElement;
+  const gearRaceActionsEl = root.querySelector('.sr-gear-race-actions') as HTMLElement;
+  const gearCpBtnEl = root.querySelector('.sr-gear-cp-btn') as HTMLButtonElement;
+  const gearRestartBtnEl = root.querySelector('.sr-gear-restart-btn') as HTMLButtonElement;
+  const gearMuteBtnEl = root.querySelector('.sr-gear-mute-btn') as HTMLButtonElement;
+  const gearSteerBtnEl = root.querySelector('.sr-gear-steer-btn') as HTMLButtonElement;
+  const gearAutoBtnEl = root.querySelector('.sr-gear-auto-btn') as HTMLButtonElement;
+  const gearFsBtnEl = root.querySelector('.sr-gear-fs-btn') as HTMLButtonElement;
+  const gearPresetBtns: Record<GraphicsPreset, HTMLButtonElement> = {
+    hemat: root.querySelector('.sr-gear-preset-seg [data-preset="hemat"]') as HTMLButtonElement,
+    seimbang: root.querySelector('.sr-gear-preset-seg [data-preset="seimbang"]') as HTMLButtonElement,
+    penuh: root.querySelector('.sr-gear-preset-seg [data-preset="penuh"]') as HTMLButtonElement,
+  };
+  const gearBrightnessInputEl = root.querySelector('.sr-gear-brightness-slider') as HTMLInputElement;
+  const gearBrightnessValEl = root.querySelector('.sr-gear-brightness-val') as HTMLElement;
+  const gearBrightnessResetEl = root.querySelector('.sr-gear-brightness-reset') as HTMLButtonElement;
+  const gearDebugRowEl = root.querySelector('.sr-gear-debug-row') as HTMLElement;
+  const gearLumaBtnEl = root.querySelector('.sr-gear-luma-btn') as HTMLButtonElement;
+  const gearBenchBtnEl = root.querySelector('.sr-gear-bench-btn') as HTMLButtonElement;
+  const gearLumaTextEl = root.querySelector('.sr-gear-luma-text') as HTMLElement;
+
+  const benchOverlayEl = root.querySelector('.sr-bench-overlay') as HTMLElement;
+  const benchBodyEl = root.querySelector('.sr-bench-body') as HTMLElement;
+  const benchCloseBtnEl = root.querySelector('.sr-bench-close-btn') as HTMLButtonElement;
+
   const safeBannerEl = root.querySelector('.sr-safe-banner') as HTMLElement;
   const finishRetryBtnEl = root.querySelector('.sr-finish-retry-btn') as HTMLButtonElement;
   const finishMenuBtnEl = root.querySelector('.sr-finish-menu-btn') as HTMLButtonElement;
   const finishCopyBtnEl = root.querySelector('.sr-finish-copy-btn') as HTMLButtonElement;
+
+  const debugModeEnabled = isDebugUrlEnabled();
+  if (debugModeEnabled) {
+    titleDebugBarEl.classList.remove('sr-hud-hidden');
+    gearDebugRowEl.classList.remove('sr-hud-hidden');
+  }
+
+  const setGearOpen = (open: boolean): void => {
+    handle.gearOpen = open;
+    gearPopoverEl.classList.toggle('sr-hud-hidden', !open);
+    gearBtnEl.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (handle.gearAutoCloseTimerId !== null) {
+      window.clearTimeout(handle.gearAutoCloseTimerId);
+      handle.gearAutoCloseTimerId = null;
+    }
+    if (open) {
+      handle.gearAutoCloseTimerId = window.setTimeout(() => {
+        setGearOpen(false);
+      }, CONFIG.touch.gearAutoCloseMs);
+    }
+  };
+
+  const bumpGearAutoCloseTimer = (): void => {
+    if (!handle.gearOpen) {
+      return;
+    }
+    if (handle.gearAutoCloseTimerId !== null) {
+      window.clearTimeout(handle.gearAutoCloseTimerId);
+    }
+    handle.gearAutoCloseTimerId = window.setTimeout(() => {
+      setGearOpen(false);
+    }, CONFIG.touch.gearAutoCloseMs);
+  };
 
   const handleStartClick = (): void => {
     titleStartBtnEl.blur();
@@ -556,16 +771,149 @@ export function createHud(
     finishMenuBtnEl.blur();
     callbacks.onReturnToMenu?.();
   };
-  const handleFullGfxClick = (e: MouseEvent): void => {
+
+  const handleGearWrapPointerDown = (e: PointerEvent): void => {
     e.stopPropagation();
-    titleFullGfxBtnEl.blur();
-    callbacks.onTryFullGraphics?.();
+    bumpGearAutoCloseTimer();
   };
-  const handleSafeModeClick = (e: MouseEvent): void => {
+  const handleGearBtnClick = (e: MouseEvent): void => {
     e.stopPropagation();
-    titleSafeModeBtnEl.blur();
-    callbacks.onUseSafeMode?.();
+    gearBtnEl.blur();
+    setGearOpen(!handle.gearOpen);
   };
+  const handleGearPopoverInteract = (e: Event): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+  };
+  const handleDocumentPointerDownForGear = (e: PointerEvent): void => {
+    if (!handle.gearOpen) {
+      return;
+    }
+    const target = e.target;
+    if (target instanceof Node && !gearWrapEl.contains(target)) {
+      setGearOpen(false);
+    }
+  };
+
+  const stopProp = (e: Event): void => {
+    e.stopPropagation();
+  };
+  const presetKeys: GraphicsPreset[] = ['hemat', 'seimbang', 'penuh'];
+  const presetClickHandlers: Array<{ el: HTMLButtonElement; fn: (e: MouseEvent) => void }> = [];
+  for (const key of presetKeys) {
+    const onTitleClick = (e: MouseEvent): void => {
+      e.stopPropagation();
+      titlePresetBtns[key].blur();
+      callbacks.onSelectGraphicsPreset?.(key);
+    };
+    const onGearClick = (e: MouseEvent): void => {
+      e.stopPropagation();
+      bumpGearAutoCloseTimer();
+      callbacks.onSelectGraphicsPreset?.(key);
+    };
+    titlePresetBtns[key].addEventListener('pointerdown', stopProp);
+    titlePresetBtns[key].addEventListener('click', onTitleClick);
+    gearPresetBtns[key].addEventListener('click', onGearClick);
+    presetClickHandlers.push({ el: titlePresetBtns[key], fn: onTitleClick });
+    presetClickHandlers.push({ el: gearPresetBtns[key], fn: onGearClick });
+  }
+
+  const handleBrightnessInput = (slider: HTMLInputElement) => (e: Event): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+    const val = Number.parseFloat(slider.value);
+    if (Number.isFinite(val)) {
+      callbacks.onChangeBrightness?.(val);
+    }
+  };
+  const onTitleBrightnessInput = handleBrightnessInput(titleBrightnessInputEl);
+  const onGearBrightnessInput = handleBrightnessInput(gearBrightnessInputEl);
+
+  titleBrightnessInputEl.addEventListener('pointerdown', stopProp);
+  titleBrightnessInputEl.addEventListener('input', onTitleBrightnessInput);
+  gearBrightnessInputEl.addEventListener('pointerdown', handleGearPopoverInteract);
+  gearBrightnessInputEl.addEventListener('input', onGearBrightnessInput);
+
+  const handleBrightnessReset = (e: MouseEvent): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+    callbacks.onResetBrightness?.();
+  };
+  titleBrightnessResetEl.addEventListener('pointerdown', stopProp);
+  titleBrightnessResetEl.addEventListener('click', handleBrightnessReset);
+  gearBrightnessResetEl.addEventListener('click', handleBrightnessReset);
+
+  const handleMeasureLumaClick = (e: MouseEvent): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+    const luma = callbacks.onMeasureLuminance?.() ?? null;
+    const text =
+      luma === null
+        ? 'Luma: --'
+        : `Luma ${luma.toFixed(2)} (target ${CONFIG.safeMode.targetLuma.toFixed(2)})`;
+    titleLumaTextEl.textContent = text;
+    gearLumaTextEl.textContent = text;
+  };
+  const handleRunBenchClick = (e: MouseEvent): void => {
+    e.stopPropagation();
+    setGearOpen(false);
+    callbacks.onRunPresetBenchmark?.();
+  };
+  const handleBenchCloseClick = (e: MouseEvent): void => {
+    e.stopPropagation();
+    benchOverlayEl.classList.add('sr-hud-hidden');
+  };
+
+  titleLumaBtnEl.addEventListener('pointerdown', stopProp);
+  titleLumaBtnEl.addEventListener('click', handleMeasureLumaClick);
+  gearLumaBtnEl.addEventListener('click', handleMeasureLumaClick);
+  titleBenchBtnEl.addEventListener('pointerdown', stopProp);
+  titleBenchBtnEl.addEventListener('click', handleRunBenchClick);
+  gearBenchBtnEl.addEventListener('click', handleRunBenchClick);
+  benchCloseBtnEl.addEventListener('click', handleBenchCloseClick);
+
+  const onGearCp = (e: MouseEvent): void => {
+    e.stopPropagation();
+    setGearOpen(false);
+    callbacks.onGearCheckpointReset?.();
+  };
+  const onGearRestart = (e: MouseEvent): void => {
+    e.stopPropagation();
+    setGearOpen(false);
+    callbacks.onGearRestartRace?.();
+  };
+  const onGearMute = (e: MouseEvent): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+    callbacks.onGearToggleMute?.();
+  };
+  const onGearSteer = (e: MouseEvent): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+    callbacks.onGearToggleSteerMode?.();
+  };
+  const onGearAuto = (e: MouseEvent): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+    callbacks.onGearToggleAutoThrottle?.();
+  };
+  const onGearFs = (e: MouseEvent): void => {
+    e.stopPropagation();
+    setGearOpen(false);
+    callbacks.onGearToggleFullscreen?.();
+  };
+
+  gearWrapEl.addEventListener('pointerdown', handleGearWrapPointerDown);
+  gearBtnEl.addEventListener('click', handleGearBtnClick);
+  gearPopoverEl.addEventListener('pointerdown', handleGearPopoverInteract);
+  gearPopoverEl.addEventListener('click', handleGearPopoverInteract);
+  window.addEventListener('pointerdown', handleDocumentPointerDownForGear, true);
+  gearCpBtnEl.addEventListener('click', onGearCp);
+  gearRestartBtnEl.addEventListener('click', onGearRestart);
+  gearMuteBtnEl.addEventListener('click', onGearMute);
+  gearSteerBtnEl.addEventListener('click', onGearSteer);
+  gearAutoBtnEl.addEventListener('click', onGearAuto);
+  gearFsBtnEl.addEventListener('click', onGearFs);
 
   let versionTapTimestamps: number[] = [];
   const handleVersionPointerDown = (e: PointerEvent): void => {
@@ -601,8 +949,6 @@ export function createHud(
   finishRetryBtnEl.addEventListener('click', handleRetryClick);
   finishMenuBtnEl.addEventListener('click', handleMenuClick);
   finishCopyBtnEl.addEventListener('click', handleCopyClick);
-  titleFullGfxBtnEl.addEventListener('click', handleFullGfxClick);
-  titleSafeModeBtnEl.addEventListener('click', handleSafeModeClick);
   titleVersionBtnEl.addEventListener('pointerdown', handleVersionPointerDown);
   titleVersionBtnEl.addEventListener('click', handleVersionClick);
 
@@ -762,9 +1108,38 @@ export function createHud(
     titleClearTextEl,
     titleGfxBarEl,
     titleGfxStatusEl,
-    titleFullGfxBtnEl,
-    titleSafeModeBtnEl,
+    titlePresetBtns,
+    titleBrightnessInputEl,
+    titleBrightnessValEl,
+    titleBrightnessResetEl,
+    titleDebugBarEl,
+    titleLumaBtnEl,
+    titleBenchBtnEl,
+    titleLumaTextEl,
     titleVersionBtnEl,
+    gearWrapEl,
+    gearBtnEl,
+    gearPopoverEl,
+    gearRaceActionsEl,
+    gearCpBtnEl,
+    gearRestartBtnEl,
+    gearMuteBtnEl,
+    gearSteerBtnEl,
+    gearAutoBtnEl,
+    gearFsBtnEl,
+    gearPresetBtns,
+    gearBrightnessInputEl,
+    gearBrightnessValEl,
+    gearBrightnessResetEl,
+    gearDebugRowEl,
+    gearLumaBtnEl,
+    gearBenchBtnEl,
+    gearLumaTextEl,
+    gearAutoCloseTimerId: null,
+    gearOpen: false,
+    benchOverlayEl,
+    benchBodyEl,
+    benchCloseBtnEl,
     safeBannerEl,
     safeBannerTimerId: null,
     countdownEl: root.querySelector('.sr-countdown-overlay') as HTMLElement,
@@ -810,6 +1185,8 @@ export function createHud(
     lastWrongWay: null,
     lastMuted: null,
     lastTouchActive: null,
+    lastCompact: null,
+    lastPortrait: null,
     lastTimeSeconds: 0,
     lastToastTickMs: performance.now(),
     hintManualExpanded: null,
@@ -894,7 +1271,12 @@ export function createHud(
       window.clearTimeout(handle.safeBannerTimerId);
       handle.safeBannerTimerId = null;
     }
+    if (handle.gearAutoCloseTimerId !== null) {
+      window.clearTimeout(handle.gearAutoCloseTimerId);
+      handle.gearAutoCloseTimerId = null;
+    }
     window.removeEventListener('keydown', handleHudKeyDown);
+    window.removeEventListener('pointerdown', handleDocumentPointerDownForGear, true);
     hintBadgeEl.removeEventListener('click', handleHintBadgeClick);
     handle.contextLostOverlayEl.removeEventListener('click', handleContextLostReload);
     handle.contextLostCardEl.removeEventListener('click', handleContextLostReload);
@@ -902,14 +1284,46 @@ export function createHud(
     finishRetryBtnEl.removeEventListener('click', handleRetryClick);
     finishMenuBtnEl.removeEventListener('click', handleMenuClick);
     finishCopyBtnEl.removeEventListener('click', handleCopyClick);
-    titleFullGfxBtnEl.removeEventListener('click', handleFullGfxClick);
-    titleSafeModeBtnEl.removeEventListener('click', handleSafeModeClick);
     titleVersionBtnEl.removeEventListener('pointerdown', handleVersionPointerDown);
     titleVersionBtnEl.removeEventListener('click', handleVersionClick);
     titleClearBtnEl.removeEventListener('pointerdown', onClearDown);
     titleClearBtnEl.removeEventListener('pointerup', onClearEnd);
     titleClearBtnEl.removeEventListener('pointercancel', onClearEnd);
     titleClearBtnEl.removeEventListener('lostpointercapture', onClearEnd);
+
+    for (const key of presetKeys) {
+      titlePresetBtns[key].removeEventListener('pointerdown', stopProp);
+    }
+    for (const entry of presetClickHandlers) {
+      entry.el.removeEventListener('click', entry.fn);
+    }
+
+    titleBrightnessInputEl.removeEventListener('pointerdown', stopProp);
+    titleBrightnessInputEl.removeEventListener('input', onTitleBrightnessInput);
+    gearBrightnessInputEl.removeEventListener('pointerdown', handleGearPopoverInteract);
+    gearBrightnessInputEl.removeEventListener('input', onGearBrightnessInput);
+    titleBrightnessResetEl.removeEventListener('pointerdown', stopProp);
+    titleBrightnessResetEl.removeEventListener('click', handleBrightnessReset);
+    gearBrightnessResetEl.removeEventListener('click', handleBrightnessReset);
+
+    titleLumaBtnEl.removeEventListener('pointerdown', stopProp);
+    titleLumaBtnEl.removeEventListener('click', handleMeasureLumaClick);
+    gearLumaBtnEl.removeEventListener('click', handleMeasureLumaClick);
+    titleBenchBtnEl.removeEventListener('pointerdown', stopProp);
+    titleBenchBtnEl.removeEventListener('click', handleRunBenchClick);
+    gearBenchBtnEl.removeEventListener('click', handleRunBenchClick);
+    benchCloseBtnEl.removeEventListener('click', handleBenchCloseClick);
+
+    gearWrapEl.removeEventListener('pointerdown', handleGearWrapPointerDown);
+    gearBtnEl.removeEventListener('click', handleGearBtnClick);
+    gearPopoverEl.removeEventListener('pointerdown', handleGearPopoverInteract);
+    gearPopoverEl.removeEventListener('click', handleGearPopoverInteract);
+    gearCpBtnEl.removeEventListener('click', onGearCp);
+    gearRestartBtnEl.removeEventListener('click', onGearRestart);
+    gearMuteBtnEl.removeEventListener('click', onGearMute);
+    gearSteerBtnEl.removeEventListener('click', onGearSteer);
+    gearAutoBtnEl.removeEventListener('click', onGearAuto);
+    gearFsBtnEl.removeEventListener('click', onGearFs);
   };
 
   return handle;
@@ -1325,29 +1739,96 @@ export function hideModalScreens(hud: HudHandle): void {
   hud.toastQueue.clear();
 }
 
-export function setSafeModeUi(
-  hud: HudHandle,
-  options: { safeMode: boolean; isMobileDevice: boolean; trialActive?: boolean; trialSecRemaining?: number },
-): void {
-  const showBar = options.safeMode || options.isMobileDevice || Boolean(options.trialActive);
-  hud.titleGfxBarEl.classList.toggle('sr-hud-hidden', !showBar);
-  if (!showBar) {
-    return;
+const PRESET_LABELS: Record<GraphicsPreset, string> = {
+  hemat: 'Hemat',
+  seimbang: 'Seimbang',
+  penuh: 'Penuh',
+};
+
+export function setGraphicsUiState(hud: HudHandle, state: GraphicsUiState): void {
+  const keys: GraphicsPreset[] = ['hemat', 'seimbang', 'penuh'];
+  for (const k of keys) {
+    const active = state.preset === k;
+    hud.titlePresetBtns[k].classList.toggle('sr-preset-btn--active', active);
+    hud.gearPresetBtns[k].classList.toggle('sr-preset-btn--active', active);
   }
-  if (options.safeMode) {
-    hud.titleGfxStatusEl.textContent = 'Mode aman aktif (grafis ringan)';
-    hud.titleFullGfxBtnEl.classList.remove('sr-hud-hidden');
-    hud.titleSafeModeBtnEl.classList.add('sr-hud-hidden');
-  } else if (options.trialActive) {
-    const sec = Math.max(1, Math.ceil(options.trialSecRemaining ?? 0));
-    hud.titleGfxStatusEl.textContent = `Uji grafis penuh (${sec} dtk)...`;
-    hud.titleFullGfxBtnEl.classList.add('sr-hud-hidden');
-    hud.titleSafeModeBtnEl.classList.remove('sr-hud-hidden');
-  } else {
-    hud.titleGfxStatusEl.textContent = 'Grafis penuh aktif';
-    hud.titleFullGfxBtnEl.classList.add('sr-hud-hidden');
-    hud.titleSafeModeBtnEl.classList.remove('sr-hud-hidden');
+
+  hud.titleGfxStatusEl.textContent = state.benchmarkRunning
+    ? `Menguji preset (${PRESET_LABELS[state.preset]})...`
+    : state.probeActive
+      ? `Grafis: ${PRESET_LABELS[state.preset]} (uji 3 dtk)`
+      : `Grafis: ${PRESET_LABELS[state.preset]}`;
+
+  const bStr = state.brightness.toFixed(2);
+  hud.titleBrightnessInputEl.value = bStr;
+  hud.gearBrightnessInputEl.value = bStr;
+  hud.titleBrightnessValEl.textContent = bStr;
+  hud.gearBrightnessValEl.textContent = bStr;
+
+  if (state.measuredLuma !== undefined) {
+    const lumaText =
+      state.measuredLuma === null
+        ? ''
+        : `Luma ${state.measuredLuma.toFixed(2)} (target ${CONFIG.safeMode.targetLuma.toFixed(2)})`;
+    hud.titleLumaTextEl.textContent = lumaText;
+    hud.gearLumaTextEl.textContent = lumaText;
   }
+
+  if (state.touchPrefs) {
+    const p = state.touchPrefs;
+    hud.gearSteerBtnEl.textContent = p.steerMode === 'stick' ? 'STIK' : 'TOMBOL';
+    hud.gearAutoBtnEl.classList.toggle('sr-gear-action-btn--on', p.autoThrottle);
+    hud.gearMuteBtnEl.classList.toggle('sr-gear-action-btn--muted', p.muted);
+    hud.gearMuteBtnEl.textContent = p.muted ? 'BISU' : 'SUARA';
+    hud.gearFsBtnEl.classList.toggle('sr-hud-hidden', !p.fullscreenSupported);
+    hud.gearFsBtnEl.classList.toggle('sr-gear-action-btn--on', p.fullscreen);
+  }
+}
+
+export function showBenchmarkResults(hud: HudHandle, report: PresetBenchmarkReport): void {
+  hud.benchBodyEl.textContent = '';
+
+  const meta = document.createElement('div');
+  meta.className = 'sr-bench-meta';
+  const lumaStr =
+    report.measuredLuma === null
+      ? '--'
+      : `${report.measuredLuma.toFixed(2)} / ${report.targetLuma.toFixed(2)}`;
+  meta.textContent =
+    `Build v${getBuildId()} | Aktif: ${PRESET_LABELS[report.activePreset]} | ` +
+    `Saran: ${PRESET_LABELS[report.recommendedPreset]} | Luma: ${lumaStr}`;
+  hud.benchBodyEl.appendChild(meta);
+
+  const list = document.createElement('div');
+  list.className = 'sr-bench-rows';
+  for (const entry of report.entries) {
+    const row = document.createElement('div');
+    row.className =
+      entry.preset === report.activePreset
+        ? 'sr-bench-row sr-bench-row--active'
+        : 'sr-bench-row';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'sr-bench-name';
+    nameEl.textContent = PRESET_LABELS[entry.preset];
+    row.appendChild(nameEl);
+
+    const fpsEl = document.createElement('span');
+    fpsEl.textContent = `${Math.round(entry.avgFps)} FPS (${entry.avgFrameMs.toFixed(1)} ms)`;
+    row.appendChild(fpsEl);
+
+    const lumaEl = document.createElement('span');
+    lumaEl.textContent = entry.luma === null ? 'Luma --' : `Luma ${entry.luma.toFixed(2)}`;
+    row.appendChild(lumaEl);
+
+    list.appendChild(row);
+  }
+  hud.benchBodyEl.appendChild(list);
+  hud.benchOverlayEl.classList.remove('sr-hud-hidden');
+}
+
+export function hideBenchmarkResults(hud: HudHandle): void {
+  hud.benchOverlayEl.classList.add('sr-hud-hidden');
 }
 
 export function showSafeModeNotice(
@@ -1374,9 +1855,22 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
   const dt = Math.min(0.1, Math.max(0, (nowMs - hud.lastToastTickMs) / 1000));
   hud.lastToastTickMs = nowMs;
 
+  const vw = window.visualViewport?.width ?? window.innerWidth;
+  const vh = window.visualViewport?.height ?? window.innerHeight;
+  const isCompact = viewModel.touchActive || vw < CONFIG.hud.compactBreakpointPx;
+  const isPortrait = vh > vw;
+
   if (viewModel.touchActive !== hud.lastTouchActive) {
     hud.lastTouchActive = viewModel.touchActive;
     hud.root.classList.toggle('hud--touch', viewModel.touchActive);
+  }
+  if (isCompact !== hud.lastCompact) {
+    hud.lastCompact = isCompact;
+    hud.root.classList.toggle('hud--compact', isCompact);
+  }
+  if (isPortrait !== hud.lastPortrait) {
+    hud.lastPortrait = isPortrait;
+    hud.root.classList.toggle('hud--portrait', isPortrait);
   }
 
   if (viewModel.muted !== hud.lastMuted) {
@@ -1409,6 +1903,23 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     hud.topBarEl.classList.toggle('sr-hud-hidden', isTitle || showResults);
     hud.progressWrapEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
     hud.bottomRightEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
+
+    const isDriving = viewModel.phase === 'COUNTDOWN' || viewModel.phase === 'RACING';
+    hud.gearWrapEl.classList.toggle('sr-hud-hidden', showResults);
+    hud.gearRaceActionsEl.classList.toggle(
+      'sr-hud-hidden',
+      !(viewModel.touchActive && isDriving),
+    );
+    hud.gearCpBtnEl.classList.toggle('sr-hud-hidden', viewModel.phase !== 'RACING');
+    if (showResults) {
+      hud.gearPopoverEl.classList.add('sr-hud-hidden');
+      hud.gearOpen = false;
+      if (hud.gearAutoCloseTimerId !== null) {
+        window.clearTimeout(hud.gearAutoCloseTimerId);
+        hud.gearAutoCloseTimerId = null;
+      }
+    }
+
     if (CONFIG.hud.showControlsHint) {
       hud.bottomLeftEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
     }

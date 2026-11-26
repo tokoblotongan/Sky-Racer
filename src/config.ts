@@ -8,6 +8,7 @@ const CAR_BODY_LENGTH = 3.35;
 const CAR_BODY_WIDTH = 1.7;
 
 export type VisualPresetName = 'vivid' | 'pastel';
+export type GraphicsPreset = 'hemat' | 'seimbang' | 'penuh';
 
 export interface VisualPreset {
   name: VisualPresetName;
@@ -288,6 +289,8 @@ export const CONFIG = {
   safeMode: {
     normalOkStorageKey: 'sky-racer-normal-ok-v1',
     normalTrialStorageKey: 'sky-racer-normal-trial-v1',
+    presetStorageKey: 'sky-racer-gfx-preset-v1',
+    brightnessStorageKey: 'sky-racer-brightness-v1',
     normalTrialSec: 10,
     consecutiveErrorLimit: 5,
     renderWatchdogMs: 1500,
@@ -296,6 +299,22 @@ export const CONFIG = {
     versionTapWindowMs: 2000,
     maxReportErrors: 5,
     statusBannerMs: 3200,
+    ambientIntensity: 0.72,
+    hemiIntensity: 1.05,
+    dirIntensity: 1.15,
+    dirOffset: { x: -45, y: 65, z: -55 },
+    trackEmissive: 0.14,
+    wallLift: 1.48,
+    wallTrimEmissive: 0.75,
+    distantTrackLift: 0.36,
+    distantTrackStartM: 45,
+    distantTrackEndM: 220,
+    targetLuma: 0.42,
+    brightnessMin: 0.8,
+    brightnessMax: 1.8,
+    brightnessDefaultSafe: 1.15,
+    brightnessDefaultBalanced: 1.15,
+    brightnessDefaultFull: 1.0,
   },
   autopilot: {
     kLateral: 0.35,
@@ -485,6 +504,9 @@ export const CONFIG = {
     orbitMinRadius: 95,
     orbitHeight: 75,
     orbitSpeed: 0.14,
+    minHorizontalFovDeg: 70,
+    maxPortraitVerticalFovDeg: 95,
+    portraitDistanceScale: 1.2,
   },
   hud: {
     speedUnit: 'km/h',
@@ -492,6 +514,10 @@ export const CONFIG = {
     maxGaugeSpeedKmh: 250,
     moveThresholdSpeedMs: 0.35,
     showControlsHint: true,
+    compactBreakpointPx: 900,
+    mobileSpeedoOpacity: 0.45,
+    mobilePanelOpacity: 0.68,
+    mobileTopMaxHeightPct: 7,
     panelOpacity: 0.55,
     panelBorderOpacity: 0.35,
     toastBgOpacity: 0.45,
@@ -628,6 +654,18 @@ export const CONFIG = {
     frameTimeDowngradeMs: 33,
     fpsDowngradeWindowSec: 2.0,
     warmupSec: 2.0,
+    initialProbeSec: 3.0,
+    initialProbeBalancedMaxMs: 28,
+    fullAutoDowngradeMs: 40,
+    fullAutoDowngradeSec: 3.0,
+    balancedShadowRadius: 28,
+    balancedShadowMapSize: 512,
+    mobileBloom: {
+      resolutionScale: 0.5,
+      strengthMultiplier: 0.6,
+      threshold: 1.32,
+      radius: 0.2,
+    },
     mobileDetect: {
       maxDeviceMemoryGb: 4,
       maxHardwareConcurrency: 6,
@@ -1138,6 +1176,8 @@ export const CONFIG = {
       minInterval: 80, // jeda minimum antar getaran haptik dalam ms agar tidak spam
     },
     orientationHint: true, // tampilkan overlay imbauan landscape saat perangkat sentuh berada dalam mode potret
+    portraitToastDurationMs: 5000, // durasi tampil banner saran landscape satu kali
+    gearAutoCloseMs: 3000, // jeda tutup otomatis menu gear setelah interaksi terakhir
     storageKey: 'sky-racer-touch-v1', // kunci localStorage khusus preferensi kontrol sentuh (terpisah dari best time dan audio)
   },
   fantasy: {
