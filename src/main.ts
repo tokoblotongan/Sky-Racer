@@ -361,7 +361,7 @@ export async function bootstrap(): Promise<void> {
   }
 
   let userBrightness = loadUserBrightness(graphicsPreset);
-  sceneCtx.setExposureBrightness(userBrightness);
+  sceneCtx.applyBrightness(userBrightness);
 
   const debugOverlay = createDebugOverlay(container);
   const sound = createSound();
@@ -518,6 +518,7 @@ export async function bootstrap(): Promise<void> {
     maxAnisotropy: sceneCtx.maxAnisotropy,
     presetName: activePreset,
     graphicsPreset,
+    isMobile: isMobileDevice,
   });
   sceneCtx.scene.add(carVisual.group);
 
@@ -532,7 +533,7 @@ export async function bootstrap(): Promise<void> {
       isSafe ? { ...CONFIG.quality, initialOverride: 'mobile' } : CONFIG.quality,
       (level) => {
         const effectiveLevel: QualityLevel = safeMode ? 'mobile' : level;
-        sceneCtx.setQuality(effectiveLevel);
+        sceneCtx.setQuality(effectiveLevel, raceState.phase === 'TITLE');
         particles?.setQuality(effectiveLevel);
         postfx?.setQuality(effectiveLevel);
       },
@@ -541,7 +542,7 @@ export async function bootstrap(): Promise<void> {
   let qualityManager = createActiveQualityManager(safeMode);
 
   const initialQuality: QualityLevel = safeMode ? 'mobile' : qualityManager.getLevel();
-  sceneCtx.setQuality(initialQuality);
+  sceneCtx.setQuality(initialQuality, true);
   sceneCtx.setTheme(course, initialQuality);
 
   let bridgeVisual: BridgeVisual = buildBridgeMesh(
@@ -597,7 +598,7 @@ export async function bootstrap(): Promise<void> {
   function applyPalette(name: VisualPresetName): void {
     activePreset = name;
     sceneCtx.applyPalette(name);
-    sceneCtx.setExposureBrightness(userBrightness);
+    sceneCtx.applyBrightness(userBrightness);
     trackVisual.applyPalette(name);
     bridgeVisual.applyPalette(name);
     tunnelVisual.applyPalette(name);
@@ -661,6 +662,7 @@ export async function bootstrap(): Promise<void> {
       maxAnisotropy: sceneCtx.maxAnisotropy,
       presetName: activePreset,
       graphicsPreset,
+      isMobile: isMobileDevice,
     });
     carVisual.group.position.copy(prevPos);
     carVisual.group.quaternion.copy(prevQuat);
@@ -804,6 +806,11 @@ export async function bootstrap(): Promise<void> {
     isMobileDevice && !urlSafe && !manualPresetSelected && graphicsPreset === 'seimbang';
   let initialProbeElapsedSec = 0;
   let fullSlowElapsedSec = 0;
+  let balancedEnvVerified = safeStorageGet(CONFIG.safeMode.normalOkStorageKey) === '1';
+  let balancedEnvFailed = safeStorageGet(CONFIG.safeMode.normalTrialStorageKey) === 'failed';
+  let balancedEnvTrialElapsedSec = 0;
+  let balancedEnvCheckNextFrame = false;
+  let pendingAutoDowngradePreset: GraphicsPreset | null = null;
   let benchmarkRunning = false;
   let benchmarkSampling = false;
   let benchmarkFrameSamplesMs: number[] = [];
@@ -811,6 +818,30 @@ export async function bootstrap(): Promise<void> {
   let wallCountdownTimerId = 0;
   let startWatchdogTimerId = 0;
   let watchdogFiredForRace = false;
+
+  const syncBalancedEnvironmentState = (): void => {
+    if (
+      graphicsPreset === 'seimbang' &&
+      sceneCtx.canUseBalancedEnvironment() &&
+      balancedEnvVerified &&
+      !balancedEnvFailed
+    ) {
+      sceneCtx.setBalancedEnvironmentEnabled(true);
+      balancedEnvCheckNextFrame = true;
+    } else {
+      sceneCtx.setBalancedEnvironmentEnabled(false);
+      balancedEnvCheckNextFrame = false;
+    }
+  };
+  const failBalancedEnvTrial = (): void => {
+    balancedEnvFailed = true;
+    balancedEnvVerified = false;
+    balancedEnvCheckNextFrame = false;
+    safeStorageSet(CONFIG.safeMode.normalTrialStorageKey, 'failed');
+    safeStorageRemove(CONFIG.safeMode.normalOkStorageKey);
+    sceneCtx.setBalancedEnvironmentEnabled(false);
+  };
+  syncBalancedEnvironmentState();
 
   let courseSelect: CourseSelectHandle;
 
@@ -847,6 +878,7 @@ export async function bootstrap(): Promise<void> {
       touchPrefs: touchControls.getPrefs(),
       probeActive: initialProbeActive,
       benchmarkRunning,
+      raceActive: raceState.phase !== 'TITLE',
       measuredLuma,
     });
   }
@@ -1353,15 +1385,16 @@ export async function bootstrap(): Promise<void> {
     }
 
     userBrightness = loadUserBrightness(graphicsPreset);
-    sceneCtx.setExposureBrightness(userBrightness);
+    sceneCtx.applyBrightness(userBrightness);
 
     bindCanvasContextEvents(sceneCtx.renderer.domElement);
     qualityManager = createActiveQualityManager(safeMode);
     const activeQuality: QualityLevel = safeMode ? 'mobile' : qualityManager.getLevel();
     sceneCtx.setRoomBounds(bounds);
-    sceneCtx.setQuality(activeQuality);
+    sceneCtx.setQuality(activeQuality, true);
     sceneCtx.setTheme(course, activeQuality);
-    sceneCtx.setExposureBrightness(userBrightness);
+    syncBalancedEnvironmentState();
+    sceneCtx.applyBrightness(userBrightness);
     sceneCtx.setOrbitTarget(bounds.center, orbitRadius, CONFIG.camera.orbitHeight);
 
     trackVisual = buildTrackMesh(
@@ -1415,6 +1448,7 @@ export async function bootstrap(): Promise<void> {
       maxAnisotropy: sceneCtx.maxAnisotropy,
       presetName: activePreset,
       graphicsPreset,
+      isMobile: isMobileDevice,
     });
     sceneCtx.scene.add(carVisual.group);
 
@@ -1452,6 +1486,8 @@ export async function bootstrap(): Promise<void> {
     consecutiveErrorCount = 0;
     firstFrameChecked = false;
     fullSlowElapsedSec = 0;
+    balancedEnvTrialElapsedSec = 0;
+    pendingAutoDowngradePreset = null;
     lastFrameMs = performance.now();
     accumulator = 0;
     syncGraphicsUi();
@@ -1483,6 +1519,10 @@ export async function bootstrap(): Promise<void> {
     if (disposed || rebuilding || benchmarkRunning || nextPreset === graphicsPreset) {
       return;
     }
+    if (raceState.phase !== 'TITLE') {
+      showSafeModeNotice(hud, 'Ubah preset grafis di layar judul');
+      return;
+    }
     if (urlSafe && nextPreset !== 'hemat') {
       showSafeModeNotice(hud, 'URL ?safe aktif: hanya mode Hemat');
       return;
@@ -1509,14 +1549,14 @@ export async function bootstrap(): Promise<void> {
       CONFIG.safeMode.brightnessMax,
     );
     safeStorageSet(CONFIG.safeMode.brightnessStorageKey, userBrightness.toFixed(2));
-    sceneCtx.setExposureBrightness(userBrightness);
+    sceneCtx.applyBrightness(userBrightness);
     syncGraphicsUi();
   };
 
   onResetBrightnessFromUi = (): void => {
     safeStorageRemove(CONFIG.safeMode.brightnessStorageKey);
     userBrightness = getDefaultBrightnessForPreset(graphicsPreset);
-    sceneCtx.setExposureBrightness(userBrightness);
+    sceneCtx.applyBrightness(userBrightness);
     syncGraphicsUi();
   };
 
@@ -1534,7 +1574,7 @@ export async function bootstrap(): Promise<void> {
   };
 
   onRunBenchFromUi = (): void => {
-    if (disposed || rebuilding || benchmarkRunning || contextLost) {
+    if (disposed || rebuilding || benchmarkRunning || contextLost || raceState.phase !== 'TITLE') {
       return;
     }
     const runSequence = async (): Promise<void> => {
@@ -1814,6 +1854,7 @@ export async function bootstrap(): Promise<void> {
       const events = startCountdown(raceState, nowMs);
       chaseCamera.setMode('chase');
       handleRaceEvents(events);
+      syncGraphicsUi();
       updateHud(hud, hudViewModel);
       pumpWallCountdown();
       startRenderWatchdog();
@@ -1891,6 +1932,11 @@ export async function bootstrap(): Promise<void> {
     updateHud(hud, hudViewModel);
     sound.handleEvents([{ type: 'uiConfirm' }]);
     syncTitleUi();
+    if (pendingAutoDowngradePreset && pendingAutoDowngradePreset !== graphicsPreset) {
+      const target = pendingAutoDowngradePreset;
+      pendingAutoDowngradePreset = null;
+      void rebuildGraphicsPipeline(target, 'deferred-auto-downgrade');
+    }
   }
 
   onConfirmFromUi = handleConfirmAction;
@@ -2259,11 +2305,43 @@ export async function bootstrap(): Promise<void> {
             !safeMode &&
             (diag.glError !== 'NO_ERROR' || diag.framebufferStatus !== 'COMPLETE')
           ) {
+            if (graphicsPreset === 'seimbang') {
+              failBalancedEnvTrial();
+            }
             logErrorOverlay(
               `GL/FB check failed: ${diag.glError} / ${diag.framebufferStatus}`,
             );
             void downgradeGraphicsOnFailure('gl-error-first-frame');
             return;
+          }
+        }
+
+        if (balancedEnvCheckNextFrame) {
+          balancedEnvCheckNextFrame = false;
+          const diag = sceneCtx.getDiagnostics();
+          if (diag.glError !== 'NO_ERROR' || diag.framebufferStatus !== 'COMPLETE') {
+            failBalancedEnvTrial();
+            logErrorOverlay(
+              `Balanced env GL check failed: ${diag.glError} / ${diag.framebufferStatus}`,
+            );
+          }
+        }
+
+        if (
+          graphicsPreset === 'seimbang' &&
+          !balancedEnvFailed &&
+          balancedEnvTrialElapsedSec < CONFIG.safeMode.normalTrialSec
+        ) {
+          balancedEnvTrialElapsedSec += frameDt;
+          if (
+            balancedEnvTrialElapsedSec >= CONFIG.safeMode.normalTrialSec &&
+            !balancedEnvVerified &&
+            sceneCtx.canUseBalancedEnvironment()
+          ) {
+            balancedEnvVerified = true;
+            safeStorageSet(CONFIG.safeMode.normalOkStorageKey, '1');
+            sceneCtx.setBalancedEnvironmentEnabled(true);
+            balancedEnvCheckNextFrame = true;
           }
         }
 
@@ -2278,9 +2356,12 @@ export async function bootstrap(): Promise<void> {
             initialProbeActive = false;
             const avgMs = qualityManager.getAverageFrameMs();
             if (avgMs > CONFIG.quality.initialProbeBalancedMaxMs) {
-              showSafeModeNotice(hud, 'Mode Hemat aktif agar frame rate lancar');
-              void rebuildGraphicsPipeline('hemat', 'initial-probe-slow');
-              return;
+              if (raceState.phase === 'TITLE') {
+                showSafeModeNotice(hud, 'Mode Hemat aktif agar frame rate lancar');
+                void rebuildGraphicsPipeline('hemat', 'initial-probe-slow');
+                return;
+              }
+              pendingAutoDowngradePreset = 'hemat';
             }
             syncGraphicsUi();
           }
@@ -2292,8 +2373,11 @@ export async function bootstrap(): Promise<void> {
             fullSlowElapsedSec += frameDt;
             if (fullSlowElapsedSec >= CONFIG.quality.fullAutoDowngradeSec) {
               fullSlowElapsedSec = 0;
-              void downgradeGraphicsOnFailure('auto-slow-full');
-              return;
+              if (raceState.phase === 'TITLE') {
+                void downgradeGraphicsOnFailure('auto-slow-full');
+                return;
+              }
+              pendingAutoDowngradePreset = 'seimbang';
             }
           } else {
             fullSlowElapsedSec = 0;
@@ -2320,6 +2404,12 @@ export async function bootstrap(): Promise<void> {
       }
     } catch (err) {
       consecutiveErrorCount++;
+      if (
+        graphicsPreset === 'seimbang' &&
+        balancedEnvTrialElapsedSec < CONFIG.safeMode.normalTrialSec
+      ) {
+        failBalancedEnvTrial();
+      }
       if (benchmarkSampling) {
         benchmarkErrorCount++;
       }

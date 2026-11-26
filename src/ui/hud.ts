@@ -87,6 +87,7 @@ export interface GraphicsUiState {
   touchPrefs?: TouchControlPrefs;
   probeActive?: boolean;
   benchmarkRunning?: boolean;
+  raceActive?: boolean;
   measuredLuma?: number | null;
 }
 
@@ -1747,11 +1748,15 @@ const PRESET_LABELS: Record<GraphicsPreset, string> = {
 
 export function setGraphicsUiState(hud: HudHandle, state: GraphicsUiState): void {
   const keys: GraphicsPreset[] = ['hemat', 'seimbang', 'penuh'];
+  const lockRacePresets = Boolean(state.raceActive);
   for (const k of keys) {
     const active = state.preset === k;
     hud.titlePresetBtns[k].classList.toggle('sr-preset-btn--active', active);
     hud.gearPresetBtns[k].classList.toggle('sr-preset-btn--active', active);
+    hud.gearPresetBtns[k].disabled = lockRacePresets;
+    hud.gearPresetBtns[k].title = lockRacePresets ? 'Ubah preset di layar judul' : '';
   }
+  hud.gearBenchBtnEl.disabled = lockRacePresets;
 
   hud.titleGfxStatusEl.textContent = state.benchmarkRunning
     ? `Menguji preset (${PRESET_LABELS[state.preset]})...`

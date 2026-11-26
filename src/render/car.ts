@@ -19,6 +19,8 @@ export interface BuildCarMeshOptions {
   maxAnisotropy?: number;
   presetName?: VisualPresetName;
   graphicsPreset?: GraphicsPreset;
+  isMobile?: boolean;
+  isOpponent?: boolean;
 }
 
 export interface CarVisual {
@@ -111,6 +113,28 @@ function createBodyPaintTexture(
   return texture;
 }
 
+function createBlobShadowTexture(): THREE.CanvasTexture {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const cx = size * 0.5;
+    const cy = size * 0.5;
+    const grad = ctx.createRadialGradient(cx, cy, size * 0.08, cx, cy, size * 0.48);
+    grad.addColorStop(0.0, 'rgba(6, 12, 24, 0.58)');
+    grad.addColorStop(0.48, 'rgba(6, 12, 24, 0.34)');
+    grad.addColorStop(0.82, 'rgba(6, 12, 24, 0.08)');
+    grad.addColorStop(1.0, 'rgba(6, 12, 24, 0.0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 interface WheelControl {
   steerPivot: THREE.Group;
   spinMesh: THREE.Group;
@@ -180,7 +204,11 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   const designId: CarDesignId = options.designId ?? visualCfg.designId;
   const initialPresetName: VisualPresetName = options.presetName ?? CONFIG.visual.activePreset;
   const graphicsPreset: GraphicsPreset = options.graphicsPreset ?? 'penuh';
-  const carShadowsEnabled = graphicsPreset !== 'hemat';
+  const isMobile = options.isMobile ?? false;
+  const isOpponent = options.isOpponent ?? false;
+  const useBlobShadow =
+    graphicsPreset === 'hemat' || (isOpponent && isMobile && graphicsPreset !== 'penuh');
+  const carShadowsEnabled = graphicsPreset !== 'hemat' && !(isOpponent && isMobile);
   const maxAnisotropy = options.maxAnisotropy ?? 8;
 
   const activePreset = VISUAL_PRESETS[initialPresetName];
@@ -502,6 +530,32 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
   rr.steerPivot.position.set(wSpec.rearTrackHalfWidth, wSpec.rearRadius, wSpec.rearOffsetZ);
   root.add(rr.steerPivot);
 
+  let blobShadowTex: THREE.CanvasTexture | null = null;
+  let blobShadowGeom: THREE.BufferGeometry | null = null;
+  let blobShadowMat: THREE.MeshBasicMaterial | null = null;
+  let blobShadowMesh: THREE.Mesh | null = null;
+  if (useBlobShadow) {
+    blobShadowTex = createBlobShadowTexture();
+    blobShadowGeom = new THREE.PlaneGeometry(cfg.bodyWidth * 1.24, cfg.bodyLength * 1.16);
+    blobShadowGeom.rotateX(-Math.PI / 2);
+    blobShadowMat = new THREE.MeshBasicMaterial({
+      map: blobShadowTex,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+    blobShadowMesh = new THREE.Mesh(blobShadowGeom, blobShadowMat);
+    blobShadowMesh.name = 'CarBlobContactShadow';
+    blobShadowMesh.position.y = 0.001 / cfg.visualScale;
+    blobShadowMesh.castShadow = false;
+    blobShadowMesh.receiveShadow = false;
+    blobShadowMesh.renderOrder = 2;
+    root.add(blobShadowMesh);
+  }
+
   let currentRoll = 0;
   let currentPitch = 0;
 
@@ -574,6 +628,13 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
       );
       exhaustCores[i].scale.set(coreScale, coreScale, isBoosting ? 2.1 : 1.0);
     }
+
+    if (blobShadowMesh && blobShadowMat) {
+      const targetOpacity =
+        state.mode === 'grounded' ? 1 : Math.max(0, 1 - state.airtime * 3.0);
+      blobShadowMat.opacity = targetOpacity;
+      blobShadowMesh.visible = targetOpacity > 0.02;
+    }
   }
 
   function applyPalette(name: VisualPresetName): void {
@@ -612,6 +673,9 @@ export function buildCarMesh(options: BuildCarMeshOptions = {}): CarVisual {
 
   function dispose(): void {
     bodyTexture.dispose();
+    blobShadowTex?.dispose();
+    blobShadowGeom?.dispose();
+    blobShadowMat?.dispose();
     for (const mat of ownedMaterials) {
       mat.dispose();
     }

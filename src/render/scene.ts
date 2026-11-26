@@ -46,10 +46,13 @@ export interface SceneContext {
   setOrbitTarget: (target: THREE.Vector3, radius: number, height: number) => void;
   setCameraOrbitAngle: (angleRad: number) => void;
   updateSunShadowTarget: (focusPos: THREE.Vector3) => void;
-  setQuality: (level: QualityLevel) => void;
+  setQuality: (level: QualityLevel, allowShadowToggle?: boolean) => void;
   applyPalette: (name: VisualPresetName) => void;
-  setExposureBrightness: (mult: number) => void;
-  getExposureBrightness: () => number;
+  applyBrightness: (value: number) => void;
+  getBrightness: () => number;
+  canUseBalancedEnvironment: () => boolean;
+  setBalancedEnvironmentEnabled: (enabled: boolean) => void;
+  isBalancedEnvironmentEnabled: () => boolean;
   getGroundY: (x: number, z: number) => number;
   getViewportSize: () => { width: number; height: number };
   dispose: () => void;
@@ -161,6 +164,47 @@ function createSkyDome(preset: VisualPreset): {
   mesh.frustumCulled = false;
   mesh.renderOrder = -1000;
   return { mesh, geometry, material };
+}
+
+function supportsHalfFloatRenderTarget(renderer: THREE.WebGLRenderer): boolean {
+  try {
+    const gl = renderer.getContext();
+    if (renderer.capabilities.isWebGL2) {
+      return Boolean(
+        gl.getExtension('EXT_color_buffer_float') ||
+          gl.getExtension('EXT_color_buffer_half_float'),
+      );
+    }
+    return Boolean(gl.getExtension('EXT_color_buffer_half_float'));
+  } catch {
+    return false;
+  }
+}
+
+function createBalancedGradientEnvironment(
+  skyTop: string,
+  skyHorizon: string,
+  groundBounce: string,
+): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    grad.addColorStop(0.0, skyTop);
+    grad.addColorStop(0.45, skyHorizon);
+    grad.addColorStop(0.52, '#FFF7E8');
+    grad.addColorStop(0.62, groundBounce);
+    grad.addColorStop(1.0, groundBounce);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 function createWoodFloorTextures(
@@ -464,9 +508,12 @@ export function createSceneContext(
   const initViewport = measureViewport();
 
   let userBrightnessMultiplier = 1.0;
+  let currentExposure: number = activePreset.exposure;
+  let baseEnvIntensity = isFull ? activePreset.envIntensity : 0;
+
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = isFull ? THREE.ACESFilmicToneMapping : THREE.LinearToneMapping;
-  renderer.toneMappingExposure = activePreset.exposure * userBrightnessMultiplier;
+  renderer.toneMappingExposure = currentExposure * userBrightnessMultiplier;
   renderer.setPixelRatio(
     effectiveSafeMode
       ? 1
@@ -476,7 +523,7 @@ export function createSceneContext(
   const initialShadowsEnabled =
     !effectiveSafeMode && (isBalanced || activeQualityPreset.shadowsEnabled);
   renderer.shadowMap.enabled = initialShadowsEnabled;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   container.appendChild(renderer.domElement);
 
   const maxAnisotropy = Math.min(
@@ -505,13 +552,16 @@ export function createSceneContext(
   let fogEnabled: boolean = vis.fogEnabled;
   scene.fog = fogEnabled ? ensureDebugFog() : null;
 
+  const halfFloatSupported = supportsHalfFloatRenderTarget(renderer);
+  let balancedEnvEnabled = false;
+  let balancedEnvTexture: THREE.CanvasTexture | null = null;
   let envRenderTarget: THREE.WebGLRenderTarget | null = null;
   if (isFull) {
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const roomEnvironment = new RoomEnvironment();
     envRenderTarget = pmremGenerator.fromScene(roomEnvironment, CONFIG.renderer.envBlur);
     scene.environment = envRenderTarget.texture;
-    scene.environmentIntensity = activePreset.envIntensity;
+    scene.environmentIntensity = baseEnvIntensity * userBrightnessMultiplier;
     roomEnvironment.dispose();
     pmremGenerator.dispose();
   } else {
@@ -543,7 +593,7 @@ export function createSceneContext(
     ? CONFIG.quality.balancedShadowMapSize
     : activeQualityPreset.shadowMapSize > 0
       ? activeQualityPreset.shadowMapSize
-      : 256;
+      : 512;
   let currentShadowFollowRadius: number = isBalanced
     ? CONFIG.quality.balancedShadowRadius
     : activeQualityPreset.shadowFollowRadius;
@@ -560,6 +610,7 @@ export function createSceneContext(
   sunLight.shadow.camera.far = CONFIG.lighting.sunShadowFar;
   sunLight.shadow.bias = CONFIG.lighting.sunShadowBias;
   sunLight.shadow.normalBias = CONFIG.lighting.sunShadowNormalBias;
+  sunLight.shadow.intensity = CONFIG.lighting.sunShadowIntensity;
   sunLight.shadow.radius = CONFIG.lighting.sunShadowRadius;
   scene.add(sunLight);
   scene.add(sunLight.target);
@@ -828,7 +879,6 @@ export function createSceneContext(
 
   // Visual debug keys (F3 fog, F4 bloom, [ / ] exposure) & compact bottom-center status badge
   let bloomDebugEnabled = true;
-  let currentExposure: number = activePreset.exposure;
   scene.userData.visualDebugBloomEnabled = bloomDebugEnabled;
 
   let debugPanel: HTMLDivElement | null = null;
@@ -858,7 +908,7 @@ export function createSceneContext(
         0.2,
         2.5,
       );
-      renderer.toneMappingExposure = currentExposure * userBrightnessMultiplier;
+      applyBrightness(userBrightnessMultiplier);
       updateVisualDebugOverlay();
     } else if (event.code === 'BracketRight') {
       currentExposure = THREE.MathUtils.clamp(
@@ -866,7 +916,7 @@ export function createSceneContext(
         0.2,
         2.5,
       );
-      renderer.toneMappingExposure = currentExposure * userBrightnessMultiplier;
+      applyBrightness(userBrightnessMultiplier);
       updateVisualDebugOverlay();
     }
   };
@@ -943,17 +993,63 @@ export function createSceneContext(
     }
   }
 
-  function setExposureBrightness(mult: number): void {
+  function applyBrightness(value: number): void {
     userBrightnessMultiplier = THREE.MathUtils.clamp(
-      mult,
+      value,
       CONFIG.safeMode.brightnessMin,
       CONFIG.safeMode.brightnessMax,
     );
     renderer.toneMappingExposure = currentExposure * userBrightnessMultiplier;
+    scene.environmentIntensity = scene.environment
+      ? baseEnvIntensity * userBrightnessMultiplier
+      : 0;
   }
 
-  function getExposureBrightness(): number {
+  function getBrightness(): number {
     return userBrightnessMultiplier;
+  }
+
+  function syncBalancedEnvironmentTexture(): void {
+    if (!isBalanced || !halfFloatSupported || !balancedEnvEnabled) {
+      if (!isFull) {
+        scene.environment = null;
+      }
+      if (balancedEnvTexture) {
+        balancedEnvTexture.dispose();
+        balancedEnvTexture = null;
+      }
+      return;
+    }
+
+    const theme = getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom');
+    const sky = theme.getSkyColors(activePresetName);
+    const prevTex = balancedEnvTexture;
+    balancedEnvTexture = createBalancedGradientEnvironment(
+      sky.skyTop,
+      sky.skyHorizon,
+      sky.groundBounce,
+    );
+    scene.environment = balancedEnvTexture;
+    prevTex?.dispose();
+  }
+
+  function canUseBalancedEnvironment(): boolean {
+    return isBalanced && halfFloatSupported;
+  }
+
+  function setBalancedEnvironmentEnabled(enabled: boolean): void {
+    const nextEnabled = Boolean(enabled) && canUseBalancedEnvironment();
+    if (nextEnabled === balancedEnvEnabled) {
+      return;
+    }
+    balancedEnvEnabled = nextEnabled;
+    baseEnvIntensity = nextEnabled ? CONFIG.safeMode.balancedEnvIntensity : 0;
+    syncBalancedEnvironmentTexture();
+    applyBrightness(userBrightnessMultiplier);
+  }
+
+  function isBalancedEnvironmentEnabled(): boolean {
+    return balancedEnvEnabled;
   }
 
   function applyThemeAtmosphere(): void {
@@ -964,7 +1060,6 @@ export function createSceneContext(
     roomShellGroup.visible = lighting.showRoomShell;
 
     currentExposure = lighting.exposure;
-    renderer.toneMappingExposure = currentExposure * userBrightnessMultiplier;
 
     scene.background = new THREE.Color(sky.skyHorizon);
     skyDome.material.uniforms.uSkyTop.value.set(sky.skyTop);
@@ -975,7 +1070,15 @@ export function createSceneContext(
       debugFog.color.set(sky.fogColor);
     }
 
-    scene.environmentIntensity = isFull ? lighting.envIntensity : 0;
+    baseEnvIntensity = isFull
+      ? lighting.envIntensity
+      : isBalanced && balancedEnvEnabled
+        ? CONFIG.safeMode.balancedEnvIntensity
+        : 0;
+    if (isBalanced) {
+      syncBalancedEnvironmentTexture();
+    }
+    applyBrightness(userBrightnessMultiplier);
 
     sunLight.color.set(lighting.sunColor);
     sunLight.intensity = lighting.sunIntensity;
@@ -1053,7 +1156,7 @@ export function createSceneContext(
 
   setCameraOrbitAngle(0);
 
-  function setQuality(level: QualityLevel): void {
+  function setQuality(level: QualityLevel, allowShadowToggle = false): void {
     const targetLevel: QualityLevel = effectiveSafeMode ? 'mobile' : level;
     const preset = CONFIG.quality.levels[targetLevel];
     currentPixelRatioMax = preset.pixelRatioMax;
@@ -1061,9 +1164,11 @@ export function createSceneContext(
       effectiveSafeMode ? 1 : Math.min(window.devicePixelRatio || 1, currentPixelRatioMax),
     );
 
-    const shadowsEnabled = !effectiveSafeMode && (isBalanced || preset.shadowsEnabled);
-    renderer.shadowMap.enabled = shadowsEnabled;
-    sunLight.castShadow = shadowsEnabled;
+    if (allowShadowToggle) {
+      const shadowsEnabled = !effectiveSafeMode && (isBalanced || preset.shadowsEnabled);
+      renderer.shadowMap.enabled = shadowsEnabled;
+      sunLight.castShadow = shadowsEnabled;
+    }
 
     const targetRadius = isBalanced
       ? CONFIG.quality.balancedShadowRadius
@@ -1082,7 +1187,7 @@ export function createSceneContext(
       ? CONFIG.quality.balancedShadowMapSize
       : preset.shadowMapSize > 0
         ? preset.shadowMapSize
-        : 256;
+        : 512;
     if (currentShadowMapSize !== nextShadowSize) {
       currentShadowMapSize = nextShadowSize;
       sunLight.shadow.mapSize.set(currentShadowMapSize, currentShadowMapSize);
@@ -1151,6 +1256,8 @@ export function createSceneContext(
     disposeObjectResources(scene);
     skyDome.geometry.dispose();
     skyDome.material.dispose();
+    balancedEnvTexture?.dispose();
+    balancedEnvTexture = null;
     envRenderTarget?.dispose();
     renderer.dispose();
 
@@ -1249,8 +1356,11 @@ export function createSceneContext(
     updateSunShadowTarget,
     setQuality,
     applyPalette,
-    setExposureBrightness,
-    getExposureBrightness,
+    applyBrightness,
+    getBrightness,
+    canUseBalancedEnvironment,
+    setBalancedEnvironmentEnabled,
+    isBalancedEnvironmentEnabled,
     getGroundY,
     getViewportSize,
     dispose,
