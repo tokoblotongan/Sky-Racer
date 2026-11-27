@@ -1,5 +1,6 @@
 // src/core/attractions.ts
 
+import { createKitchenAttractionsPlan } from '../arenas/kitchen/attractions';
 import { CONFIG, type AiDifficulty } from '../config';
 import type { Course } from './course';
 import {
@@ -119,7 +120,10 @@ export function createAttractionSystem(
   initialDifficulty: AiDifficulty = CONFIG.ai.defaultDifficulty,
   hasAttractions?: boolean,
 ): AttractionSystem {
-  const plan = createFantasyLandAttractionsPlan(course, hasAttractions);
+  const plan =
+    course.getId() === 'kitchen'
+      ? createKitchenAttractionsPlan(course, hasAttractions)
+      : createFantasyLandAttractionsPlan(course, hasAttractions);
   let enabled = initialEnabled;
   let difficulty: AiDifficulty = initialDifficulty;
   let lastTimeSec = 0;

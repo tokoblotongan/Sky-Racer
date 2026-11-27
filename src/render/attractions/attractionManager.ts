@@ -39,12 +39,19 @@ export function createAttractionManager(
   let telegraphVis: TelegraphVisualGroup | null = null;
 
   if (attractions.plan.enabledForCourse) {
-    pendulumVis = createPendulumVisuals(preset);
-    ballsVis = createRollingBallsVisuals(attractions.getBallGroups(), preset);
-    windVis = createWindFanVisuals(attractions.getWindFans(), preset, quality);
-    jellyVis = createJellyPuddleVisuals(course, attractions.getJellyPuddles(), preset);
-    ringVis = createBoostRingsVisuals(attractions.plan.boostRings, preset);
-    telegraphVis = createTelegraphVisuals(course);
+    const defaultSkin = attractions.plan.skin ?? 'default';
+    const pendulumSkin = attractions.plan.pendulums[0]?.skin ?? defaultSkin;
+    const ballsSkin = attractions.plan.ballGroups[0]?.skin ?? defaultSkin;
+    const windSkin = attractions.plan.windFans[0]?.skin ?? defaultSkin;
+    const jellySkin = attractions.plan.jellyPuddles[0]?.skin ?? defaultSkin;
+    const ringSkin = attractions.plan.boostRings[0]?.skin ?? defaultSkin;
+
+    pendulumVis = createPendulumVisuals(preset, pendulumSkin);
+    ballsVis = createRollingBallsVisuals(attractions.getBallGroups(), preset, ballsSkin);
+    windVis = createWindFanVisuals(attractions.getWindFans(), preset, quality, windSkin);
+    jellyVis = createJellyPuddleVisuals(course, attractions.getJellyPuddles(), preset, jellySkin);
+    ringVis = createBoostRingsVisuals(attractions.plan.boostRings, preset, ringSkin);
+    telegraphVis = createTelegraphVisuals(course, defaultSkin);
 
     group.add(
       telegraphVis.group,

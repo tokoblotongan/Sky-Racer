@@ -36,6 +36,10 @@ export const kitchenArena: ArenaDefinition = {
       { name: 'Tikungan Kompor', s: 1457 },
     ],
   },
+  attractions: {
+    enabled: true,
+    style: 'kitchen',
+  },
   theme: kitchenTheme.id,
   themeDefinition: kitchenTheme,
   background: {
@@ -48,7 +52,7 @@ export const kitchenArena: ArenaDefinition = {
   carVisualScale: CONFIG.car.visualScale,
   minimap: {
     options: {
-      showAttractions: false,
+      showAttractions: true,
     },
   },
   introCamera: {
@@ -106,7 +110,7 @@ export const kitchenArena: ArenaDefinition = {
   capabilities: {
     hasOpponents: true,
     hasShortcut: true,
-    hasAttractions: false,
+    hasAttractions: true,
     hasPodium: true,
   },
   // 80% of FantasyLand baseline budgets ({ meshes: 80, triangles: 75000, instances: 600, textureMB: 3.0 })

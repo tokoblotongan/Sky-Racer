@@ -4,57 +4,14 @@ import * as THREE from 'three';
 import { CONFIG, type GraphicsPreset } from '../../config';
 import type { JellyPuddleState } from '../../core/attractions';
 import type { Course } from '../../core/course';
-import { createSurfaceMaterial, type SurfaceMaterial } from '../materialFactory';
+import type { AttractionSkinId } from '../../courses/fantasyLandAttractions';
+import { getAttractionSkin } from './skins';
 
 export interface JellyPuddleVisualGroup {
   readonly group: THREE.Group;
   update: (states: readonly JellyPuddleState[], playerPos: THREE.Vector3) => void;
   setQuality: (preset: GraphicsPreset) => void;
   dispose: () => void;
-}
-
-function createJellyGlossTexture(): THREE.CanvasTexture {
-  const size = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    // Bright glossy magenta-berry base with soft translucent bubbles & specular highlights
-    const grad = ctx.createLinearGradient(0, 0, size, size);
-    grad.addColorStop(0, '#FF4DFF');
-    grad.addColorStop(0.5, '#FF2E93');
-    grad.addColorStop(1, '#C026D3');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, size, size);
-
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.34)';
-    const bubbles = [
-      [44, 52, 18],
-      [130, 38, 12],
-      [204, 86, 22],
-      [78, 148, 24],
-      [172, 178, 16],
-      [224, 218, 14],
-      [34, 218, 15],
-    ];
-    for (const [bx, by, br] of bubbles) {
-      ctx.beginPath();
-      ctx.arc(bx, by, br, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-      ctx.beginPath();
-      ctx.arc(bx - br * 0.3, by - br * 0.3, br * 0.32, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.34)';
-    }
-  }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(2, 3);
-  return tex;
 }
 
 function buildTrackConformGeometry(
@@ -77,7 +34,7 @@ function buildTrackConformGeometry(
     const t = i / slices;
     const s = THREE.MathUtils.lerp(sStart, sEnd, t);
     const frame = route.getFrameAt(s);
-    // Oval taper near entry and exit edges so it reads like a spilled jelly puddle
+    // Oval taper near entry and exit edges so it reads like a spilled puddle
     const edgeTaper = Math.sin(t * Math.PI);
     const wScale = 0.58 + 0.42 * Math.sqrt(Math.max(0.02, edgeTaper));
 
@@ -118,30 +75,13 @@ export function createJellyPuddleVisuals(
   course: Course,
   states: readonly JellyPuddleState[],
   preset: GraphicsPreset,
+  skinId: AttractionSkinId = 'default',
 ): JellyPuddleVisualGroup {
   const group = new THREE.Group();
   group.name = 'JellyPuddleAttractionsGroup';
 
-  const jellyTex = createJellyGlossTexture();
-  let jellyMat: SurfaceMaterial = createSurfaceMaterial(preset, {
-    color: 0xffffff,
-    map: jellyTex,
-    emissive: 0xff2fd0,
-    emissiveMap: jellyTex,
-    emissiveIntensity: 0.72,
-    roughness: 0.08,
-    metalness: 0.05,
-    clearcoat: 1.0,
-    clearcoatRoughness: 0.04,
-    physical: true,
-    specularHighlight: true,
-    shininess: 90,
-    transparent: true,
-    opacity: 0.88,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
-  });
+  const skin = getAttractionSkin(skinId);
+  let parts = skin.createJellyPuddleParts(preset);
 
   const geos: THREE.BufferGeometry[] = [];
   const meshes: Array<{ mesh: THREE.Mesh; worldPos: THREE.Vector3 }> = [];
@@ -158,7 +98,7 @@ export function createJellyPuddleVisuals(
       spec.halfWidth,
     );
     geos.push(geo);
-    const mesh = new THREE.Mesh(geo, jellyMat);
+    const mesh = new THREE.Mesh(geo, parts.mat);
     mesh.name = `JellyPuddle_${spec.id}`;
     mesh.renderOrder = 3;
     group.add(mesh);
@@ -166,9 +106,11 @@ export function createJellyPuddleVisuals(
   }
 
   const update = (liveStates: readonly JellyPuddleState[], playerPos: THREE.Vector3): void => {
-    if (liveStates.length > 0) {
-      jellyTex.offset.y = liveStates[0].uvOffset;
-      jellyTex.offset.x = liveStates[0].uvOffset * 0.35;
+    if (liveStates.length > 0 && parts.animateUv) {
+      parts.tex.offset.y = liveStates[0].uvOffset;
+      parts.tex.offset.x = liveStates[0].uvOffset * 0.35;
+    } else if (!parts.animateUv) {
+      parts.tex.offset.set(0, 0);
     }
     for (let i = 0; i < meshes.length; i++) {
       const m = meshes[i];
@@ -177,36 +119,17 @@ export function createJellyPuddleVisuals(
   };
 
   const setQuality = (nextPreset: GraphicsPreset): void => {
-    const prev = jellyMat;
-    jellyMat = createSurfaceMaterial(nextPreset, {
-      color: 0xffffff,
-      map: jellyTex,
-      emissive: 0xff2fd0,
-      emissiveMap: jellyTex,
-      emissiveIntensity: 0.72,
-      roughness: 0.08,
-      metalness: 0.05,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.04,
-      physical: true,
-      specularHighlight: true,
-      shininess: 90,
-      transparent: true,
-      opacity: 0.88,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -2,
-    });
+    const prev = parts;
+    parts = skin.createJellyPuddleParts(nextPreset);
     for (const m of meshes) {
-      m.mesh.material = jellyMat;
+      m.mesh.material = parts.mat;
     }
     prev.dispose();
   };
 
   const dispose = (): void => {
     for (const g of geos) g.dispose();
-    jellyTex.dispose();
-    jellyMat.dispose();
+    parts.dispose();
   };
 
   return { group, update, setQuality, dispose };

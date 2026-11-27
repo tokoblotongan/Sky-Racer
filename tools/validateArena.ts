@@ -28,6 +28,7 @@ import {
   updateRace,
 } from '../src/core/state';
 import { distanceSInterval } from '../src/courses/fantasyLandAttractions';
+import { createAttractionManager } from '../src/render/attractions/attractionManager';
 import { getThemeDefinition } from '../src/render/themes';
 import { getRecordsStorageKey } from '../src/services/records';
 
@@ -48,12 +49,23 @@ interface BudgetUsage {
   textureCount: number;
 }
 
+interface AttractionStatsSummary {
+  pendulums: number;
+  ballGroups: number;
+  windFans: number;
+  jellyPuddles: number;
+  mainRings: number;
+  shortcutRings: number;
+  tierBudgets: Record<GraphicsPreset, BudgetUsage>;
+}
+
 interface ArenaValidationSummary {
   arena: ArenaDefinition;
   ok: boolean;
   checks: CheckResult[];
   budgets?: BudgetUsage;
   tierBudgets?: Record<GraphicsPreset, BudgetUsage>;
+  attractionStats?: AttractionStatsSummary;
 }
 
 function parseArenaIdArg(argv: readonly string[]): string | null {
@@ -505,6 +517,117 @@ function measureThemePresetUsage(
   });
 }
 
+function measureObject3DUsage(root: THREE.Object3D): BudgetUsage {
+  let meshes = 0;
+  let triangles = 0;
+  let instances = 0;
+  let drawCalls = 0;
+  const textures = new Set<THREE.Texture>();
+
+  root.traverse((obj) => {
+    if ((obj as THREE.Mesh).isMesh) {
+      meshes++;
+      const mesh = obj as THREE.Mesh;
+      const geom = mesh.geometry;
+      if (geom) {
+        const triBase = geom.index
+          ? geom.index.count / 3
+          : geom.attributes.position
+            ? geom.attributes.position.count / 3
+            : 0;
+        if ((obj as THREE.InstancedMesh).isInstancedMesh) {
+          const inst = obj as THREE.InstancedMesh;
+          instances += inst.count;
+          triangles += triBase * inst.count;
+          if (inst.count > 0) drawCalls++;
+        } else {
+          triangles += triBase;
+          drawCalls++;
+        }
+      }
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const m of mats) {
+        if (!m) continue;
+        const record = m as unknown as Record<string, unknown>;
+        for (const key of [
+          'map',
+          'roughnessMap',
+          'metalnessMap',
+          'normalMap',
+          'emissiveMap',
+          'alphaMap',
+          'bumpMap',
+          'aoMap',
+        ]) {
+          const tex = record[key] as THREE.Texture | undefined;
+          if (tex && tex.isTexture) {
+            textures.add(tex);
+          }
+        }
+      }
+    }
+  });
+
+  let textureBytes = 0;
+  textures.forEach((tex) => {
+    const img = tex.image as { width?: number; height?: number } | undefined;
+    if (img && img.width && img.height) {
+      textureBytes += img.width * img.height * 4 * 1.3333;
+    }
+  });
+
+  return {
+    meshes,
+    triangles: Math.round(triangles),
+    instances,
+    drawCalls,
+    textureMB: Number((textureBytes / (1024 * 1024)).toFixed(2)),
+    textureCount: textures.size,
+  };
+}
+
+function measureAttractionStats(
+  arena: ArenaDefinition,
+  course: Course,
+): AttractionStatsSummary | undefined {
+  if (!arena.capabilities.hasAttractions) {
+    return undefined;
+  }
+  const attr = createAttractionSystem(course, true, 'sedang', true);
+  if (!attr.plan.enabledForCourse) {
+    return undefined;
+  }
+
+  const measurePreset = (preset: GraphicsPreset): BudgetUsage =>
+    withHeadlessDocument(() => {
+      const scene = new THREE.Scene();
+      const quality = preset === 'hemat' ? 'mobile' : preset === 'seimbang' ? 'medium' : 'high';
+      const mgr = createAttractionManager(scene, course, attr, preset, quality);
+      attr.evaluateAtTime(2.0);
+      mgr.update(attr, new THREE.Vector3());
+      const usage = measureObject3DUsage(mgr.group);
+      mgr.dispose();
+      return usage;
+    });
+
+  const mainRings = attr.plan.boostRings.filter((r) => r.routeId === 'main').length;
+  const shortcutRings = attr.plan.boostRings.filter((r) => r.routeId !== 'main').length;
+
+  return {
+    pendulums: attr.plan.pendulums.length,
+    ballGroups: attr.plan.ballGroups.length,
+    windFans: attr.plan.windFans.length,
+    jellyPuddles: attr.plan.jellyPuddles.length,
+    mainRings,
+    shortcutRings,
+    tierBudgets: {
+      hemat: measurePreset('hemat'),
+      seimbang: measurePreset('seimbang'),
+      penuh: measurePreset('penuh'),
+    },
+  };
+}
+
 function checkThemeBudgets(
   arena: ArenaDefinition,
   course: Course,
@@ -698,12 +821,15 @@ function validateSingleArena(
   checks.push(checkMusicAssets(arena));
   checks.push(checkUniqueStorageKeys(arena, allArenas));
 
+  const attractionStats = measureAttractionStats(arena, course);
+
   return {
     arena,
     ok: checks.every((c) => c.ok),
     checks,
     budgets: budgetOut.usage,
     tierBudgets: budgetOut.tierBudgets,
+    attractionStats,
   };
 }
 
@@ -730,6 +856,24 @@ function writePerArenaReport(outDir: string, summary: ArenaValidationSummary): s
     lines.push('|---|---|---|---|---|---|');
     for (const preset of ['hemat', 'seimbang', 'penuh'] as const) {
       const t = summary.tierBudgets[preset];
+      lines.push(
+        `| \`${preset}\` | ${t.meshes} | ${t.triangles} | ${t.instances} | ${t.drawCalls} | ${t.textureMB.toFixed(2)} |`,
+      );
+    }
+  }
+  if (summary.attractionStats) {
+    const a = summary.attractionStats;
+    lines.push('');
+    lines.push('## Attraction Stats & Counts');
+    lines.push('');
+    lines.push(
+      `- **Counts**: pendulums=${a.pendulums}, rollingBalls=${a.ballGroups}, windFans=${a.windFans}, jellyPuddles=${a.jellyPuddles}, boostRings=${a.mainRings} (main) + ${a.shortcutRings} (shortcut)`,
+    );
+    lines.push('');
+    lines.push('| Preset | Meshes | Triangles | Instances | Est. Draw Calls | Texture MB |');
+    lines.push('|---|---|---|---|---|---|');
+    for (const preset of ['hemat', 'seimbang', 'penuh'] as const) {
+      const t = a.tierBudgets[preset];
       lines.push(
         `| \`${preset}\` | ${t.meshes} | ${t.triangles} | ${t.instances} | ${t.drawCalls} | ${t.textureMB.toFixed(2)} |`,
       );

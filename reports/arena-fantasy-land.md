@@ -20,3 +20,13 @@
 | `hemat` | 39 | 35000 | 303 | 39 | 1.96 |
 | `seimbang` | 51 | 53380 | 427 | 51 | 2.21 |
 | `penuh` | 60 | 68302 | 541 | 60 | 2.21 |
+
+## Attraction Stats & Counts
+
+- **Counts**: pendulums=2, rollingBalls=2, windFans=1, jellyPuddles=1, boostRings=8 (main) + 3 (shortcut)
+
+| Preset | Meshes | Triangles | Instances | Est. Draw Calls | Texture MB |
+|---|---|---|---|---|---|
+| `hemat` | 29 | 6348 | 10 | 24 | 1.33 |
+| `seimbang` | 29 | 6348 | 10 | 24 | 1.33 |
+| `penuh` | 29 | 6348 | 10 | 24 | 1.33 |

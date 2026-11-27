@@ -3,8 +3,9 @@
 import * as THREE from 'three';
 import { CONFIG, type GraphicsPreset } from '../../config';
 import type { WindFanState } from '../../core/attractions';
-import { createSurfaceMaterial } from '../materialFactory';
+import type { AttractionSkinId } from '../../courses/fantasyLandAttractions';
 import type { QualityLevel } from '../quality';
+import { getAttractionSkin } from './skins';
 
 export interface WindFanVisualGroup {
   readonly group: THREE.Group;
@@ -17,51 +18,16 @@ export function createWindFanVisuals(
   states: readonly WindFanState[],
   preset: GraphicsPreset,
   quality: QualityLevel,
+  skinId: AttractionSkinId = 'default',
 ): WindFanVisualGroup {
   const group = new THREE.Group();
   group.name = 'WindFanAttractionsGroup';
 
-  const makeMaterials = (p: GraphicsPreset) => ({
-    frameMat: createSurfaceMaterial(p, {
-      color: 0xe2e8f0,
-      roughness: 0.32,
-      metalness: 0.4,
-    }),
-    bladeMat: createSurfaceMaterial(p, {
-      color: 0x00e5ff,
-      roughness: 0.22,
-      metalness: 0.15,
-      emissive: 0x00b4d8,
-      emissiveIntensity: 0.45,
-    }),
-    hubMat: createSurfaceMaterial(p, {
-      color: 0xffd000,
-      roughness: 0.25,
-      metalness: 0.55,
-      emissive: 0xffa200,
-      emissiveIntensity: 0.25,
-    }),
-    streakMat: new THREE.MeshBasicMaterial({
-      color: 0xe0f2fe,
-      transparent: true,
-      opacity: 0.58,
-      depthWrite: false,
-    }),
-  });
-
-  let mats = makeMaterials(preset);
-
-  const standGeo = new THREE.CylinderGeometry(0.55, 0.9, 4.2, 12);
-  const shroudGeo = new THREE.TorusGeometry(3.7, 0.42, 12, 28);
-  shroudGeo.rotateY(Math.PI * 0.5); // faces +X / -X across the track
-  const hubGeo = new THREE.CylinderGeometry(0.75, 0.75, 0.9, 14);
-  hubGeo.rotateZ(Math.PI * 0.5);
-  const bladeGeo = new THREE.BoxGeometry(0.14, 3.1, 0.85);
-  bladeGeo.translate(0, 1.55, 0);
+  const skin = getAttractionSkin(skinId);
+  let parts = skin.createWindFanParts(preset, quality);
 
   const maxStreaks = CONFIG.attractions.wind.streakCount.high;
-  const streakGeo = new THREE.BoxGeometry(2.6, 0.08, 0.08);
-  const streakMesh = new THREE.InstancedMesh(streakGeo, mats.streakMat, maxStreaks);
+  const streakMesh = new THREE.InstancedMesh(parts.streakGeo, parts.streakMat, maxStreaks);
   streakMesh.name = 'WindStreaksInstancedMesh';
   streakMesh.frustumCulled = false;
   streakMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -89,7 +55,7 @@ export function createWindFanVisuals(
   const tmpPos = new THREE.Vector3();
   const tmpBasisQuat = new THREE.Quaternion();
   const maxDistSq = CONFIG.attractions.updateDistance * CONFIG.attractions.updateDistance;
-  let activeStreaksPerZone = CONFIG.attractions.wind.streakCount[quality];
+  let activeStreaksPerZone = parts.streakCount;
 
   for (let i = 0; i < states.length; i++) {
     const spec = states[i].spec;
@@ -99,16 +65,16 @@ export function createWindFanVisuals(
     root.position.copy(spec.fanTowerPos);
     root.quaternion.setFromRotationMatrix(basisMat);
 
-    const stand = new THREE.Mesh(standGeo, mats.frameMat);
+    const stand = new THREE.Mesh(parts.standGeo, parts.frameMat);
     stand.position.set(0, -2.0, 0);
 
-    const shroud = new THREE.Mesh(shroudGeo, mats.frameMat);
-    const hub = new THREE.Mesh(hubGeo, mats.hubMat);
+    const shroud = new THREE.Mesh(parts.shroudGeo, parts.frameMat);
+    const hub = new THREE.Mesh(parts.hubGeo, parts.hubMat);
     const rotor = new THREE.Group();
     const blades: THREE.Mesh[] = [];
     for (let b = 0; b < 4; b++) {
-      const blade = new THREE.Mesh(bladeGeo, mats.bladeMat);
-      blade.rotation.x = (b * Math.PI) * 0.5;
+      const blade = new THREE.Mesh(parts.bladeGeo, parts.bladeMat);
+      blade.rotation.x = b * Math.PI * 0.5;
       blade.rotation.y = 0.25 * spec.direction;
       rotor.add(blade);
       blades.push(blade);
@@ -158,9 +124,9 @@ export function createWindFanVisuals(
 
         for (let k = 0; k < activeStreaksPerZone && streakIdx < maxStreaks; k++) {
           const seed = (k * 0.6180339887) % 1;
-          const travel = ((timeSec * 1.45 + seed * 3.7) % 1);
+          const travel = (timeSec * 1.45 + seed * 3.7) % 1;
           const lat = THREE.MathUtils.lerp(-halfW, halfW, entry.direction > 0 ? travel : 1 - travel);
-          const along = ((k / activeStreaksPerZone) - 0.5) * spanZ * 0.86;
+          const along = (k / activeStreaksPerZone - 0.5) * spanZ * 0.86;
           const height = 0.6 + ((k * 0.37) % 1) * 3.4;
 
           tmpPos
@@ -187,34 +153,28 @@ export function createWindFanVisuals(
   };
 
   const setQuality = (nextPreset: GraphicsPreset, nextQuality: QualityLevel): void => {
-    activeStreaksPerZone = CONFIG.attractions.wind.streakCount[nextQuality];
-    const prev = mats;
-    mats = makeMaterials(nextPreset);
+    const prev = parts;
+    parts = skin.createWindFanParts(nextPreset, nextQuality);
+    activeStreaksPerZone = parts.streakCount;
     for (const e of entries) {
-      e.stand.material = mats.frameMat;
-      e.shroud.material = mats.frameMat;
-      e.hub.material = mats.hubMat;
+      e.stand.geometry = parts.standGeo;
+      e.stand.material = parts.frameMat;
+      e.shroud.geometry = parts.shroudGeo;
+      e.shroud.material = parts.frameMat;
+      e.hub.geometry = parts.hubGeo;
+      e.hub.material = parts.hubMat;
       for (const b of e.blades) {
-        b.material = mats.bladeMat;
+        b.geometry = parts.bladeGeo;
+        b.material = parts.bladeMat;
       }
     }
-    streakMesh.material = mats.streakMat;
-    prev.frameMat.dispose();
-    prev.bladeMat.dispose();
-    prev.hubMat.dispose();
-    prev.streakMat.dispose();
+    streakMesh.geometry = parts.streakGeo;
+    streakMesh.material = parts.streakMat;
+    prev.dispose();
   };
 
   const dispose = (): void => {
-    standGeo.dispose();
-    shroudGeo.dispose();
-    hubGeo.dispose();
-    bladeGeo.dispose();
-    streakGeo.dispose();
-    mats.frameMat.dispose();
-    mats.bladeMat.dispose();
-    mats.hubMat.dispose();
-    mats.streakMat.dispose();
+    parts.dispose();
   };
 
   return { group, update, setQuality, dispose };

@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import { CONFIG, type GraphicsPreset } from '../../config';
 import type { PendulumState } from '../../core/attractions';
-import { createSurfaceMaterial, type SurfaceMaterial } from '../materialFactory';
+import type { AttractionSkinId } from '../../courses/fantasyLandAttractions';
+import { getAttractionSkin } from './skins';
 
 export interface PendulumVisualGroup {
   readonly group: THREE.Group;
@@ -12,73 +13,16 @@ export interface PendulumVisualGroup {
   dispose: () => void;
 }
 
-function createCandyStripeTexture(): THREE.CanvasTexture {
-  const size = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = '#FFFDF7';
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = '#FF2D3D';
-    const stripes = 6;
-    const step = size / stripes;
-    for (let i = -stripes; i < stripes * 2; i++) {
-      ctx.beginPath();
-      ctx.moveTo(i * step, 0);
-      ctx.lineTo(i * step + step * 0.5, 0);
-      ctx.lineTo((i + 1) * step + step * 0.5, size);
-      ctx.lineTo((i + 1) * step, size);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(1, 3);
-  return tex;
-}
-
-export function createPendulumVisuals(preset: GraphicsPreset): PendulumVisualGroup {
+export function createPendulumVisuals(
+  preset: GraphicsPreset,
+  skinId: AttractionSkinId = 'default',
+): PendulumVisualGroup {
   const group = new THREE.Group();
   group.name = 'PendulumAttractionsGroup';
 
   const cfg = CONFIG.attractions.pendulum;
-  const candyTex = createCandyStripeTexture();
-
-  let candyMat: SurfaceMaterial = createSurfaceMaterial(preset, {
-    color: 0xffffff,
-    map: candyTex,
-    roughness: 0.28,
-    metalness: 0.08,
-    emissive: 0xff2d3d,
-    emissiveIntensity: 0.14,
-  });
-  let archMat: SurfaceMaterial = createSurfaceMaterial(preset, {
-    color: 0xfef3c7,
-    roughness: 0.35,
-    metalness: 0.18,
-  });
-  let goldMat: SurfaceMaterial = createSurfaceMaterial(preset, {
-    color: 0xffd000,
-    roughness: 0.25,
-    metalness: 0.65,
-    emissive: 0xff9f1c,
-    emissiveIntensity: 0.22,
-  });
-
-  const pillarGeo = new THREE.CylinderGeometry(0.45, 0.55, cfg.pivotHeight + 0.6, 12);
-  const beamGeo = new THREE.BoxGeometry(1, 0.72, 0.78);
-  const pivotHubGeo = new THREE.CylinderGeometry(0.7, 0.7, 1.1, 14);
-  pivotHubGeo.rotateX(Math.PI * 0.5);
-
-  const armGeo = new THREE.CylinderGeometry(cfg.poleRadius, cfg.poleRadius * 1.1, cfg.armLength, 12);
-  armGeo.translate(0, -cfg.armLength * 0.5, 0);
-  const bobGeo = new THREE.SphereGeometry(cfg.bobRadius, 22, 16);
-  const ringBandGeo = new THREE.TorusGeometry(cfg.bobRadius * 0.96, 0.16, 10, 24);
+  const skin = getAttractionSkin(skinId);
+  let parts = skin.createPendulumParts(preset);
 
   interface Entry {
     root: THREE.Group;
@@ -114,30 +58,33 @@ export function createPendulumVisuals(preset: GraphicsPreset): PendulumVisualGro
       root.quaternion.setFromRotationMatrix(basisMat);
 
       const postX = spec.trackWidth * 0.5 + 1.05;
-      const leftPillar = new THREE.Mesh(pillarGeo, archMat);
+      const leftPillar = new THREE.Mesh(parts.pillarGeo, parts.archMat);
       leftPillar.position.set(-postX, cfg.pivotHeight * 0.5, 0);
       leftPillar.castShadow = false;
       leftPillar.receiveShadow = true;
+      leftPillar.visible = parts.showArch;
 
-      const rightPillar = new THREE.Mesh(pillarGeo, archMat);
+      const rightPillar = new THREE.Mesh(parts.pillarGeo, parts.archMat);
       rightPillar.position.set(postX, cfg.pivotHeight * 0.5, 0);
       rightPillar.castShadow = false;
       rightPillar.receiveShadow = true;
+      rightPillar.visible = parts.showArch;
 
-      const topBeam = new THREE.Mesh(beamGeo, candyMat);
+      const topBeam = new THREE.Mesh(parts.beamGeo, parts.handleMat);
       topBeam.scale.set(postX * 2 + 1.2, 1, 1);
       topBeam.position.set(0, cfg.pivotHeight + 0.15, 0);
+      topBeam.visible = parts.showArch;
 
-      const hub = new THREE.Mesh(pivotHubGeo, goldMat);
+      const hub = new THREE.Mesh(parts.pivotHubGeo, parts.accentMat);
       hub.position.set(0, cfg.pivotHeight, 0);
 
       const swingPivot = new THREE.Group();
       swingPivot.position.set(0, cfg.pivotHeight, 0);
 
-      const arm = new THREE.Mesh(armGeo, candyMat);
-      const bob = new THREE.Mesh(bobGeo, candyMat);
+      const arm = new THREE.Mesh(parts.armGeo, parts.handleMat);
+      const bob = new THREE.Mesh(parts.bobGeo, parts.bobMat);
       bob.position.set(0, -cfg.armLength, 0);
-      const band = new THREE.Mesh(ringBandGeo, goldMat);
+      const band = new THREE.Mesh(parts.bandGeo, parts.accentMat);
       band.position.set(0, -cfg.armLength, 0);
 
       swingPivot.add(arm, bob, band);
@@ -176,54 +123,38 @@ export function createPendulumVisuals(preset: GraphicsPreset): PendulumVisualGro
   };
 
   const setQuality = (nextPreset: GraphicsPreset): void => {
-    const prevCandy = candyMat;
-    const prevArch = archMat;
-    const prevGold = goldMat;
-    candyMat = createSurfaceMaterial(nextPreset, {
-      color: 0xffffff,
-      map: candyTex,
-      roughness: 0.28,
-      metalness: 0.08,
-      emissive: 0xff2d3d,
-      emissiveIntensity: 0.14,
-    });
-    archMat = createSurfaceMaterial(nextPreset, {
-      color: 0xfef3c7,
-      roughness: 0.35,
-      metalness: 0.18,
-    });
-    goldMat = createSurfaceMaterial(nextPreset, {
-      color: 0xffd000,
-      roughness: 0.25,
-      metalness: 0.65,
-      emissive: 0xff9f1c,
-      emissiveIntensity: 0.22,
-    });
+    const prev = parts;
+    parts = skin.createPendulumParts(nextPreset);
     for (const e of entries) {
-      e.leftPillar.material = archMat;
-      e.rightPillar.material = archMat;
-      e.topBeam.material = candyMat;
-      e.arm.material = candyMat;
-      e.bob.material = candyMat;
-      e.hub.material = goldMat;
-      e.band.material = goldMat;
+      e.leftPillar.geometry = parts.pillarGeo;
+      e.leftPillar.material = parts.archMat;
+      e.leftPillar.visible = parts.showArch;
+
+      e.rightPillar.geometry = parts.pillarGeo;
+      e.rightPillar.material = parts.archMat;
+      e.rightPillar.visible = parts.showArch;
+
+      e.topBeam.geometry = parts.beamGeo;
+      e.topBeam.material = parts.handleMat;
+      e.topBeam.visible = parts.showArch;
+
+      e.hub.geometry = parts.pivotHubGeo;
+      e.hub.material = parts.accentMat;
+
+      e.arm.geometry = parts.armGeo;
+      e.arm.material = parts.handleMat;
+
+      e.bob.geometry = parts.bobGeo;
+      e.bob.material = parts.bobMat;
+
+      e.band.geometry = parts.bandGeo;
+      e.band.material = parts.accentMat;
     }
-    prevCandy.dispose();
-    prevArch.dispose();
-    prevGold.dispose();
+    prev.dispose();
   };
 
   const dispose = (): void => {
-    pillarGeo.dispose();
-    beamGeo.dispose();
-    pivotHubGeo.dispose();
-    armGeo.dispose();
-    bobGeo.dispose();
-    ringBandGeo.dispose();
-    candyTex.dispose();
-    candyMat.dispose();
-    archMat.dispose();
-    goldMat.dispose();
+    parts.dispose();
   };
 
   return { group, update, setQuality, dispose };

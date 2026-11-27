@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as THREE from 'three';
+import { arenaToCourseDefinition, createDefaultArenaRegistry } from '../src/arenas';
 import { CONFIG, type AiDifficulty, type AiRivalConfig } from '../src/config';
 import { createAiDrivers } from '../src/core/ai';
 import {
@@ -31,7 +32,6 @@ import {
   updateOpponentProgress,
   updateRace,
 } from '../src/core/state';
-import { fantasyLandCourse } from '../src/courses/fantasyLand';
 import type { CarInput } from '../src/input/controls';
 
 const RACES_PER_DIFFICULTY = 30;
@@ -109,7 +109,7 @@ function runSingleBalanceRace(
   state.timer = 0;
 
   const ai = createAiDrivers(course, difficulty, seed);
-  const attractions = createAttractionSystem(course, true, difficulty);
+  const attractions = createAttractionSystem(course, course.hasAttractions(), difficulty);
   const hazardEffects = createHazardEffectsTracker(state.cars.length);
   const standings = createStandingsTracker(course.getRacers());
   const numCars = state.cars.length;
@@ -283,9 +283,37 @@ function runSingleBalanceRace(
   };
 }
 
+function parseArenaIdArg(argv: readonly string[]): string {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith('--arena=')) {
+      const value = arg.slice('--arena='.length).trim();
+      if (value) return value;
+    } else if (arg === '--arena' && i + 1 < argv.length) {
+      const value = argv[i + 1].trim();
+      if (value) return value;
+    } else if (arg.startsWith('--course=')) {
+      const value = arg.slice('--course='.length).trim();
+      if (value) return value;
+    } else if (arg === '--course' && i + 1 < argv.length) {
+      const value = argv[i + 1].trim();
+      if (value) return value;
+    }
+  }
+  return 'fantasy-land';
+}
+
 function main(): void {
-  const course = new Course(buildCourseConfigFromDefinition(fantasyLandCourse, false));
-  const refLap = fantasyLandCourse.referenceLapTime ?? 65.06;
+  const arenaId = parseArenaIdArg(process.argv.slice(2));
+  const registry = createDefaultArenaRegistry();
+  const arena = registry.getArena(arenaId);
+  if (!arena) {
+    console.error(`Arena '${arenaId}' not found in ArenaRegistry.`);
+    process.exit(1);
+  }
+  const courseDef = arenaToCourseDefinition(arena);
+  const course = new Course(buildCourseConfigFromDefinition(courseDef, false));
+  const refLap = courseDef.referenceLapTime ?? 65.06;
 
   interface DiffSummary {
     difficulty: AiDifficulty;
@@ -368,7 +396,7 @@ function main(): void {
     });
   }
 
-  console.log('\n=== BALANCE REPORT (N=30 per kesulitan, pemain-proksi Sedang + reaksi 0.2s + derau kemudi) ===');
+  console.log(`\n=== BALANCE REPORT: ${arena.name} (${arena.id}) (N=30 per kesulitan, pemain-proksi Sedang + reaksi 0.2s + derau kemudi) ===`);
   for (const s of summaries) {
     console.log(
       `${s.difficulty.padEnd(7)} | win=${(s.winRate * 100).toFixed(1)}% (${s.winPass ? 'OK' : 'FAIL'})` +
@@ -387,9 +415,9 @@ function main(): void {
   console.log(`OVERALL: ${allPassed ? 'PASS' : 'NEEDS TUNING'}\n`);
 
   const lines: string[] = [
-    '# Laporan Keseimbangan Balapan (Stage F7)',
+    `# Laporan Keseimbangan Balapan (${arena.name})`,
     '',
-    `- **Arena**: FantasyLand (3 lap, 4 pembalap)`,
+    `- **Arena**: ${arena.name} (\`${arena.id}\`, ${arena.laps} lap, ${1 + arena.opponentCount} pembalap)`,
     `- **Simulasi**: N = ${RACES_PER_DIFFICULTY} balapan per kesulitan dengan seed berbeda (total ${RACES_PER_DIFFICULTY * DIFFICULTIES.length} balapan headless)`,
     `- **Pemain-Proksi (khusus tool)**: Pengemudi AI Sedang (\`skillMultiplier = ${CONFIG.ai.difficulties.sedang.skillMultiplier}\`) + jeda reaksi \`${PROXY_REACTION_SEC}s\` + derau kemudi acak terhalus`,
     `- **Lap Referensi**: \`${refLap.toFixed(2)} s\``,

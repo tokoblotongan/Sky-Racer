@@ -26,6 +26,14 @@ export interface AiRivalConfig {
   readonly style: AiDrivingStyle;
 }
 
+export interface ArenaAiTuning {
+  readonly difficulties?: Partial<Record<AiDifficulty, { readonly skillMultiplier: number }>>;
+  readonly rubberBand?: {
+    readonly maxBoost?: number;
+    readonly maxSlow?: number;
+  };
+}
+
 export interface VisualPreset {
   name: VisualPresetName;
   exposure: number;
@@ -1693,4 +1701,15 @@ export const CONFIG = {
       ],
     },
   },
+  kitchenAi: {
+    difficulties: {
+      mudah: { skillMultiplier: 0.825 },
+      sedang: { skillMultiplier: 0.902 },
+      sulit: { skillMultiplier: 1.0 },
+    },
+    rubberBand: {
+      maxBoost: 0.025,
+      maxSlow: 0.075,
+    },
+  } satisfies ArenaAiTuning,
 } as const;

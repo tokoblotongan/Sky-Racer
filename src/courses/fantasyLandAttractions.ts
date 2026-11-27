@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import { CONFIG } from '../config';
 import type { Course } from '../core/course';
 
+export type AttractionSkinId = 'default' | 'kitchen';
+
 export interface PendulumAttractionSpec {
   readonly id: string;
   readonly routeId: string;
@@ -14,6 +16,7 @@ export interface PendulumAttractionSpec {
   readonly worldTangent: THREE.Vector3;
   readonly worldUp: THREE.Vector3;
   readonly worldRight: THREE.Vector3;
+  readonly skin?: AttractionSkinId;
 }
 
 export interface RollingBallEntry {
@@ -33,6 +36,7 @@ export interface RollingBallGroupSpec {
   readonly trackWidth: number;
   readonly amplitude: number;
   readonly balls: readonly RollingBallEntry[];
+  readonly skin?: AttractionSkinId;
 }
 
 export interface WindFanAttractionSpec {
@@ -48,6 +52,7 @@ export interface WindFanAttractionSpec {
   readonly fanTowerForward: THREE.Vector3;
   readonly fanTowerUp: THREE.Vector3;
   readonly fanTowerRight: THREE.Vector3;
+  readonly skin?: AttractionSkinId;
 }
 
 export interface JellyPuddleAttractionSpec {
@@ -60,6 +65,7 @@ export interface JellyPuddleAttractionSpec {
   readonly halfWidth: number;
   readonly trackWidth: number;
   readonly worldPos: THREE.Vector3;
+  readonly skin?: AttractionSkinId;
 }
 
 export interface BoostRingAttractionSpec {
@@ -74,6 +80,7 @@ export interface BoostRingAttractionSpec {
   readonly worldTangent: THREE.Vector3;
   readonly worldUp: THREE.Vector3;
   readonly worldRight: THREE.Vector3;
+  readonly skin?: AttractionSkinId;
 }
 
 export interface HazardForbiddenZone {
@@ -86,6 +93,7 @@ export interface HazardForbiddenZone {
 export interface FantasyLandAttractionsPlan {
   readonly courseId: string;
   readonly enabledForCourse: boolean;
+  readonly skin?: AttractionSkinId;
   readonly pendulums: readonly PendulumAttractionSpec[];
   readonly ballGroups: readonly RollingBallGroupSpec[];
   readonly windFans: readonly WindFanAttractionSpec[];

@@ -4,40 +4,13 @@ import * as THREE from 'three';
 import { CONFIG } from '../../config';
 import type { AttractionSystem } from '../../core/attractions';
 import type { Course } from '../../core/course';
+import type { AttractionSkinId } from '../../courses/fantasyLandAttractions';
+import { getAttractionSkin } from './skins';
 
 export interface TelegraphVisualGroup {
   readonly group: THREE.Group;
   update: (attractions: AttractionSystem, playerPos: THREE.Vector3) => void;
   dispose: () => void;
-}
-
-function createHazardStripeTexture(): THREE.CanvasTexture {
-  const size = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = '#0F172A';
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = '#FFD000';
-    const step = size / 4;
-    for (let i = -4; i < 8; i++) {
-      ctx.beginPath();
-      ctx.moveTo(i * step, 0);
-      ctx.lineTo(i * step + step * 0.52, 0);
-      ctx.lineTo((i + 1) * step + step * 0.52, size);
-      ctx.lineTo((i + 1) * step, size);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(6, 1);
-  return tex;
 }
 
 function isReducedMotion(): boolean {
@@ -55,21 +28,15 @@ interface StripPlacement {
   readonly index: number;
 }
 
-export function createTelegraphVisuals(course: Course): TelegraphVisualGroup {
+export function createTelegraphVisuals(
+  course: Course,
+  skinId: AttractionSkinId = 'default',
+): TelegraphVisualGroup {
   const group = new THREE.Group();
   group.name = 'HazardTelegraphGroup';
 
-  const stripeTex = createHazardStripeTexture();
-  const mat = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    map: stripeTex,
-    transparent: true,
-    opacity: 0.72,
-    depthWrite: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -3,
-    polygonOffsetUnits: -3,
-  });
+  const skin = getAttractionSkin(skinId);
+  const parts = skin.createTelegraphParts();
 
   const stripGeo = new THREE.PlaneGeometry(1, 1);
   stripGeo.rotateX(-Math.PI * 0.5);
@@ -119,14 +86,14 @@ export function createTelegraphVisuals(course: Course): TelegraphVisualGroup {
     const plan = attractions.plan;
     if (!plan.enabledForCourse) return;
 
-    // 1. Pendulums: full lateral warning band across road + 14m advance warning strip
+    // 1. Pendulums: full lateral warning band across road + 12m advance warning strip
     for (let i = 0; i < plan.pendulums.length; i++) {
       const p = plan.pendulums[i];
       addStrip(p.routeId, p.s, 0, p.trackWidth * 0.62, 2.2, 'pendulum', i);
       addStrip(p.routeId, Math.max(0, p.s - 12), 0, p.trackWidth * 0.34, 1.3, 'pendulum', i);
     }
 
-    // 2. Rolling balls: lane sweep warning grooves + 12m advance bar
+    // 2. Rolling balls: lane sweep warning grooves + 15m advance bar
     for (let g = 0; g < plan.ballGroups.length; g++) {
       const grp = plan.ballGroups[g];
       for (let b = 0; b < grp.balls.length; b++) {
@@ -151,7 +118,7 @@ export function createTelegraphVisuals(course: Course): TelegraphVisualGroup {
       );
     }
 
-    // 3. Wind fan: warning edge strips at entry & exit of crosswind zone
+    // 3. Wind fan: warning edge strips at entry of crosswind zone
     for (let w = 0; w < plan.windFans.length; w++) {
       const wf = plan.windFans[w];
       addStrip(wf.routeId, wf.sStart, 0, wf.trackWidth * 0.9, 1.8, 'wind', w);
@@ -173,7 +140,7 @@ export function createTelegraphVisuals(course: Course): TelegraphVisualGroup {
     }
 
     if (placements.length > 0) {
-      mesh = new THREE.InstancedMesh(stripGeo, mat, placements.length);
+      mesh = new THREE.InstancedMesh(stripGeo, parts.mat, placements.length);
       mesh.name = 'HazardTelegraphInstancedMesh';
       mesh.frustumCulled = false;
       mesh.renderOrder = 2;
@@ -218,7 +185,11 @@ export function createTelegraphVisuals(course: Course): TelegraphVisualGroup {
         warn = 0.82;
       }
       mesh.setMatrixAt(count, pl.matrix);
-      tmpColor.setRGB(0.6 + 0.4 * warn, 0.55 + 0.45 * warn, 0.4 + 0.35 * warn);
+      tmpColor.setRGB(
+        parts.baseRGB[0] + parts.pulseRGB[0] * warn,
+        parts.baseRGB[1] + parts.pulseRGB[1] * warn,
+        parts.baseRGB[2] + parts.pulseRGB[2] * warn,
+      );
       mesh.setColorAt(count, tmpColor);
       count++;
     }
@@ -233,8 +204,7 @@ export function createTelegraphVisuals(course: Course): TelegraphVisualGroup {
 
   const dispose = (): void => {
     stripGeo.dispose();
-    stripeTex.dispose();
-    mat.dispose();
+    parts.dispose();
   };
 
   return { group, update, dispose };

@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as THREE from 'three';
+import { arenaToCourseDefinition, createDefaultArenaRegistry } from '../src/arenas';
 import { CONFIG, type AiDifficulty } from '../src/config';
 import { createAiDrivers } from '../src/core/ai';
 import { createAttractionSystem } from '../src/core/attractions';
@@ -25,7 +26,6 @@ import {
   updateOpponentProgress,
   updateRace,
 } from '../src/core/state';
-import { getCourse } from '../src/courses';
 
 interface DifficultySpec {
   difficulty: AiDifficulty;
@@ -534,10 +534,16 @@ function testFastForwardSettlement(course: Course): {
   };
 }
 
-function parseCourseIdArg(argv: readonly string[]): string {
+function parseArenaIdArg(argv: readonly string[]): string {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg.startsWith('--course=')) {
+    if (arg.startsWith('--arena=')) {
+      const value = arg.slice('--arena='.length).trim();
+      if (value) return value;
+    } else if (arg === '--arena' && i + 1 < argv.length) {
+      const value = argv[i + 1].trim();
+      if (value) return value;
+    } else if (arg.startsWith('--course=')) {
       const value = arg.slice('--course='.length).trim();
       if (value) return value;
     } else if (arg === '--course' && i + 1 < argv.length) {
@@ -549,8 +555,14 @@ function parseCourseIdArg(argv: readonly string[]): string {
 }
 
 function main(): void {
-  const courseId = parseCourseIdArg(process.argv.slice(2));
-  const courseDef = getCourse(courseId);
+  const courseId = parseArenaIdArg(process.argv.slice(2));
+  const registry = createDefaultArenaRegistry();
+  const arena = registry.getArena(courseId);
+  if (!arena) {
+    console.error(`Arena '${courseId}' not found in ArenaRegistry.`);
+    process.exit(1);
+  }
+  const courseDef = arenaToCourseDefinition(arena);
   const course = new Course(buildCourseConfigFromDefinition(courseDef, false));
   const refLap = courseDef.referenceLapTime ?? 65.06;
 
