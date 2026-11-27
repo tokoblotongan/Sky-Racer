@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { CONFIG, type AiDifficulty, type AiRivalConfig } from '../../config';
 import type { CarInput } from '../../input/controls';
+import type { AttractionSystem } from '../attractions';
 import type { Course } from '../course';
 import type { CarState } from '../physics';
 import type { RacePhase } from '../state';
@@ -42,6 +43,8 @@ export interface AiController {
     course: Course,
     phase: RacePhase,
     dt: number,
+    attractions?: AttractionSystem | null,
+    raceTimeSec?: number,
   ) => CarInput;
   getMetrics: () => AiMetricsSnapshot;
   isGhostCar: (carIndex: number) => boolean;
@@ -148,6 +151,8 @@ export function createAiDrivers(
     course: Course,
     phase: RacePhase,
     dt: number,
+    attractions: AttractionSystem | null = null,
+    raceTimeSec = 0,
   ): CarInput => {
     if (carIndex <= 0 || phase !== 'RACING') {
       return idleInput;
@@ -185,6 +190,8 @@ export function createAiDrivers(
       rubberBandFactor,
       dt,
       out,
+      attractions,
+      raceTimeSec,
     );
     lastStepMs += Math.max(0, nowHighResMs() - t0);
     return out;

@@ -58,10 +58,16 @@ export interface CarPose {
   quaternion: THREE.Quaternion;
 }
 
+export interface StepCarEnvModifiers {
+  readonly gripMultiplier?: number;
+  readonly lateralAccel?: number;
+}
+
 export interface StepCarOptions {
   phase: RacePhase;
   respawnTarget: { readonly s: number; readonly lateral: number };
   respawnRoute?: Route;
+  env?: StepCarEnvModifiers;
 }
 
 const _frame: TrackFrame = {
@@ -336,6 +342,7 @@ function stepGroundedCar(
   dt: number,
   phase: RacePhase,
   events: PhysicsEvent[],
+  env?: StepCarEnvModifiers,
 ): void {
   const cfg = CONFIG.physics;
   const boostCfg = CONFIG.boost;
@@ -506,15 +513,19 @@ function stepGroundedCar(
     state.vLateral = nextLateral;
   }
 
-  state.vLateral += gCarRight * cfg.bankGravityFactor * dt;
+  const envGripMult = env?.gripMultiplier ?? 1;
+  const envLatAccel = env?.lateralAccel ?? 0;
 
+  state.vLateral += (gCarRight * cfg.bankGravityFactor + envLatAccel) * dt;
+
+  const targetGrip = cfg.grip * envGripMult;
   if (input.handbrake) {
-    state.currentGrip = cfg.handbrakeGrip;
-  } else if (state.currentGrip < cfg.grip) {
+    state.currentGrip = Math.min(cfg.handbrakeGrip, targetGrip);
+  } else if (state.currentGrip < targetGrip) {
     const recoverRate = (cfg.grip - cfg.handbrakeGrip) / Math.max(0.02, cfg.gripRecoverTime);
-    state.currentGrip = Math.min(cfg.grip, state.currentGrip + recoverRate * dt);
+    state.currentGrip = Math.min(targetGrip, state.currentGrip + recoverRate * dt);
   } else {
-    state.currentGrip = cfg.grip;
+    state.currentGrip = targetGrip;
   }
 
   state.vLateral *= Math.exp(-state.currentGrip * dt);
@@ -706,7 +717,7 @@ export function stepCar(
         : input;
 
   if (state.mode === 'grounded') {
-    stepGroundedCar(state, effectiveInput, route, dt, options.phase, events);
+    stepGroundedCar(state, effectiveInput, route, dt, options.phase, events, options.env);
   } else {
     state.slip = 0;
     const airEvents: AirPhysicsEvent[] = [];

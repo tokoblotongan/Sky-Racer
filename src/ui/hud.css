@@ -2159,3 +2159,77 @@
   color: var(--sr-text-muted);
 }
 
+/* F6 Circuit Minimap & Attractions Toggle */
+.sr-title-attr-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(var(--sr-cyan-rgb), 0.25);
+}
+
+.sr-gear-f6-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.sr-minimap-wrap {
+  position: absolute;
+  right: max(12px, env(safe-area-inset-right, 0px));
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  overflow: hidden;
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 24;
+  transition: transform 0.14s ease, border-color 0.14s ease;
+  touch-action: manipulation;
+}
+
+.sr-minimap-wrap:hover {
+  border-color: rgba(var(--sr-cyan-rgb), 0.7);
+}
+
+.sr-hud.hud--touch:not(.hud--portrait) .sr-minimap-wrap {
+  top: 42%;
+}
+
+.sr-hud.hud--compact.hud--portrait .sr-minimap-wrap {
+  right: auto;
+  left: max(8px, env(safe-area-inset-left, 0px));
+  top: clamp(114px, 31dvh, 224px);
+  transform: none;
+}
+
+.sr-minimap-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.sr-toast--hazard .sr-toast-text {
+  color: #f97316;
+}
+
+.sr-toast--ring .sr-toast-text {
+  color: var(--sr-accent-cyan);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sr-minimap-wrap {
+    transition: none !important;
+  }
+}
+

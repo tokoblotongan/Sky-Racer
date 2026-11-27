@@ -8,6 +8,7 @@ import type { Course, CourseBounds } from '../core/course';
 import { createSurfaceMaterial } from './materialFactory';
 import type { QualityLevel } from './quality';
 import { getTheme, type ThemeInstance } from './themes';
+import { logErrorOverlay } from '../ui/errorOverlay';
 import { probeCapabilitiesFromGl, type WebGlDiagnostics } from '../ui/reportOverlay';
 
 export class RendererInitError extends Error {
@@ -145,12 +146,14 @@ function createSkyDome(preset: VisualPreset): {
         vec3 color;
         if (h >= 0.0) {
           float t = smoothstep(0.0, 0.55, h);
-          color = mix(uSkyHorizon, uSkyTop, pow(t, 0.78));
+          color = mix(uSkyHorizon, uSkyTop, pow(max(t, 0.0001), 0.78));
         } else {
           float g = smoothstep(0.0, 0.28, -h);
           color = mix(uSkyHorizon, uGroundBounce * 0.85, g);
         }
         gl_FragColor = vec4(color, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
       }
     `,
     side: THREE.BackSide,
@@ -484,6 +487,22 @@ export function createSceneContext(
   }
 
   const renderer = createdRenderer;
+  renderer.debug.checkShaderErrors = true;
+  renderer.debug.onShaderError = (gl, program, glVertexShader, glFragmentShader) => {
+    const programLog = (gl.getProgramInfoLog(program) || '').trim();
+    const vertLog = (gl.getShaderInfoLog(glVertexShader) || '').trim();
+    const fragLog = (gl.getShaderInfoLog(glFragmentShader) || '').trim();
+    const details = [
+      vertLog ? `vertex: ${vertLog}` : '',
+      fragLog ? `fragment: ${fragLog}` : '',
+      programLog ? `program: ${programLog}` : '',
+    ]
+      .filter(Boolean)
+      .join(' | ');
+    const message = details ? `shader error: ${details}` : 'shader compile/link error';
+    logErrorOverlay(message, 'webgl-shader');
+    console.error('[SkyRacer] Shader compile/link error:', details || 'unknown');
+  };
 
   const initialDiag = probeCapabilitiesFromGl(renderer.getContext());
   const isSoftwareGl = /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(

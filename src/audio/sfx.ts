@@ -12,7 +12,9 @@ export type SoundEffectEvent =
   | { type: 'uiConfirm' }
   | { type: 'uiMove' }
   | { type: 'overtake' }
-  | { type: 'overtaken' };
+  | { type: 'overtaken' }
+  | { type: 'hazardHit' }
+  | { type: 'ringPass' };
 
 export interface SfxAudio {
   play: (event: SoundEffectEvent) => void;
@@ -568,6 +570,62 @@ export function createSfx(manager: AudioManager): SfxAudio {
     osc2.stop(t2 + half * 1.3 + 0.015);
   }
 
+  function playHazardHit(): void {
+    if (!canTrigger('hazardHit') || !ctx || !buses) return;
+    const cfg = sfxCfg.hazardHit;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(cfg.frequency, now);
+    osc.frequency.exponentialRampToValueAtTime(cfg.endFrequency, now + cfg.duration);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(cfg.gain, now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + cfg.duration);
+
+    osc.connect(gain);
+    gain.connect(buses.sfx);
+    registerPrimaryVoice(osc, [gain]);
+
+    osc.start(now);
+    osc.stop(now + cfg.duration + 0.015);
+  }
+
+  function playRingPass(): void {
+    if (!canTrigger('ringPass') || !ctx || !buses) return;
+    const cfg = sfxCfg.ringPass;
+    const now = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(cfg.frequency, now);
+    osc1.frequency.exponentialRampToValueAtTime(cfg.frequencyHigh, now + cfg.duration * 0.65);
+
+    osc2.type = 'triangle';
+    osc2.frequency.setValueAtTime(cfg.frequencyHigh, now);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(cfg.gain, now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + cfg.duration);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(buses.sfx);
+
+    registerPrimaryVoice(osc1, [gain]);
+    registerSecondaryNode(osc2, []);
+
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + cfg.duration + 0.015);
+    osc2.stop(now + cfg.duration + 0.015);
+  }
+
   function play(event: SoundEffectEvent): void {
     if (disposed || !ctx || ctx.state !== 'running') {
       return;
@@ -618,6 +676,12 @@ export function createSfx(manager: AudioManager): SfxAudio {
           break;
         case 'overtaken':
           playOvertake(false);
+          break;
+        case 'hazardHit':
+          playHazardHit();
+          break;
+        case 'ringPass':
+          playRingPass();
           break;
       }
     } catch {

@@ -681,6 +681,8 @@ export const CONFIG = {
     lapToastDurationMs: 1400,
     zoneToastDurationMs: 1400,
     overtakePopupDurationMs: 1100,
+    hazardToastDurationMs: 950,
+    ringToastDurationMs: 750,
     toastPriorities: {
       wrongWay: 5,
       lap: 4,
@@ -688,6 +690,8 @@ export const CONFIG = {
       airtime: 2,
       split: 1,
       overtake: 0,
+      hazard: -1,
+      ring: -1,
     },
     progressBarHeightPx: 3,
     speedoScale: 0.8,
@@ -1082,6 +1086,20 @@ export const CONFIG = {
         gain: 0.18, // volume halus efek tersalip
         cooldown: 0.45, // jeda minimum antar notifikasi tersalip detik
       },
+      hazardHit: {
+        frequency: 175, // bunyi pantul kenyal saat menyenggol rintangan mainan Hz
+        endFrequency: 95,
+        duration: 0.22,
+        gain: 0.36,
+        cooldown: 0.25,
+      },
+      ringPass: {
+        frequency: 783.99, // akor chime berkilau saat melewati Cincin Boost (G5) Hz
+        frequencyHigh: 1174.66, // harmonik atas chime cincin (D6) Hz
+        duration: 0.24,
+        gain: 0.34,
+        cooldown: 0.14,
+      },
     },
     skid: {
       slipThreshold: 0.14, // ambang slip radian sebelum decit ban berbunyi (naik = lebih jarang berdecit, turun = mudah berdecit)
@@ -1094,6 +1112,11 @@ export const CONFIG = {
       airBoost: 1.55, // pengali volume angin saat mobil melayang di udara (naik = efek melayang lebih dramatis)
       filterBase: 260, // cutoff lowpass angin saat pelan Hz
       filterMax: 1350, // cutoff lowpass angin saat ngebut Hz
+    },
+    attractionWind: {
+      gainMax: 0.3, // volume puncak hembusan Kipas Angin Raksasa saat dekat mobil
+      maxDistanceMeters: 115, // jarak maksimum suara kipas angin mulai terdengar
+      filterFreq: 520, // cutoff bandpass deru kipas angin raksasa Hz
     },
     railScrape: {
       gainMax: 0.24, // volume maksimum desis gesekan pagar (naik = gesekan lebih keras, turun = lebih lembut)
@@ -1335,6 +1358,8 @@ export const CONFIG = {
       boostMs: 28, // durasi getar saat menginjak boost pad dalam ms
       railMs: 20, // durasi getar saat membentur pagar dalam ms
       landMaxMs: 42, // durasi maksimum getar saat mendarat keras dalam ms
+      hazardMs: 32, // durasi getar saat tersenggol rintangan dalam ms
+      ringMs: 24, // durasi getar saat melewati cincin boost dalam ms
       minInterval: 80, // jeda minimum antar getaran haptik dalam ms agar tidak spam
     },
     orientationHint: true, // tampilkan overlay imbauan landscape saat perangkat sentuh berada dalam mode potret
@@ -1403,6 +1428,101 @@ export const CONFIG = {
       rainbowPulseSpeed: 1.35,
       crystalPulseSpeed: 1.85,
       flagWaveSpeed: 2.75,
+    },
+  },
+  minimap: {
+    sizes: {
+      small: 0.16,
+      large: 0.28,
+    },
+    updateHz: {
+      desktop: 15,
+      mobile: 10,
+    },
+    opacity: 0.5,
+    showAttractions: true,
+    storageKey: 'sky-racer-minimap-v1',
+    defaultSize: 'small' as 'off' | 'small' | 'large',
+    marginRatio: 0.1,
+    colors: {
+      bg: 'rgba(15, 23, 42, 0.5)',
+      border: 'rgba(148, 163, 184, 0.35)',
+      track: '#FF7A00',
+      trackOutline: 'rgba(15, 23, 42, 0.88)',
+      startCheckA: '#FFFDF7',
+      startCheckB: '#0F172A',
+      shortcut: '#00E5FF',
+      boost: '#38BDF8',
+      checkpoint: 'rgba(255, 253, 247, 0.52)',
+      arrow: '#FFFDF7',
+      playerRing: '#FFFFFF',
+      hazardIcon: '#FFD000',
+      ringIcon: '#00E5FF',
+    },
+  },
+  attractions: {
+    storageKey: 'sky-racer-attractions-v1',
+    defaultEnabled: true,
+    immunitySeconds: 1.5,
+    warningSeconds: 1.2,
+    safeLaneFraction: 0.4,
+    clearanceMeters: 40,
+    updateDistance: 460,
+    maxPerLap: {
+      pendulum: 2,
+      balls: 2,
+      wind: 1,
+      jelly: 1,
+      rings: 8,
+    },
+    difficultyScale: {
+      mudah: { periodScale: 1.35, windScale: 0.7, spinGripMult: 0.55 },
+      sedang: { periodScale: 1.12, windScale: 0.85, spinGripMult: 0.42 },
+      sulit: { periodScale: 1.0, windScale: 1.0, spinGripMult: 0.34 },
+    },
+    pendulum: {
+      periodSec: 3.4,
+      maxAngleRad: 0.72,
+      pivotHeight: 9.8,
+      armLength: 7.4,
+      bobRadius: 1.4,
+      poleRadius: 0.22,
+      speedMultiplier: 0.75,
+      spinOutSeconds: 0.6,
+      yawKickRad: 0.3,
+    },
+    balls: {
+      periodSec: 3.6,
+      ballRadius: 1.15,
+      countPerGroup: 2,
+      pairSeparationS: 7.5,
+      laneAmplitudeRatio: 0.28, // maksimal bentangan ayun menjaga > 40% jalur aman setiap saat
+      speedMultiplier: 0.8,
+      spinOutSeconds: 0.6,
+      yawKickRad: 0.26,
+    },
+    wind: {
+      maxAccel: 14.5, // batas maksimum percepatan lateral zona kipas angin m/s^2
+      edgeBlendMeters: 9,
+      streakCount: {
+        high: 36,
+        medium: 24,
+        mobile: 10,
+        low: 10,
+      },
+    },
+    jelly: {
+      gripMultiplier: 0.5,
+      tailSeconds: 0.4,
+      uvScrollSpeed: 0.45,
+    },
+    ring: {
+      radius: 2.35,
+      tubeRadius: 0.26,
+      triggerRadius: 2.95,
+      boostDuration: 1.15,
+      pulseSpeed: 3.2,
+      spinSpeed: 1.4,
     },
   },
 } as const;

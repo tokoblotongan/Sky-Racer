@@ -121,7 +121,7 @@ const ColorGradeShader = {
       rgb = max(rgb, vec3(0.0));
 
       // Gentle contrast pivot around linear mid-gray (0.18) with highlight roll-off to avoid clipping
-      vec3 contrasted = pow(max(rgb / 0.18, vec3(0.0)), vec3(uContrast)) * 0.18;
+      vec3 contrasted = pow(max(rgb / 0.18, vec3(0.00001)), vec3(uContrast)) * 0.18;
       float highProtect = smoothstep(0.42, 1.25, peak);
       rgb = mix(contrasted, rgb, highProtect * 0.78);
 

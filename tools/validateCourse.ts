@@ -133,6 +133,15 @@ function main(): void {
     ]);
   }
 
+  if (report.attractions && report.attractions.checked) {
+    const a = report.attractions;
+    rows.push([
+      'Atraksi FantasyLand',
+      a.ok ? 'OK' : 'FAIL',
+      `bandul=${a.pendulumCount}, bola=${a.ballGroupCount}, kipas=${a.windFanCount}, jeli=${a.jellyPuddleCount}, cincin=${a.mainBoostRingCount}+${a.shortcutBoostRingCount}, minJarak=${a.minForbiddenClearanceM !== null ? `${a.minForbiddenClearanceM.toFixed(1)}m` : 'n/a'}, jalurAman=${(a.minSafeLaneRatio * 100).toFixed(1)}%`,
+    ]);
+  }
+
   console.log('');
   console.log(
     `=== VALIDASI LINTASAN: ${courseDef.name} (${courseDef.id}) [${report.closed ? `TERTUTUP ${report.laps} LAP` : 'SATU ARAH'}] ===`,

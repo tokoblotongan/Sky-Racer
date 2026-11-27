@@ -2,7 +2,15 @@
 
 import { CONFIG } from '../config';
 
-export type ToastKind = 'wrongWay' | 'lap' | 'zone' | 'airtime' | 'split' | 'overtake';
+export type ToastKind =
+  | 'wrongWay'
+  | 'lap'
+  | 'zone'
+  | 'airtime'
+  | 'split'
+  | 'overtake'
+  | 'hazard'
+  | 'ring';
 export type ToastTone = 'neutral' | 'fast' | 'slow';
 
 export interface ToastPayload {
@@ -42,6 +50,8 @@ const KIND_CLASS: Record<ToastKind, string> = {
   airtime: 'sr-toast--airtime',
   split: 'sr-toast--split',
   overtake: 'sr-toast--overtake',
+  hazard: 'sr-toast--hazard',
+  ring: 'sr-toast--ring',
 };
 
 function isReducedMotion(): boolean {

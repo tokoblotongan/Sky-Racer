@@ -12,6 +12,12 @@ import {
 } from '../services/records';
 import { createToastQueue, type ToastQueue } from './toastQueue';
 import { getBuildId, isDebugUrlEnabled } from './errorOverlay';
+import {
+  createMinimap,
+  getMinimapModeLabel,
+  type MinimapController,
+  type MinimapSizeMode,
+} from './minimap';
 import type { QualityLevel } from '../render/quality';
 import './hud.css';
 
@@ -53,10 +59,12 @@ export interface LapPopupNotice {
 
 export interface TitleScreenData {
   courseName: string;
+  courseId?: string;
   medals: CourseMedals;
   records: CourseRecords;
   racers?: number;
   aiDifficulty?: AiDifficulty;
+  attractionsEnabled?: boolean;
 }
 
 export interface FinishScreenData {
@@ -75,6 +83,8 @@ export interface HudCallbacks {
   onUseSafeMode?: () => void;
   onSelectGraphicsPreset?: (preset: GraphicsPreset) => void;
   onSelectAiDifficulty?: (difficulty: AiDifficulty) => void;
+  onToggleAttractions?: () => void;
+  onCycleMinimap?: (mode: MinimapSizeMode) => void;
   onChangeBrightness?: (value: number) => void;
   onResetBrightness?: () => void;
   onMeasureLuminance?: () => number | null;
@@ -92,6 +102,9 @@ export interface GraphicsUiState {
   preset: GraphicsPreset;
   brightness: number;
   touchPrefs?: TouchControlPrefs;
+  minimapMode?: MinimapSizeMode;
+  attractionsEnabled?: boolean;
+  attractionsAvailable?: boolean;
   probeActive?: boolean;
   benchmarkRunning?: boolean;
   raceActive?: boolean;
@@ -178,6 +191,8 @@ export interface HudHandle {
   titleCourseSelectSlotEl: HTMLElement;
   titleDiffRowEl: HTMLElement;
   titleDiffBtns: Record<AiDifficulty, HTMLButtonElement>;
+  titleAttrRowEl: HTMLElement;
+  titleAttrBtnEl: HTMLButtonElement;
   titleTargetGoldEl: HTMLElement;
   titleTargetSilverEl: HTMLElement;
   titleTargetBronzeEl: HTMLElement;
@@ -207,6 +222,8 @@ export interface HudHandle {
   gearSteerBtnEl: HTMLButtonElement;
   gearAutoBtnEl: HTMLButtonElement;
   gearFsBtnEl: HTMLButtonElement;
+  gearMinimapBtnEl: HTMLButtonElement;
+  gearAttrBtnEl: HTMLButtonElement;
   gearPresetBtns: Record<GraphicsPreset, HTMLButtonElement>;
   gearBrightnessInputEl: HTMLInputElement;
   gearBrightnessValEl: HTMLElement;
@@ -217,6 +234,7 @@ export interface HudHandle {
   gearLumaTextEl: HTMLElement;
   gearAutoCloseTimerId: number | null;
   gearOpen: boolean;
+  minimap: MinimapController;
   benchOverlayEl: HTMLElement;
   benchBodyEl: HTMLElement;
   benchCloseBtnEl: HTMLButtonElement;
@@ -440,6 +458,7 @@ export function createHud(
         <span class="sr-hint-item"><span class="sr-key">R</span> Checkpoint</span>
         <span class="sr-hint-item"><span class="sr-key">Enter</span> Ulang</span>
         <span class="sr-hint-item"><span class="sr-key">M</span> Suara</span>
+        <span class="sr-hint-item"><span class="sr-key">N</span> Denah</span>
         <span class="sr-hint-item"><span class="sr-key">H</span> Panduan</span>
       </div>
       <button type="button" class="sr-hud-panel sr-hint-badge" aria-label="Tampilkan panduan tombol (H)" title="Panduan tombol (H)">?</button>
@@ -510,6 +529,13 @@ export function createHud(
           </div>
         </div>
         <div class="sr-gear-section">
+          <div class="sr-gear-label">Tampilan &amp; Arena</div>
+          <div class="sr-gear-f6-grid">
+            <button type="button" class="sr-gear-action-btn sr-gear-minimap-btn">DENAH: KECIL</button>
+            <button type="button" class="sr-gear-action-btn sr-gear-attr-btn sr-hud-hidden">ATRAKSI: NYALA</button>
+          </div>
+        </div>
+        <div class="sr-gear-section">
           <div class="sr-gear-label">Preset Grafis</div>
           <div class="sr-preset-seg sr-gear-preset-seg">
             <button type="button" class="sr-preset-btn" data-preset="hemat">Hemat</button>
@@ -549,6 +575,10 @@ export function createHud(
             <button type="button" class="sr-preset-btn sr-diff-btn" data-diff="sedang">Sedang</button>
             <button type="button" class="sr-preset-btn sr-diff-btn" data-diff="sulit">Sulit</button>
           </div>
+        </div>
+        <div class="sr-title-attr-row sr-hud-hidden">
+          <span class="sr-title-diff-label">Atraksi Arena</span>
+          <button type="button" class="sr-preset-btn sr-title-attr-btn">Atraksi: Nyala</button>
         </div>
         <div class="sr-title-targets">
           <div class="sr-target-chip sr-target-chip--gold">
@@ -731,6 +761,8 @@ export function createHud(
     sedang: root.querySelector('.sr-title-diff-seg [data-diff="sedang"]') as HTMLButtonElement,
     sulit: root.querySelector('.sr-title-diff-seg [data-diff="sulit"]') as HTMLButtonElement,
   };
+  const titleAttrRowEl = root.querySelector('.sr-title-attr-row') as HTMLElement;
+  const titleAttrBtnEl = root.querySelector('.sr-title-attr-btn') as HTMLButtonElement;
   const titleGfxBarEl = root.querySelector('.sr-title-gfx-bar') as HTMLElement;
   const titleGfxStatusEl = root.querySelector('.sr-title-gfx-status') as HTMLElement;
   const titlePresetBtns: Record<GraphicsPreset, HTMLButtonElement> = {
@@ -757,6 +789,15 @@ export function createHud(
   const gearSteerBtnEl = root.querySelector('.sr-gear-steer-btn') as HTMLButtonElement;
   const gearAutoBtnEl = root.querySelector('.sr-gear-auto-btn') as HTMLButtonElement;
   const gearFsBtnEl = root.querySelector('.sr-gear-fs-btn') as HTMLButtonElement;
+  const gearMinimapBtnEl = root.querySelector('.sr-gear-minimap-btn') as HTMLButtonElement;
+  const gearAttrBtnEl = root.querySelector('.sr-gear-attr-btn') as HTMLButtonElement;
+
+  const minimap = createMinimap((mode) => {
+    gearMinimapBtnEl.textContent = `DENAH: ${getMinimapModeLabel(mode)}`;
+    callbacks.onCycleMinimap?.(mode);
+  });
+  root.appendChild(minimap.element);
+  gearMinimapBtnEl.textContent = `DENAH: ${getMinimapModeLabel(minimap.getSizeMode())}`;
   const gearPresetBtns: Record<GraphicsPreset, HTMLButtonElement> = {
     hemat: root.querySelector('.sr-gear-preset-seg [data-preset="hemat"]') as HTMLButtonElement,
     seimbang: root.querySelector('.sr-gear-preset-seg [data-preset="seimbang"]') as HTMLButtonElement,
@@ -971,7 +1012,23 @@ export function createHud(
     setGearOpen(false);
     callbacks.onGearToggleFullscreen?.();
   };
+  const onGearMinimap = (e: MouseEvent): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+    const next = minimap.cycleSizeMode();
+    gearMinimapBtnEl.textContent = `DENAH: ${getMinimapModeLabel(next)}`;
+    callbacks.onCycleMinimap?.(next);
+  };
+  const onAttrToggle = (e: MouseEvent): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+    titleAttrBtnEl.blur();
+    gearAttrBtnEl.blur();
+    callbacks.onToggleAttractions?.();
+  };
 
+  titleAttrBtnEl.addEventListener('pointerdown', stopProp);
+  titleAttrBtnEl.addEventListener('click', onAttrToggle);
   gearWrapEl.addEventListener('pointerdown', handleGearWrapPointerDown);
   gearBtnEl.addEventListener('click', handleGearBtnClick);
   gearPopoverEl.addEventListener('pointerdown', handleGearPopoverInteract);
@@ -983,6 +1040,8 @@ export function createHud(
   gearSteerBtnEl.addEventListener('click', onGearSteer);
   gearAutoBtnEl.addEventListener('click', onGearAuto);
   gearFsBtnEl.addEventListener('click', onGearFs);
+  gearMinimapBtnEl.addEventListener('click', onGearMinimap);
+  gearAttrBtnEl.addEventListener('click', onAttrToggle);
 
   let versionTapTimestamps: number[] = [];
   const handleVersionPointerDown = (e: PointerEvent): void => {
@@ -1171,6 +1230,8 @@ export function createHud(
     titleCourseSelectSlotEl: root.querySelector('.sr-arena-select') as HTMLElement,
     titleDiffRowEl,
     titleDiffBtns,
+    titleAttrRowEl,
+    titleAttrBtnEl,
     titleTargetGoldEl: root.querySelector('.sr-target-gold') as HTMLElement,
     titleTargetSilverEl: root.querySelector('.sr-target-silver') as HTMLElement,
     titleTargetBronzeEl: root.querySelector('.sr-target-bronze') as HTMLElement,
@@ -1200,6 +1261,8 @@ export function createHud(
     gearSteerBtnEl,
     gearAutoBtnEl,
     gearFsBtnEl,
+    gearMinimapBtnEl,
+    gearAttrBtnEl,
     gearPresetBtns,
     gearBrightnessInputEl,
     gearBrightnessValEl,
@@ -1210,6 +1273,7 @@ export function createHud(
     gearLumaTextEl,
     gearAutoCloseTimerId: null,
     gearOpen: false,
+    minimap,
     benchOverlayEl,
     benchBodyEl,
     benchCloseBtnEl,
@@ -1409,6 +1473,10 @@ export function createHud(
     gearSteerBtnEl.removeEventListener('click', onGearSteer);
     gearAutoBtnEl.removeEventListener('click', onGearAuto);
     gearFsBtnEl.removeEventListener('click', onGearFs);
+    gearMinimapBtnEl.removeEventListener('click', onGearMinimap);
+    gearAttrBtnEl.removeEventListener('click', onAttrToggle);
+    titleAttrBtnEl.removeEventListener('pointerdown', stopProp);
+    titleAttrBtnEl.removeEventListener('click', onAttrToggle);
   };
 
   return handle;
@@ -1469,6 +1537,14 @@ export function updateTitleScreen(hud: HudHandle, data: TitleScreenData): void {
     for (const dk of diffKeys) {
       hud.titleDiffBtns[dk].classList.toggle('sr-preset-btn--active', dk === activeDiff);
     }
+  }
+
+  const showAttrRow = data.courseId === 'fantasy-land';
+  hud.titleAttrRowEl.classList.toggle('sr-hud-hidden', !showAttrRow);
+  if (showAttrRow) {
+    const enabled = data.attractionsEnabled ?? true;
+    hud.titleAttrBtnEl.textContent = enabled ? 'Atraksi: Nyala' : 'Atraksi: Mati';
+    hud.titleAttrBtnEl.classList.toggle('sr-preset-btn--active', enabled);
   }
 
   renderTopRecordsList(hud.titleTopListEl, data.records, null);
@@ -1667,6 +1743,24 @@ export function showOvertakeToast(
     tone: kind === 'overtake' ? 'fast' : 'slow',
     priority: CONFIG.hud.toastPriorities.overtake,
     durationMs: CONFIG.hud.overtakePopupDurationMs,
+  });
+}
+
+export function showHazardToast(hud: HudHandle, text = 'TERSENGGOL'): void {
+  hud.toastQueue.push({
+    kind: 'hazard',
+    text,
+    priority: CONFIG.hud.toastPriorities.hazard,
+    durationMs: CONFIG.hud.hazardToastDurationMs,
+  });
+}
+
+export function showRingBoostToast(hud: HudHandle, text = '+BOOST'): void {
+  hud.toastQueue.push({
+    kind: 'ring',
+    text,
+    priority: CONFIG.hud.toastPriorities.ring,
+    durationMs: CONFIG.hud.ringToastDurationMs,
   });
 }
 
@@ -1975,6 +2069,20 @@ export function setGraphicsUiState(hud: HudHandle, state: GraphicsUiState): void
     hud.gearFsBtnEl.classList.toggle('sr-hud-hidden', !p.fullscreenSupported);
     hud.gearFsBtnEl.classList.toggle('sr-gear-action-btn--on', p.fullscreen);
   }
+
+  const mmMode = state.minimapMode ?? hud.minimap.getSizeMode();
+  hud.gearMinimapBtnEl.textContent = `DENAH: ${getMinimapModeLabel(mmMode)}`;
+  hud.gearMinimapBtnEl.classList.toggle('sr-gear-action-btn--on', mmMode !== 'off');
+
+  const showAttr = Boolean(state.attractionsAvailable);
+  hud.gearAttrBtnEl.classList.toggle('sr-hud-hidden', !showAttr);
+  if (showAttr) {
+    const attrOn = state.attractionsEnabled ?? true;
+    hud.gearAttrBtnEl.textContent = attrOn ? 'ATRAKSI: NYALA' : 'ATRAKSI: MATI';
+    hud.gearAttrBtnEl.classList.toggle('sr-gear-action-btn--on', attrOn);
+    hud.titleAttrBtnEl.textContent = attrOn ? 'Atraksi: Nyala' : 'Atraksi: Mati';
+    hud.titleAttrBtnEl.classList.toggle('sr-preset-btn--active', attrOn);
+  }
 }
 
 export function showBenchmarkResults(hud: HudHandle, report: PresetBenchmarkReport): void {
@@ -2095,6 +2203,7 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     hud.topBarEl.classList.toggle('sr-hud-hidden', isTitle || showResults);
     hud.progressWrapEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
     hud.bottomRightEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
+    hud.minimap.setVisible(!isTitle && !isFinish);
     if (isTitle || isFinish) {
       hud.standingsPanelEl.classList.add('sr-hud-hidden');
     }
@@ -2336,6 +2445,7 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
 
 export function disposeHud(hud: HudHandle): void {
   hud.toastQueue.dispose();
+  hud.minimap.dispose();
   hideCountdownOverlay(hud);
   hideFinishScreen(hud);
   hud.disposeEvents();

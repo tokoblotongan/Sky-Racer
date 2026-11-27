@@ -36,7 +36,7 @@ export interface TouchControls {
   consumePresses: () => TouchPresses;
   setPhase: (phase: RacePhase) => void;
   setVisible: (visible: boolean) => void;
-  onHaptic: (event: PhysicsEvent) => void;
+  onHaptic: (event: PhysicsEvent | { type: 'hazardHit' | 'ringPass' }) => void;
   isEnabled: () => boolean;
   isPortraitBlocked: () => boolean;
   setMutedVisual: (muted: boolean) => void;
@@ -758,7 +758,7 @@ export function createTouchControls(
     syncUiState();
   }
 
-  function onHaptic(event: PhysicsEvent): void {
+  function onHaptic(event: PhysicsEvent | { type: 'hazardHit' | 'ringPass' }): void {
     if (event.type === 'boost') {
       triggerVibrate(config.haptics.boostMs);
     } else if (event.type === 'railHit') {
@@ -766,6 +766,10 @@ export function createTouchControls(
     } else if (event.type === 'landed') {
       const ratio = clamp(event.impactSpeed / 22, 0.25, 1);
       triggerVibrate(ratio * config.haptics.landMaxMs);
+    } else if (event.type === 'hazardHit') {
+      triggerVibrate(config.haptics.hazardMs);
+    } else if (event.type === 'ringPass') {
+      triggerVibrate(config.haptics.ringMs);
     }
   }
 

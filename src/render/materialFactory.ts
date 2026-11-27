@@ -153,7 +153,8 @@ export function injectDistantTrackLift(mat: THREE.Material, preset: GraphicsPres
   const liftAmount = CONFIG.safeMode.distantTrackLift;
   const distStart = CONFIG.safeMode.distantTrackStartM;
   const distEnd = CONFIG.safeMode.distantTrackEndM;
-  mat.customProgramCacheKey = () => `distant-track-lift-${liftAmount}-${distStart}-${distEnd}`;
+  mat.customProgramCacheKey = () =>
+    `distant-track-lift-${preset}-${liftAmount}-${distStart}-${distEnd}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTrackLiftAmount = { value: liftAmount };
     shader.uniforms.uTrackLiftStart = { value: distStart };

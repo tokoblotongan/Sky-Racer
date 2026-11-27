@@ -10,11 +10,13 @@ import { createCarState, stepCar } from './physics';
 import type { BranchRoute } from './routes';
 import { updateRouteTransitions } from './routeTransitions';
 import { createRaceState, getRespawnTarget, updateRace } from './state';
+import { createAttractionSystem } from './attractions';
 import {
   buildFantasyLandDecorPlan,
   estimateFantasyDecorBudgets,
   type DecorTierEstimate,
 } from '../courses/fantasyLandDecor';
+import { distanceSInterval } from '../courses/fantasyLandAttractions';
 
 export interface LoopValidationResult {
   segmentIndex: number;
@@ -99,6 +101,19 @@ export interface DecorValidationResult {
   ok: boolean;
 }
 
+export interface AttractionsValidationResult {
+  checked: boolean;
+  pendulumCount: number;
+  ballGroupCount: number;
+  windFanCount: number;
+  jellyPuddleCount: number;
+  mainBoostRingCount: number;
+  shortcutBoostRingCount: number;
+  minForbiddenClearanceM: number | null;
+  minSafeLaneRatio: number;
+  ok: boolean;
+}
+
 export interface CourseValidationReport {
   ok: boolean;
   closed: boolean;
@@ -119,6 +134,7 @@ export interface CourseValidationReport {
   zones: ZoneValidationResult[];
   branches: BranchValidationResult[];
   decor: DecorValidationResult | null;
+  attractions: AttractionsValidationResult | null;
   railHits: number;
   stuckEvents: number;
   falls: number;
@@ -1343,6 +1359,112 @@ export function validateCourse(
     };
   }
 
+  // (j) FantasyLand attractions validation (counts, >=40m clearance, >=40% safe lane)
+  let attractionsReport: AttractionsValidationResult | null = null;
+  if (course.getId() === 'fantasy-land') {
+    const attrSys = createAttractionSystem(course, true, 'sedang');
+    const plan = attrSys.plan;
+    const attrErrorsBefore = errors.length;
+    const limits = CONFIG.attractions.maxPerLap;
+    const reqClear = CONFIG.attractions.clearanceMeters;
+    const reqSafeRatio = CONFIG.attractions.safeLaneFraction;
+
+    if (plan.pendulums.length > limits.pendulum) {
+      errors.push(`Jumlah bandul melebihi batas (${plan.pendulums.length} > ${limits.pendulum}).`);
+    }
+    if (plan.ballGroups.length > limits.balls) {
+      errors.push(`Jumlah kelompok bola melebihi batas (${plan.ballGroups.length} > ${limits.balls}).`);
+    }
+    if (plan.windFans.length > limits.wind) {
+      errors.push(`Jumlah kipas angin melebihi batas (${plan.windFans.length} > ${limits.wind}).`);
+    }
+    if (plan.jellyPuddles.length > limits.jelly) {
+      errors.push(`Jumlah area jeli melebihi batas (${plan.jellyPuddles.length} > ${limits.jelly}).`);
+    }
+    const mainRings = plan.boostRings.filter((r) => r.routeId === 'main');
+    const shortcutRings = plan.boostRings.filter((r) => r.routeId !== 'main');
+    if (mainRings.length > limits.rings) {
+      errors.push(`Jumlah cincin boost jalur utama melebihi batas (${mainRings.length} > ${limits.rings}).`);
+    }
+
+    let minForbiddenClear = Infinity;
+    const checkHazardInterval = (label: string, s0: number, s1: number): void => {
+      for (const fz of plan.forbiddenZones) {
+        const dist = distanceSInterval(s0, s1, fz.startS, fz.endS, lengthM, isClosed);
+        if (dist < minForbiddenClear) {
+          minForbiddenClear = dist;
+        }
+        if (dist < reqClear - 1e-4) {
+          errors.push(
+            `Rintangan '${label}' terlalu dekat zona khusus '${fz.label}' (${dist.toFixed(1)} m < ${reqClear} m).`,
+          );
+        }
+      }
+    };
+
+    for (const p of plan.pendulums) {
+      checkHazardInterval(p.id, p.s, p.s);
+    }
+    for (const g of plan.ballGroups) {
+      const s0 = Math.min(...g.balls.map((b) => b.s));
+      const s1 = Math.max(...g.balls.map((b) => b.s));
+      checkHazardInterval(g.id, s0, s1);
+    }
+    for (const w of plan.windFans) {
+      checkHazardInterval(w.id, w.sStart, w.sEnd);
+    }
+    for (const j of plan.jellyPuddles) {
+      checkHazardInterval(j.id, j.sStart, j.sEnd);
+    }
+
+    let minSafeLaneRatio = 1;
+    const warnTime = CONFIG.attractions.warningSeconds;
+    for (let stepIdx = 0; stepIdx <= 120; stepIdx++) {
+      const simT = warnTime + 0.05 + stepIdx * 0.12;
+      attrSys.evaluateAtTime(simT);
+      for (const p of attrSys.getPendulums()) {
+        const ratio = Math.max(p.safeLaneLeftWidth, p.safeLaneRightWidth) / Math.max(1, p.spec.trackWidth);
+        if (ratio < minSafeLaneRatio) {
+          minSafeLaneRatio = ratio;
+        }
+      }
+      for (const g of attrSys.getBallGroups()) {
+        if (g.minSafeLaneFraction < minSafeLaneRatio) {
+          minSafeLaneRatio = g.minSafeLaneFraction;
+        }
+      }
+    }
+    for (const jp of plan.jellyPuddles) {
+      const halfW = jp.trackWidth * 0.5;
+      const leftClear = Math.max(0, halfW + (jp.lateralCenter - jp.halfWidth));
+      const rightClear = Math.max(0, halfW - (jp.lateralCenter + jp.halfWidth));
+      const ratio = Math.max(leftClear, rightClear) / Math.max(1, jp.trackWidth);
+      if (ratio < minSafeLaneRatio) {
+        minSafeLaneRatio = ratio;
+      }
+    }
+    if (minSafeLaneRatio < reqSafeRatio - 1e-4) {
+      errors.push(
+        `Jalur aman rintangan FantasyLand kurang dari ${(reqSafeRatio * 100).toFixed(0)}% lebar lintasan (${(minSafeLaneRatio * 100).toFixed(1)}%).`,
+      );
+    }
+
+    attractionsReport = {
+      checked: true,
+      pendulumCount: plan.pendulums.length,
+      ballGroupCount: plan.ballGroups.length,
+      windFanCount: plan.windFans.length,
+      jellyPuddleCount: plan.jellyPuddles.length,
+      mainBoostRingCount: mainRings.length,
+      shortcutBoostRingCount: shortcutRings.length,
+      minForbiddenClearanceM: Number.isFinite(minForbiddenClear)
+        ? Number(minForbiddenClear.toFixed(2))
+        : null,
+      minSafeLaneRatio: Number(minSafeLaneRatio.toFixed(3)),
+      ok: errors.length === attrErrorsBefore,
+    };
+  }
+
   return {
     ok: errors.length === 0,
     closed: isClosed,
@@ -1390,6 +1512,7 @@ export function validateCourse(
     zones,
     branches: branchResults,
     decor: decorReport,
+    attractions: attractionsReport,
     railHits,
     stuckEvents,
     falls,

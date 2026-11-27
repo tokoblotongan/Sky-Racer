@@ -146,12 +146,13 @@ function buildRouteProfile(route: Route, course: Course): RouteProfile {
       }
     } else if (seg.config.type === 'gap') {
       const gapLen = Math.max(4, seg.config.length);
-      const jumpMin = Math.max(26, Math.sqrt(gapLen * gravity * 0.65));
+      const longJumpFloor = gapLen >= 25 ? 37.5 : 26;
+      const jumpMin = Math.max(longJumpFloor, Math.sqrt(gapLen * gravity * 0.65));
       const safeJumpSpeed = Math.min(
         topPhysicsSpeed,
         jumpMin * CONFIG.ai.racingLine.jumpSafeSpeedMargin,
       );
-      const startI = Math.max(0, Math.floor((seg.startS - 55) / stepLength));
+      const startI = Math.max(0, Math.floor((seg.startS - (gapLen >= 25 ? 70 : 55)) / stepLength));
       const endI = Math.min(sampleCount - 1, Math.ceil((seg.endS + 8) / stepLength));
       for (let i = startI; i <= endI; i++) {
         if (safeJumpSpeed > minSafeSpeed[i]) {
@@ -170,8 +171,8 @@ function buildRouteProfile(route: Route, course: Course): RouteProfile {
     const gap = gapRanges[g];
     const gapDist = Math.max(4, gap.endS - gap.startS);
     const ballisticFloor = Math.sqrt(Math.max(1, gapDist * gravity * 0.65)) * 1.12;
-    const safeGapFloor = Math.min(topPhysicsSpeed, Math.max(28, ballisticFloor));
-    const startI = Math.max(0, Math.floor((gap.startS - 45) / stepLength));
+    const safeGapFloor = Math.min(topPhysicsSpeed, Math.max(gapDist >= 25 ? 37.5 : 28, ballisticFloor));
+    const startI = Math.max(0, Math.floor((gap.startS - (gapDist >= 25 ? 65 : 45)) / stepLength));
     const endI = Math.min(sampleCount - 1, Math.ceil((gap.endS + 5) / stepLength));
     for (let i = startI; i <= endI; i++) {
       if (safeGapFloor > minSafeSpeed[i]) {

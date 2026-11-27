@@ -19,6 +19,7 @@ export interface SampledCarInput extends CarInput {
   restartPressed: boolean;
   menuPressed: boolean;
   mutePressed: boolean;
+  minimapPressed: boolean;
   navPressed: -1 | 0 | 1;
 }
 
@@ -46,6 +47,7 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
   let confirmQueued = false;
   let menuQueued = false;
   let muteQueued = false;
+  let minimapQueued = false;
   let navQueued: -1 | 0 | 1 = 0;
 
   let kbThrottle = 0;
@@ -65,6 +67,10 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
 
       if (event.code === 'KeyM') {
         muteQueued = true;
+      }
+
+      if (event.code === 'KeyN') {
+        minimapQueued = true;
       }
 
       if (event.code === 'Enter' || event.code === 'NumpadEnter') {
@@ -142,6 +148,9 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
     const kbMute = muteQueued;
     muteQueued = false;
 
+    const kbMinimap = minimapQueued;
+    minimapQueued = false;
+
     const kbNav = navQueued;
     navQueued = 0;
 
@@ -172,6 +181,7 @@ export function createKeyboardControls(touchControls?: TouchControls | null): Ke
       confirmPressed: kbConfirm || Boolean(touchPresses?.confirm),
       menuPressed: kbMenu,
       mutePressed: kbMute || Boolean(touchPresses?.mute),
+      minimapPressed: kbMinimap,
       navPressed: kbNav,
     };
   }

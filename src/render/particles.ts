@@ -97,6 +97,7 @@ function createPool(
     uniforms: {
       uMap: { value: texture },
       uPixelRatio: { value: pixelRatio },
+      uOpacity: { value: 1.0 },
     },
     vertexShader: /* glsl */ `
       attribute float aSize;
@@ -116,14 +117,17 @@ function createPool(
     `,
     fragmentShader: /* glsl */ `
       uniform sampler2D uMap;
+      uniform float uOpacity;
       varying vec3 vColor;
       varying float vAlpha;
       void main() {
         if (vAlpha <= 0.002) discard;
         vec4 texel = texture2D(uMap, gl_PointCoord);
-        float alpha = texel.a * vAlpha;
+        float alpha = texel.a * vAlpha * uOpacity;
         if (alpha <= 0.002) discard;
         gl_FragColor = vec4(vColor * texel.rgb, alpha);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
       }
     `,
     transparent: true,

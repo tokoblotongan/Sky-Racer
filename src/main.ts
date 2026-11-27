@@ -10,6 +10,11 @@ import {
   type VisualPresetName,
 } from './config';
 import { buildCourseConfigFromDefinition, Course, type TrackFrame } from './core/course';
+import { createAttractionSystem, type AttractionSystem } from './core/attractions';
+import {
+  createHazardEffectsTracker,
+  type AttractionEvent,
+} from './core/hazardEffects';
 import { createWrongWayDetector } from './core/wrongWay';
 import { getCourse, getLastCourseId, listCourses, setLastCourseId } from './courses';
 import {
@@ -47,6 +52,10 @@ import {
 } from './core/state';
 import { createKeyboardControls, type CarInput } from './input/controls';
 import { createTouchControls, requestLandscapeOrientation } from './input/touch';
+import {
+  createAttractionManager,
+  type AttractionManager,
+} from './render/attractions/attractionManager';
 import { buildBridgeMesh, type BridgeVisual } from './render/bridge';
 import { createCarFleet, type CarFleetVisual } from './render/carFleet';
 import type { CarDesignId } from './render/carDesigns';
@@ -93,9 +102,11 @@ import {
   showContextLostOverlay,
   showCountdownOverlay,
   showFinishScreen,
+  showHazardToast,
   showLapPopup,
   showLoadingOverlay,
   showOvertakeToast,
+  showRingBoostToast,
   showSafeModeNotice,
   showShortcutToast,
   showSplitPopup,
@@ -399,6 +410,25 @@ export async function bootstrap(): Promise<void> {
     ? storedDiff
     : CONFIG.ai.defaultDifficulty;
 
+  const storedAttr = safeStorageGet(CONFIG.attractions.storageKey);
+  let attractionsEnabled =
+    storedAttr === 'off'
+      ? false
+      : storedAttr === 'on'
+        ? true
+        : CONFIG.attractions.defaultEnabled;
+
+  let attractionSystem: AttractionSystem = createAttractionSystem(
+    course,
+    attractionsEnabled,
+    aiDifficulty,
+  );
+  const hazardEffects = createHazardEffectsTracker(course.getRacers());
+  const attractionEvents: AttractionEvent[] = [];
+  const ffAttractionEvents: AttractionEvent[] = [];
+  const envScratch = { gripMultiplier: 1, lateralAccel: 0 };
+  const ffEnvScratch = { gripMultiplier: 1, lateralAccel: 0 };
+
   let lastFinishData: FinishResultData | null = null;
   let lastFinishRecords: CourseRecords | null = null;
 
@@ -407,6 +437,8 @@ export async function bootstrap(): Promise<void> {
   let onClearRecordsFromUi: () => void = () => {};
   let onSelectPresetFromUi: (preset: GraphicsPreset) => void = () => {};
   let onSelectAiDifficultyFromUi: (diff: AiDifficulty) => void = () => {};
+  let onToggleAttractionsFromUi: () => void = () => {};
+  let onCycleMinimapFromUi: () => void = () => {};
   let onChangeBrightnessFromUi: (value: number) => void = () => {};
   let onResetBrightnessFromUi: () => void = () => {};
   let onMeasureLumaFromUi: () => number | null = () => null;
@@ -455,6 +487,12 @@ export async function bootstrap(): Promise<void> {
     onSelectAiDifficulty: (diff) => {
       onSelectAiDifficultyFromUi(diff);
     },
+    onToggleAttractions: () => {
+      onToggleAttractionsFromUi();
+    },
+    onCycleMinimap: () => {
+      onCycleMinimapFromUi();
+    },
     onChangeBrightness: (value) => {
       onChangeBrightnessFromUi(value);
     },
@@ -487,6 +525,8 @@ export async function bootstrap(): Promise<void> {
       onOpenReportFromUi();
     },
   });
+  hud.minimap.setCourse(course, attractionSystem);
+  hud.minimap.setAttractionsVisible(attractionsEnabled);
 
   function handleAudioButtonClick(): void {
     sound.unlock();
@@ -559,6 +599,7 @@ export async function bootstrap(): Promise<void> {
 
   let particles: ReturnType<typeof createParticles>;
   let postfx: ReturnType<typeof createPostFx>;
+  let attractionManager: AttractionManager;
 
   const createActiveQualityManager = (isSafe: boolean): ReturnType<typeof createQualityManager> =>
     createQualityManager(
@@ -568,6 +609,7 @@ export async function bootstrap(): Promise<void> {
         sceneCtx.setQuality(effectiveLevel, raceState.phase === 'TITLE');
         particles?.setQuality(effectiveLevel);
         postfx?.setQuality(effectiveLevel);
+        attractionManager?.setQuality(graphicsPreset, effectiveLevel);
       },
     );
 
@@ -602,6 +644,14 @@ export async function bootstrap(): Promise<void> {
     graphicsPreset,
   );
   sceneCtx.scene.add(trackAccentsVisual.group);
+
+  attractionManager = createAttractionManager(
+    sceneCtx.scene,
+    course,
+    attractionSystem,
+    graphicsPreset,
+    initialQuality,
+  );
 
   particles = createParticles(sceneCtx.scene, initialQuality);
   postfx = createPostFx(
@@ -736,9 +786,27 @@ export async function bootstrap(): Promise<void> {
     aiDifficulty = diff;
     safeStorageSet(CONFIG.ai.difficultyStorageKey, diff);
     aiController.setDifficulty(diff);
+    attractionSystem.setDifficulty(diff);
     sound.unlock();
     sound.handleEvents([{ type: 'uiMove' }]);
     syncTitleUi();
+  };
+
+  onToggleAttractionsFromUi = (): void => {
+    attractionsEnabled = !attractionsEnabled;
+    safeStorageSet(CONFIG.attractions.storageKey, attractionsEnabled ? 'on' : 'off');
+    attractionSystem.setEnabled(attractionsEnabled);
+    attractionManager.setEnabled(attractionsEnabled);
+    hud.minimap.setAttractionsVisible(attractionsEnabled);
+    sound.unlock();
+    sound.handleEvents([{ type: 'uiConfirm' }]);
+    syncTitleUi();
+  };
+
+  onCycleMinimapFromUi = (): void => {
+    sound.unlock();
+    sound.handleEvents([{ type: 'uiMove' }]);
+    syncGraphicsUi();
   };
 
   function syncCarStateArrays(): void {
@@ -916,6 +984,9 @@ export async function bootstrap(): Promise<void> {
       preset: graphicsPreset,
       brightness: userBrightness,
       touchPrefs: touchControls.getPrefs(),
+      minimapMode: hud.minimap.getSizeMode(),
+      attractionsEnabled,
+      attractionsAvailable: course.getId() === 'fantasy-land',
       probeActive: initialProbeActive,
       benchmarkRunning,
       raceActive: raceState.phase !== 'TITLE',
@@ -994,10 +1065,12 @@ export async function bootstrap(): Promise<void> {
     const previewDef = getCourse(selectedCourseId);
     updateTitleScreen(hud, {
       courseName: previewDef.displayName,
+      courseId: previewDef.id,
       medals: previewDef.medals,
       records: getRecords(previewDef.id, previewDef.medals),
       racers: previewDef.racers,
       aiDifficulty,
+      attractionsEnabled,
     });
     courseSelect?.setSelected(previewDef.id);
     courseSelect?.refreshRecords();
@@ -1112,6 +1185,7 @@ export async function bootstrap(): Promise<void> {
   }
 
   function disposeCurrentCourseVisuals(): void {
+    attractionManager.dispose();
     sceneCtx.scene.remove(trackVisual.group);
     trackVisual.dispose();
     sceneCtx.scene.remove(bridgeVisual.group);
@@ -1139,6 +1213,8 @@ export async function bootstrap(): Promise<void> {
     raceState = createRaceState(course);
     aiRaceSeed = (aiRaceSeed + 1013) >>> 0;
     aiController.reset(course, aiDifficulty, aiRaceSeed);
+    attractionSystem = createAttractionSystem(course, attractionsEnabled, aiDifficulty);
+    hazardEffects.reset(course.getRacers());
     standingsTracker.reset();
     latestStandings = [];
     latestPlayerRank = 1;
@@ -1209,6 +1285,16 @@ export async function bootstrap(): Promise<void> {
     shortcutGateVisual = buildShortcutGates(course, sceneCtx.maxAnisotropy, graphicsPreset);
     shortcutGateVisual.applyPalette(activePreset);
     sceneCtx.scene.add(shortcutGateVisual.group);
+
+    attractionManager = createAttractionManager(
+      sceneCtx.scene,
+      course,
+      attractionSystem,
+      graphicsPreset,
+      safeMode ? 'mobile' : qualityManager.getLevel(),
+    );
+    hud.minimap.setCourse(course, attractionSystem);
+    hud.minimap.setAttractionsVisible(attractionsEnabled);
 
     orbitRadius = Math.max(
       CONFIG.camera.orbitMinRadius,
@@ -1518,6 +1604,14 @@ export async function bootstrap(): Promise<void> {
     shortcutGateVisual = buildShortcutGates(course, sceneCtx.maxAnisotropy, graphicsPreset);
     shortcutGateVisual.applyPalette(activePreset);
     sceneCtx.scene.add(shortcutGateVisual.group);
+
+    attractionManager = createAttractionManager(
+      sceneCtx.scene,
+      course,
+      attractionSystem,
+      graphicsPreset,
+      activeQuality,
+    );
 
     carFleet = createCarFleet({
       course,
@@ -1882,21 +1976,40 @@ export async function bootstrap(): Promise<void> {
       if (!hasUnfinishedAi() || fastForwardSimElapsed >= maxSimSec) {
         break;
       }
+      const ffTimeSec = raceState.timer + fastForwardSimElapsed;
+      attractionSystem.evaluateAtTime(ffTimeSec);
+      hazardEffects.stepPrePhysics(raceState.cars, attractionSystem, step);
       aiController.stepPrePhysics(raceState.cars, course, 'RACING', step);
       for (let i = 1; i < raceState.cars.length; i++) {
         const rp = raceState.racerProgress[i];
         const car = raceState.cars[i];
         if (!car || (rp && rp.finished)) continue;
-        const aiIn = aiController.sampleInput(i, raceState.cars, course, 'RACING', step);
+        const aiIn = aiController.sampleInput(
+          i,
+          raceState.cars,
+          course,
+          'RACING',
+          step,
+          attractionSystem,
+          ffTimeSec,
+        );
         const carRoute = course.getRoute(car.routeId);
         stepCar(car, aiIn, carRoute, step, {
           phase: 'RACING',
           respawnTarget: { s: car.lastSafeS, lateral: 0 },
           respawnRoute: mainRoute,
+          env: hazardEffects.getEnvModifiers(i, ffEnvScratch),
         });
         updateRouteTransitions(car, course);
       }
       resolveCarCollisions(raceState.cars, course, step, 'RACING');
+      hazardEffects.stepPostPhysics(
+        raceState.cars,
+        course,
+        attractionSystem,
+        step,
+        ffAttractionEvents,
+      );
       fastForwardSimElapsed += step;
       updateOpponentProgress(raceState, course, raceState.timer + fastForwardSimElapsed);
     }
@@ -2008,6 +2121,8 @@ export async function bootstrap(): Promise<void> {
       syncCarStateArrays();
       aiRaceSeed = (aiRaceSeed + 1013) >>> 0;
       aiController.reset(course, aiDifficulty, aiRaceSeed);
+      attractionSystem.reset();
+      hazardEffects.reset(course.getRacers());
       standingsTracker.reset();
       carFleet.snapFromCars(raceState.cars, course, renderPose);
       const events = startCountdown(raceState, nowMs, course);
@@ -2038,6 +2153,8 @@ export async function bootstrap(): Promise<void> {
     syncCarStateArrays();
     aiRaceSeed = (aiRaceSeed + 1013) >>> 0;
     aiController.reset(course, aiDifficulty, aiRaceSeed);
+    attractionSystem.reset();
+    hazardEffects.reset(course.getRacers());
     standingsTracker.reset();
     gates.reset();
     particles.reset();
@@ -2084,6 +2201,8 @@ export async function bootstrap(): Promise<void> {
     applyGridStart(raceState.cars, course, prevCars);
     syncCarStateArrays();
     aiController.reset(course, aiDifficulty, aiRaceSeed);
+    attractionSystem.reset();
+    hazardEffects.reset(course.getRacers());
     standingsTracker.reset();
     latestStandings = [];
     latestPlayerRank = 1;
@@ -2158,6 +2277,11 @@ export async function bootstrap(): Promise<void> {
       touchControls.setMutedVisual(nextMuted);
     }
 
+    if (input.minimapPressed) {
+      hud.minimap.cycleSizeMode();
+      syncGraphicsUi();
+    }
+
     if (input.navPressed !== 0 && raceState.phase === 'TITLE') {
       const allCourses = listCourses();
       if (allCourses.length > 1) {
@@ -2190,6 +2314,10 @@ export async function bootstrap(): Promise<void> {
 
     lastThrottle = raceState.phase === 'RACING' ? input.throttle : 0;
 
+    const simAttractionTime = raceState.phase === 'RACING' ? raceState.timer : 0;
+    attractionSystem.evaluateAtTime(simAttractionTime);
+    hazardEffects.stepPrePhysics(raceState.cars, attractionSystem, step);
+
     ensureCarsForCourse(prevCars, course);
     const playerRespawnTarget = getRespawnTarget(raceState, course);
     const playerRespawnRoute = course.getRoute(playerRespawnTarget.routeId);
@@ -2203,7 +2331,17 @@ export async function bootstrap(): Promise<void> {
       copyCarState(car, prevCars[i]);
 
       const carInput: CarInput =
-        i === 0 ? input : aiController.sampleInput(i, raceState.cars, course, raceState.phase, step);
+        i === 0
+          ? input
+          : aiController.sampleInput(
+              i,
+              raceState.cars,
+              course,
+              raceState.phase,
+              step,
+              attractionSystem,
+              simAttractionTime,
+            );
       const carRoute = course.getRoute(car.routeId);
       const carRespawnTarget =
         i === 0
@@ -2215,6 +2353,7 @@ export async function bootstrap(): Promise<void> {
         phase: raceState.phase,
         respawnTarget: carRespawnTarget,
         respawnRoute: carRespawnRoute,
+        env: hazardEffects.getEnvModifiers(i, envScratch),
       });
 
       const transition = updateRouteTransitions(car, course);
@@ -2239,6 +2378,51 @@ export async function bootstrap(): Promise<void> {
         touchControls.onHaptic(hitEvt);
         particles.emit(hitEvt);
         sound.handleEvents([hitEvt]);
+      }
+    }
+
+    if (raceState.phase === 'RACING') {
+      hazardEffects.stepPostPhysics(
+        raceState.cars,
+        course,
+        attractionSystem,
+        step,
+        attractionEvents,
+      );
+      for (let ai = 0; ai < attractionEvents.length; ai++) {
+        const ae = attractionEvents[ai];
+        if (ae.type === 'ringPass') {
+          particles.emit({
+            type: 'boost',
+            position: ae.worldPos,
+            forward: ae.forward,
+            right: ae.right,
+            up: ae.up,
+          });
+          particles.emit({
+            type: 'railHit',
+            side: 1,
+            intensity: 0.72,
+            worldPos: ae.worldPos,
+          });
+          if (ae.carIndex === 0) {
+            sound.handleEvents([{ type: 'ringPass' }]);
+            touchControls.onHaptic({ type: 'ringPass' });
+            showRingBoostToast(hud);
+          }
+        } else if (ae.type === 'hazardHit') {
+          particles.emit({
+            type: 'railHit',
+            side: 1,
+            intensity: 0.85,
+            worldPos: ae.worldPos,
+          });
+          if (ae.carIndex === 0) {
+            sound.handleEvents([{ type: 'hazardHit' }]);
+            touchControls.onHaptic({ type: 'hazardHit' });
+            showHazardToast(hud);
+          }
+        }
       }
     }
 
@@ -2417,6 +2601,7 @@ export async function bootstrap(): Promise<void> {
     }
 
     sceneCtx.updateTheme(sceneCtx.camera.position, realDt);
+    attractionManager.update(attractionSystem, renderPose.position);
     particles.update(realDt, renderPose, renderPlayer);
 
     const speedMs =
@@ -2449,6 +2634,15 @@ export async function bootstrap(): Promise<void> {
     soundSnapshot.airborne = renderPlayer.mode === 'airborne';
     soundSnapshot.falling = renderPlayer.mode === 'falling';
     soundSnapshot.railContact = renderPlayer.railContactTimer > 0;
+    soundSnapshot.windFanProximity =
+      raceState.phase === 'RACING'
+        ? attractionSystem.getNearestWindFanProximity(
+            renderPose.position.x,
+            renderPose.position.y,
+            renderPose.position.z,
+            CONFIG.audio.attractionWind.maxDistanceMeters,
+          )
+        : 0;
     sound.update(soundSnapshot, realDt);
 
     const rawProgressS = renderPlayer.mode === 'grounded' ? renderPlayer.s : renderPlayer.sApprox;
@@ -2488,6 +2682,14 @@ export async function bootstrap(): Promise<void> {
     hudViewModel.totalRacers = course.getRacers();
     hudViewModel.standings = latestStandings;
     updateHud(hud, hudViewModel);
+
+    hud.minimap.update(
+      renderCars,
+      course,
+      progress01,
+      isMobileDevice || touchControls.isEnabled(),
+      performance.now(),
+    );
 
     postfx.render(realDt);
   }
@@ -2758,6 +2960,7 @@ export async function bootstrap(): Promise<void> {
     qualityManager.dispose();
     particles.dispose();
     postfx.dispose();
+    attractionManager.dispose();
     trackVisual.dispose();
     bridgeVisual.dispose();
     tunnelVisual.dispose();

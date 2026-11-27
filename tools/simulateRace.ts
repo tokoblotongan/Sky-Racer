@@ -6,9 +6,14 @@ import path from 'node:path';
 import * as THREE from 'three';
 import { CONFIG, type AiDifficulty } from '../src/config';
 import { createAiDrivers } from '../src/core/ai';
+import { createAttractionSystem } from '../src/core/attractions';
 import { autopilotInput } from '../src/core/autopilot';
 import { resolveCarCollisions } from '../src/core/collisions';
 import { buildCourseConfigFromDefinition, Course } from '../src/core/course';
+import {
+  createHazardEffectsTracker,
+  type AttractionEvent,
+} from '../src/core/hazardEffects';
 import { getCarPose, stepCar, type CarPose } from '../src/core/physics';
 import { updateRouteTransitions } from '../src/core/routeTransitions';
 import { createStandingsTracker } from '../src/core/standings';
@@ -45,6 +50,10 @@ interface SingleRaceReport {
   shortcutFalls: number;
   tunnelingEvents: number;
   chainedRollovers: number;
+  aiHazardHits: number;
+  aiHazardHitsPerCarLap: number;
+  aiRingPasses: number;
+  hazardRollovers: number;
   avgAiCpuMsPerStep: number;
   avgAiCpuMsPerCar: number;
   aiTotalTimes: Array<number | null>;
@@ -108,8 +117,12 @@ function runSingleRace(
   state.timer = 0;
 
   const ai = createAiDrivers(course, difficulty, seed);
+  const attractions = createAttractionSystem(course, true, difficulty);
+  const hazardEffects = createHazardEffectsTracker(state.cars.length);
   const standings = createStandingsTracker(course.getRacers());
   const numCars = state.cars.length;
+  const attrEvents: AttractionEvent[] = [];
+  const envScratch = { gripMultiplier: 1, lateralAccel: 0 };
 
   let nanCount = 0;
   let maxStuckSec = 0;
@@ -123,6 +136,10 @@ function runSingleRace(
   let shortcutFalls = 0;
   let tunnelingEvents = 0;
   let chainedRollovers = 0;
+  let aiHazardHits = 0;
+  let aiRingPasses = 0;
+  let hazardRollovers = 0;
+  const lastHazardHitAt = new Array<number>(numCars).fill(-99);
 
   const prevCrashed = new Array<boolean>(numCars).fill(false);
   const timeSinceCrashEnd = new Array<number>(numCars).fill(99);
@@ -149,6 +166,9 @@ function runSingleRace(
   for (let step = 0; step < maxSteps; step++) {
     simTime += DT;
 
+    attractions.evaluateAtTime(simTime);
+    hazardEffects.stepPrePhysics(state.cars, attractions, DT);
+
     const prevRespawns = ai.getMetrics().totalRespawns;
     const tPre0 = performance.now();
     ai.stepPrePhysics(state.cars, course, 'RACING', DT);
@@ -169,7 +189,7 @@ function runSingleRace(
         input = autopilotInput(car, route, { course, preferRoute: 'main' });
       } else {
         const tIn0 = performance.now();
-        input = ai.sampleInput(i, state.cars, course, carPhase, DT);
+        input = ai.sampleInput(i, state.cars, course, carPhase, DT, attractions, simTime);
         totalAiCpuMs += performance.now() - tIn0;
       }
 
@@ -177,6 +197,7 @@ function runSingleRace(
         phase: carPhase,
         respawnTarget: { s: Math.max(4, car.lastSafeS), lateral: 0 },
         respawnRoute: course.getRoute('main'),
+        env: hazardEffects.getEnvModifiers(i, envScratch),
       });
       const trans = updateRouteTransitions(car, course);
 
@@ -208,10 +229,13 @@ function runSingleRace(
           }
         }
 
-        // Chained rollover check
+        // Chained rollover & hazard rollover check
         if (car.crashed && !prevCrashed[i]) {
           if (timeSinceCrashEnd[i] < 1.0) {
             chainedRollovers++;
+          }
+          if (simTime - lastHazardHitAt[i] <= 0.75) {
+            hazardRollovers++;
           }
         }
         if (!car.crashed && prevCrashed[i]) {
@@ -242,6 +266,19 @@ function runSingleRace(
 
     const colEvents = resolveCarCollisions(state.cars, course, DT, 'RACING');
     collisionEvents += colEvents.length;
+
+    hazardEffects.stepPostPhysics(state.cars, course, attractions, DT, attrEvents);
+    for (let aiIdx = 0; aiIdx < attrEvents.length; aiIdx++) {
+      const ae = attrEvents[aiIdx];
+      if (ae.carIndex > 0) {
+        if (ae.type === 'hazardHit') {
+          aiHazardHits++;
+          lastHazardHitAt[ae.carIndex] = simTime;
+        } else if (ae.type === 'ringPass') {
+          aiRingPasses++;
+        }
+      }
+    }
 
     if (state.phase === 'RACING') {
       const activeCar = state.cars[0];
@@ -348,6 +385,8 @@ function runSingleRace(
   const lapRatioToRef = aiAvgLapSec / refLap;
   const avgAiCpuMsPerStep = aiCpuSteps > 0 ? totalAiCpuMs / aiCpuSteps : 0;
   const avgAiCpuMsPerCar = avgAiCpuMsPerStep / Math.max(1, numCars - 1);
+  const totalAiLaps = Math.max(1, aiLapTimes.length);
+  const aiHazardHitsPerCarLap = aiHazardHits / totalAiLaps;
 
   return {
     difficulty,
@@ -367,6 +406,10 @@ function runSingleRace(
     shortcutFalls,
     tunnelingEvents,
     chainedRollovers,
+    aiHazardHits,
+    aiHazardHitsPerCarLap: Number(aiHazardHitsPerCarLap.toFixed(3)),
+    aiRingPasses,
+    hazardRollovers,
     avgAiCpuMsPerStep,
     avgAiCpuMsPerCar,
     aiTotalTimes,
@@ -547,6 +590,30 @@ function main(): void {
   const check7Passed = avgCpuPerCar <= 0.2;
   const check8Passed = ffResult.passed;
 
+  const hazardHitLimits: Record<AiDifficulty, number> = {
+    mudah: 3.0,
+    sedang: 1.5,
+    sulit: 0.8,
+  };
+  const hazardStatsByDiff = DIFFICULTY_SPECS.map((spec) => {
+    const runs = allRuns.filter((r) => r.difficulty === spec.difficulty);
+    const totalHits = runs.reduce((s, r) => s + r.aiHazardHits, 0);
+    const totalLaps = Math.max(1, runs.reduce((s, r) => s + r.aiLapTimes.length, 0));
+    const hitsPerLap = totalHits / totalLaps;
+    return {
+      difficulty: spec.difficulty,
+      hitsPerLap,
+      limit: hazardHitLimits[spec.difficulty],
+      ok: hitsPerLap <= hazardHitLimits[spec.difficulty],
+    };
+  });
+  const totalHazardRollovers = allRuns.reduce((s, r) => s + r.hazardRollovers, 0);
+  const totalAiRingPasses = allRuns.reduce((s, r) => s + r.aiRingPasses, 0);
+  const check9Passed =
+    totalHazardRollovers === 0 &&
+    hazardStatsByDiff.every((h) => h.ok) &&
+    totalAiRingPasses > 0;
+
   const checks = [
     {
       id: 1,
@@ -601,6 +668,12 @@ function main(): void {
       passed: check8Passed,
       detail: `simAdvanced=${ffResult.simSecondsAdvanced.toFixed(2)}s, wall=${ffResult.wallMs.toFixed(1)}ms, valid=${ffResult.allRankedValid}`,
     },
+    {
+      id: 9,
+      name: 'Attractions Fair & AI Hazard Dodging',
+      passed: check9Passed,
+      detail: `${hazardStatsByDiff.map((h) => `${h.difficulty}:${h.hitsPerLap.toFixed(2)}<=${h.limit}`).join(' | ')}, ringPasses=${totalAiRingPasses}, hazardRollovers=${totalHazardRollovers}`,
+    },
   ];
 
   const allPassed = checks.every((c) => c.passed);
@@ -614,7 +687,7 @@ function main(): void {
     );
   }
   console.log('---------------------------------------------------------------------------------------------');
-  console.log(`OVERALL: ${allPassed ? 'ALL 8 CHECKS PASS' : 'FAILED'}`);
+  console.log(`OVERALL: ${allPassed ? 'ALL 9 CHECKS PASS' : 'FAILED'}`);
 
   const outDir = path.resolve(process.cwd(), 'reports');
   fs.mkdirSync(outDir, { recursive: true });

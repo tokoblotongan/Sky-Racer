@@ -3,10 +3,16 @@
 import * as THREE from 'three';
 import { CONFIG, type AiRivalConfig } from '../../config';
 import type { CarInput } from '../../input/controls';
+import type { AttractionSystem } from '../attractions';
 import type { Course } from '../course';
 import type { CarState } from '../physics';
 import type { Route, TrackFrame } from '../routes';
 import { computeAvoidance, type AvoidanceAdjustment } from './avoidance';
+import {
+  computeAiHazardGuidance,
+  computeAiRingGuidance,
+  type HazardAvoidanceResult,
+} from './hazardAwareness';
 import {
   getCourseAiProfile,
   type CourseAiProfile,
@@ -70,6 +76,11 @@ const _shortcutGuidance: ShortcutGuidance = {
   overrideLateral: null,
   takingShortcut: false,
 };
+const _hazardGuidance: HazardAvoidanceResult = {
+  overrideLateral: null,
+  speedMultiplier: 1,
+  windCompensationAccel: 0,
+};
 
 export function createIdleInput(): CarInput {
   return {
@@ -92,6 +103,8 @@ export function computeAiDriverInput(
   rubberBandFactor: number,
   dt: number,
   outInput: CarInput,
+  attractions: AttractionSystem | null = null,
+  raceTimeSec = 0,
 ): CarInput {
   const car = cars[ctx.carIndex];
   if (!car || car.mode === 'falling') {
@@ -155,6 +168,21 @@ export function computeAiDriverInput(
     desiredLateral = THREE.MathUtils.lerp(desiredLateral, boostPad.lateral, padWeight);
   }
 
+  // 2b. Boost ring alignment (only when clear of shortcut overrides)
+  if (attractions) {
+    desiredLateral = computeAiRingGuidance(
+      car,
+      route.routeId,
+      route.getLength(),
+      course.isClosed(),
+      _lookFrame.width,
+      desiredLateral,
+      attractions,
+      difficultyMultiplier,
+      ctx.rival,
+    );
+  }
+
   // 3. Shortcut decision and entry/merge guidance
   ctx.shortcutTracker.evaluate(
     car,
@@ -174,8 +202,42 @@ export function computeAiDriverInput(
 
   // 4. Obstacle avoidance and slipstream check
   computeAvoidance(ctx.carIndex, cars, course, route, ctx.rival, _avoidance);
-  if (Math.abs(_avoidance.lateralOffset) > 1e-3 && !_shortcutGuidance.takingShortcut) {
-    desiredLateral += _avoidance.lateralOffset * 0.85;
+  if (Math.abs(_avoidance.lateralOffset) > 1e-3) {
+    if (!_shortcutGuidance.takingShortcut) {
+      desiredLateral += _avoidance.lateralOffset * 0.85;
+    } else if (route.routeId === 'main' && _avoidance.lateralOffset < -0.25 && desiredLateral > car.lateral) {
+      // Do not plow sideways into an adjacent car blocking the right lane before shortcut gap opens
+      desiredLateral = Math.min(desiredLateral, car.lateral + _avoidance.lateralOffset * 0.65);
+    }
+  }
+
+  // 4b. FantasyLand dynamic attraction hazard avoidance
+  if (attractions) {
+    computeAiHazardGuidance(
+      car,
+      route.routeId,
+      route.getLength(),
+      course.isClosed(),
+      _lookFrame.width,
+      desiredLateral,
+      attractions,
+      raceTimeSec,
+      difficultyMultiplier,
+      ctx.rival,
+      _hazardGuidance,
+    );
+    if (_hazardGuidance.overrideLateral !== null && !_shortcutGuidance.takingShortcut) {
+      desiredLateral = _hazardGuidance.overrideLateral;
+    }
+  }
+
+  // Keep skipping-shortcut cars cleanly inside main track before shortcut gap closes
+  if (
+    !_shortcutGuidance.takingShortcut &&
+    _shortcutGuidance.overrideLateral !== null &&
+    desiredLateral > _shortcutGuidance.overrideLateral
+  ) {
+    desiredLateral = _shortcutGuidance.overrideLateral;
   }
 
   // Keep steering target strictly inside physical rail limits (unless crossing open shortcut gap)

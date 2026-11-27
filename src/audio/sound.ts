@@ -18,6 +18,7 @@ export interface SoundSnapshot {
   airborne: boolean;
   falling: boolean;
   railContact: boolean;
+  windFanProximity?: number;
 }
 
 export interface SoundSystem {
@@ -55,6 +56,7 @@ export function createSound(): SoundSystem {
     airborne: false,
     falling: false,
     railContact: false,
+    windFanProximity: 0,
     active: false,
   };
 
@@ -150,6 +152,7 @@ export function createSound(): SoundSystem {
         loopsParams.airborne = snapshot.airborne;
         loopsParams.falling = snapshot.falling;
         loopsParams.railContact = snapshot.railContact;
+        loopsParams.windFanProximity = snapshot.windFanProximity ?? 0;
         loopsParams.active = isRacing;
         loops.update(loopsParams, dt);
       }

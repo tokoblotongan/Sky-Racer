@@ -10,6 +10,7 @@ export interface LoopsUpdateParams {
   airborne: boolean;
   falling: boolean;
   railContact: boolean;
+  windFanProximity?: number;
   active: boolean;
 }
 
@@ -42,6 +43,9 @@ export function createLoops(manager: AudioManager): LoopsAudio {
 
   let ambienceFilter: BiquadFilterNode | null = null;
   let ambienceGain: GainNode | null = null;
+
+  let fanFilter: BiquadFilterNode | null = null;
+  let fanGain: GainNode | null = null;
 
   let railHitFallbackLevel = 0;
   let updateAccumulator = 0;
@@ -95,6 +99,19 @@ export function createLoops(manager: AudioManager): LoopsAudio {
         railFilter.connect(railGain);
         railGain.connect(buses.sfx);
 
+        // 3b. Giant Wind Fan attraction whoosh (attenuated by distance)
+        fanFilter = ctx.createBiquadFilter();
+        fanFilter.type = 'bandpass';
+        fanFilter.frequency.setValueAtTime(cfg.attractionWind.filterFreq, now);
+        fanFilter.Q.setValueAtTime(1.4, now);
+
+        fanGain = ctx.createGain();
+        fanGain.gain.setValueAtTime(0, now);
+
+        whiteSource.connect(fanFilter);
+        fanFilter.connect(fanGain);
+        fanGain.connect(buses.sfx);
+
         whiteSource.start(now);
       }
 
@@ -132,6 +149,7 @@ export function createLoops(manager: AudioManager): LoopsAudio {
       if (skidGain) skidGain.gain.setTargetAtTime(0, now, 0.04);
       if (windGain) windGain.gain.setTargetAtTime(0, now, 0.06);
       if (railGain) railGain.gain.setTargetAtTime(0, now, 0.04);
+      if (fanGain) fanGain.gain.setTargetAtTime(0, now, 0.06);
     } catch {
       // Ignore loop silence errors
     }
@@ -213,6 +231,14 @@ export function createLoops(manager: AudioManager): LoopsAudio {
         0.045,
       );
       }
+
+      // 4. Giant Wind Fan proximity audio
+      if (fanGain && fanFilter) {
+        const prox = Math.max(0, Math.min(1, params.windFanProximity ?? 0));
+        const targetFan = cfg.attractionWind.gainMax * prox;
+        fanGain.gain.setTargetAtTime(targetFan, now, 0.06);
+        fanFilter.frequency.setTargetAtTime(cfg.attractionWind.filterFreq + prox * 380, now, 0.07);
+      }
     } catch {
       // Ignore loop audio scheduling errors
     }
@@ -245,6 +271,8 @@ export function createLoops(manager: AudioManager): LoopsAudio {
     railGain?.disconnect();
     ambienceFilter?.disconnect();
     ambienceGain?.disconnect();
+    fanFilter?.disconnect();
+    fanGain?.disconnect();
 
     whiteSource = null;
     brownSource = null;
@@ -256,6 +284,8 @@ export function createLoops(manager: AudioManager): LoopsAudio {
     railGain = null;
     ambienceFilter = null;
     ambienceGain = null;
+    fanFilter = null;
+    fanGain = null;
   }
 
   return {
