@@ -1,6 +1,7 @@
 // src/main.ts
 
 import * as THREE from 'three';
+import { createDefaultArenaRegistry, type ArenaDefinition } from './arenas';
 import { setAudioPaused } from './audio/audioManager';
 import { createMusicDirector } from './audio/music/musicDirector';
 import { createMusicPlayer } from './audio/music/musicPlayer';
@@ -18,7 +19,7 @@ import {
   type AttractionEvent,
 } from './core/hazardEffects';
 import { createWrongWayDetector } from './core/wrongWay';
-import { getCourse, getLastCourseId, listCourses, setLastCourseId } from './courses';
+import { getCourse, getLastCourseId, setLastCourseId } from './courses';
 import {
   copyCarState,
   getCarPose,
@@ -80,7 +81,7 @@ import {
   getRecords,
   type CourseRecords,
 } from './services/records';
-import { createCourseSelect, type CourseSelectHandle } from './ui/courseCard';
+import { createArenaSelect, type ArenaSelectHandle } from './ui/arenaSelect';
 import {
   disposeErrorOverlay,
   isDebugUrlEnabled,
@@ -406,9 +407,20 @@ export async function bootstrap(): Promise<void> {
   const touchControls = createTouchControls(container, CONFIG.touch);
   touchControls.setMutedVisual(sound.getMuted());
 
-  let selectedCourseId = getLastCourseId();
-  let loadedCourseId = selectedCourseId;
-  let activeCourseDef = getCourse(selectedCourseId);
+  const arenaRegistry = createDefaultArenaRegistry();
+  const playableArenas = arenaRegistry.listArenas({ includeComingSoon: false });
+  const resolveArena = (id: string): ArenaDefinition => {
+    const match = arenaRegistry.getArena(id);
+    if (match && !match.comingSoon) {
+      return match;
+    }
+    return arenaRegistry.getArena(CONFIG.activeCourseId) ?? playableArenas[0];
+  };
+
+  let activeArena = resolveArena(getLastCourseId());
+  let selectedCourseId = activeArena.id;
+  let loadedCourseId = activeArena.id;
+  let activeCourseDef = getCourse(activeArena.id);
   let course = new Course(buildCourseConfigFromDefinition(activeCourseDef));
   let raceState = createRaceState(course);
   const wrongWayDetector = createWrongWayDetector();
@@ -433,6 +445,7 @@ export async function bootstrap(): Promise<void> {
     course,
     attractionsEnabled,
     aiDifficulty,
+    activeArena.capabilities.hasAttractions,
   );
   const hazardEffects = createHazardEffectsTracker(course.getRacers());
   const attractionEvents: AttractionEvent[] = [];
@@ -637,7 +650,7 @@ export async function bootstrap(): Promise<void> {
 
   const initialQuality: QualityLevel = safeMode ? 'mobile' : qualityManager.getLevel();
   sceneCtx.setQuality(initialQuality, true);
-  sceneCtx.setTheme(course, initialQuality);
+  sceneCtx.setTheme(course, initialQuality, activeArena.themeDefinition);
 
   let bridgeVisual: BridgeVisual = buildBridgeMesh(
     course,
@@ -778,7 +791,12 @@ export async function bootstrap(): Promise<void> {
   }
 
   const raceEventBus = createRaceEventBus();
-  const musicDirector = createMusicDirector(musicPlayer, raceEventBus, selectedCourseId);
+  const musicDirector = createMusicDirector(
+    musicPlayer,
+    raceEventBus,
+    selectedCourseId,
+    (id) => arenaRegistry.getArena(id)?.music,
+  );
   const introCamera = createIntroCamera();
   const introBanner = createIntroBanner(container);
   const screenTransition = createScreenTransition(container);
@@ -1004,7 +1022,7 @@ export async function bootstrap(): Promise<void> {
   };
   syncBalancedEnvironmentState();
 
-  let courseSelect: CourseSelectHandle;
+  let courseSelect: ArenaSelectHandle;
 
   function cancelScheduledLoop(): void {
     if (frameHandle !== 0) {
@@ -1039,7 +1057,7 @@ export async function bootstrap(): Promise<void> {
       touchPrefs: touchControls.getPrefs(),
       minimapMode: hud.minimap.getSizeMode(),
       attractionsEnabled,
-      attractionsAvailable: course.getId() === 'fantasy-land',
+      attractionsAvailable: activeArena.capabilities.hasAttractions,
       musicEnabled: musicPlayer.isMusicEnabled(),
       musicVolume: musicPlayer.getVolume(),
       probeActive: initialProbeActive,
@@ -1129,15 +1147,18 @@ export async function bootstrap(): Promise<void> {
   }
 
   function syncTitleUi(): void {
-    const previewDef = getCourse(selectedCourseId);
+    const previewArena = resolveArena(selectedCourseId);
+    const previewDef = getCourse(previewArena.id);
     updateTitleScreen(hud, {
       courseName: previewDef.displayName,
       courseId: previewDef.id,
       medals: previewDef.medals,
       records: getRecords(previewDef.id, previewDef.medals),
       racers: previewDef.racers,
+      hasOpponents: previewArena.capabilities.hasOpponents,
       aiDifficulty,
       attractionsEnabled,
+      attractionsAvailable: previewArena.capabilities.hasAttractions,
     });
     courseSelect?.setSelected(previewDef.id);
     courseSelect?.refreshRecords();
@@ -1278,11 +1299,17 @@ export async function bootstrap(): Promise<void> {
     if (showProgress) {
       showLoadingOverlay(hud, 'Memuat arena...', 30);
     }
+    activeArena = resolveArena(targetDef.id);
     course = new Course(buildCourseConfigFromDefinition(targetDef));
     raceState = createRaceState(course);
     aiRaceSeed = (aiRaceSeed + 1013) >>> 0;
     aiController.reset(course, aiDifficulty, aiRaceSeed);
-    attractionSystem = createAttractionSystem(course, attractionsEnabled, aiDifficulty);
+    attractionSystem = createAttractionSystem(
+      course,
+      attractionsEnabled,
+      aiDifficulty,
+      activeArena.capabilities.hasAttractions,
+    );
     hazardEffects.reset(course.getRacers());
     standingsTracker.reset();
     latestStandings = [];
@@ -1303,7 +1330,7 @@ export async function bootstrap(): Promise<void> {
 
     bounds = course.getBounds();
     sceneCtx.setRoomBounds(bounds);
-    sceneCtx.setTheme(course, qualityManager.getLevel());
+    sceneCtx.setTheme(course, qualityManager.getLevel(), activeArena.themeDefinition);
 
     if (showProgress) {
       showLoadingOverlay(hud, 'Memuat arena...', 55);
@@ -1477,7 +1504,11 @@ export async function bootstrap(): Promise<void> {
     if (raceState.phase !== 'TITLE' || isLoadingCourse || contextLost) {
       return;
     }
-    const nextDef = getCourse(id);
+    const targetArena = arenaRegistry.getArena(id);
+    if (!targetArena || targetArena.comingSoon) {
+      return;
+    }
+    const nextDef = getCourse(targetArena.id);
     if (nextDef.id === selectedCourseId && switchDebounceTimer === 0 && switchRafId === 0) {
       return;
     }
@@ -1520,9 +1551,9 @@ export async function bootstrap(): Promise<void> {
     }, CONFIG.courseSelect.debounceMs);
   }
 
-  courseSelect = createCourseSelect(
+  courseSelect = createArenaSelect(
     hud.titleCourseSelectSlotEl,
-    listCourses(),
+    arenaRegistry.listArenas({ includeComingSoon: true }),
     selectedCourseId,
     (id) => {
       selectArena(id);
@@ -1626,7 +1657,7 @@ export async function bootstrap(): Promise<void> {
     const activeQuality: QualityLevel = safeMode ? 'mobile' : qualityManager.getLevel();
     sceneCtx.setRoomBounds(bounds);
     sceneCtx.setQuality(activeQuality, true);
-    sceneCtx.setTheme(course, activeQuality);
+    sceneCtx.setTheme(course, activeQuality, activeArena.themeDefinition);
     syncBalancedEnvironmentState();
     sceneCtx.applyBrightness(userBrightness);
     sceneCtx.setOrbitTarget(bounds.center, orbitRadius, CONFIG.camera.orbitHeight);
@@ -2044,10 +2075,12 @@ export async function bootstrap(): Promise<void> {
   }
 
   function showResolvedResults(finishData: FinishResultData): void {
-    const isMulti = (finishData.totalRacers ?? 1) > 1;
+    const isMulti =
+      activeArena.capabilities.hasOpponents && (finishData.totalRacers ?? 1) > 1;
+    const showPodium = activeArena.capabilities.hasPodium && isMulti;
     const records = lastFinishRecords ?? getRecords(course.getId(), course.getMedals());
     const presentResults = (): void => {
-      if (isMulti && !podiumScene) {
+      if (showPodium && !podiumScene) {
         podiumScene = createPodiumScene({
           classification: finishData.classification ?? [],
           playerDesignId: activeCarDesign,
@@ -2083,7 +2116,7 @@ export async function bootstrap(): Promise<void> {
       raceEventBus.emit(won ? 'resultWin' : 'resultLose', outcomePayload);
     };
 
-    if (isMulti && !podiumScene) {
+    if (showPodium && !podiumScene) {
       screenTransition.flashFade(presentResults);
     } else {
       presentResults();
@@ -2347,7 +2380,11 @@ export async function bootstrap(): Promise<void> {
 
       if (shouldPlayIntro) {
         const vp = sceneCtx.getViewportSize();
-        const started = introCamera.start(course, vp.width / Math.max(1, vp.height));
+        const started = introCamera.start(
+          course,
+          vp.width / Math.max(1, vp.height),
+          activeArena.introCamera,
+        );
         if (started) {
           introActive = true;
           setFlowState('intro');
@@ -2545,12 +2582,12 @@ export async function bootstrap(): Promise<void> {
     }
 
     if (input.navPressed !== 0 && raceState.phase === 'TITLE') {
-      const allCourses = listCourses();
-      if (allCourses.length > 1) {
-        const curIdx = allCourses.findIndex((c) => c.id === selectedCourseId);
+      const navArenas = arenaRegistry.listArenas({ includeComingSoon: false });
+      if (navArenas.length > 1) {
+        const curIdx = navArenas.findIndex((c) => c.id === selectedCourseId);
         const safeIdx = curIdx >= 0 ? curIdx : 0;
-        const nextIdx = (safeIdx + input.navPressed + allCourses.length) % allCourses.length;
-        selectArena(allCourses[nextIdx].id);
+        const nextIdx = (safeIdx + input.navPressed + navArenas.length) % navArenas.length;
+        selectArena(navArenas[nextIdx].id);
       }
     }
 
@@ -2822,14 +2859,15 @@ export async function bootstrap(): Promise<void> {
         lastZoneLap = raceState.currentLap;
       }
       const wrappedZoneS = isClosedCourse ? course.wrapDistance(activeZoneS) : activeZoneS;
+      const startBanner = activeArena.zones?.startBanner;
       if (
         !shownStartBannerInLap &&
-        course.getId() === 'fantasy-land' &&
-        wrappedZoneS >= CONFIG.fantasy.zoneStartBanner.startS &&
-        wrappedZoneS <= CONFIG.fantasy.zoneStartBanner.endS
+        startBanner &&
+        wrappedZoneS >= startBanner.startS &&
+        wrappedZoneS <= startBanner.endS
       ) {
         shownStartBannerInLap = true;
-        showZoneToast(hud, CONFIG.fantasy.zoneStartBanner.title);
+        showZoneToast(hud, startBanner.title);
       }
       for (let zi = 0; zi < zoneStarts.length; zi++) {
         if (enteredZonesInLap.has(zi)) continue;

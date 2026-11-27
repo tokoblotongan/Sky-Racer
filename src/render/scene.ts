@@ -7,7 +7,8 @@ import { CONFIG, type GraphicsPreset, type VisualPreset, type VisualPresetName }
 import type { Course, CourseBounds } from '../core/course';
 import { createSurfaceMaterial } from './materialFactory';
 import type { QualityLevel } from './quality';
-import { getTheme, type ThemeInstance } from './themes';
+import { createWorldThemeAdapter, getTheme, type ThemeInstance } from './themes';
+import type { ThemeDefinition } from '../themes/types';
 import { logErrorOverlay } from '../ui/errorOverlay';
 import { probeCapabilitiesFromGl, type WebGlDiagnostics } from '../ui/reportOverlay';
 
@@ -42,7 +43,11 @@ export interface SceneContext {
   maxAnisotropy: number;
   getDiagnostics: () => WebGlDiagnostics;
   setRoomBounds: (bounds: CourseBounds) => void;
-  setTheme: (course: Course, quality: QualityLevel) => void;
+  setTheme: (
+    course: Course,
+    quality: QualityLevel,
+    themeDefinition?: ThemeDefinition,
+  ) => void;
   updateTheme: (cameraPos: THREE.Vector3, dt: number) => void;
   setOrbitTarget: (target: THREE.Vector3, radius: number, height: number) => void;
   setCameraOrbitAngle: (angleRad: number) => void;
@@ -989,6 +994,7 @@ export function createSceneContext(
 
   let activeCourse: Course | null = null;
   let activeTheme: ThemeInstance | null = null;
+  let activeThemeDefinition: ThemeDefinition | null = null;
   let activeQuality: QualityLevel = activePresetLevel;
   let activeDensityScale = -1;
   let activeRoomDim: RoomDimensions = {
@@ -1040,7 +1046,9 @@ export function createSceneContext(
       return;
     }
 
-    const theme = getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom');
+    const theme = activeThemeDefinition
+      ? createWorldThemeAdapter(activeThemeDefinition)
+      : getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom');
     const sky = theme.getSkyColors(activePresetName);
     const prevTex = balancedEnvTexture;
     balancedEnvTexture = createBalancedGradientEnvironment(
@@ -1072,7 +1080,9 @@ export function createSceneContext(
   }
 
   function applyThemeAtmosphere(): void {
-    const theme = getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom');
+    const theme = activeThemeDefinition
+      ? createWorldThemeAdapter(activeThemeDefinition)
+      : getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom');
     const sky = theme.getSkyColors(activePresetName);
     const lighting = theme.getLighting(activePresetName);
 
@@ -1109,7 +1119,11 @@ export function createSceneContext(
       : Math.max(lighting.hemisphereIntensity, CONFIG.safeMode.hemiIntensity);
   }
 
-  function setTheme(course: Course, quality: QualityLevel): void {
+  function setTheme(
+    course: Course,
+    quality: QualityLevel,
+    themeDefinition?: ThemeDefinition,
+  ): void {
     if (activeTheme) {
       scene.remove(activeTheme.group);
       activeTheme.dispose();
@@ -1118,10 +1132,13 @@ export function createSceneContext(
 
     const targetQuality: QualityLevel = effectiveSafeMode ? 'mobile' : quality;
     activeCourse = course;
+    activeThemeDefinition = themeDefinition ?? null;
     activeQuality = targetQuality;
     activeDensityScale = CONFIG.quality.levels[targetQuality].propsDensityScale;
 
-    const theme = getTheme(course.getThemeId());
+    const theme = activeThemeDefinition
+      ? createWorldThemeAdapter(activeThemeDefinition)
+      : getTheme(course.getThemeId());
     activeTheme = theme.build(
       course,
       targetQuality,
@@ -1226,7 +1243,7 @@ export function createSceneContext(
 
     const nextDensityScale = preset.propsDensityScale;
     if (activeCourse && nextDensityScale !== activeDensityScale) {
-      setTheme(activeCourse, activeQuality);
+      setTheme(activeCourse, activeQuality, activeThemeDefinition ?? undefined);
     }
   }
 
@@ -1352,7 +1369,10 @@ export function createSceneContext(
     prevCeilingTex.dispose();
 
     activeTheme?.applyPalette(name);
-    getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom').applyPalette(name);
+    const theme = activeThemeDefinition
+      ? createWorldThemeAdapter(activeThemeDefinition)
+      : getTheme(activeCourse ? activeCourse.getThemeId() : 'toyroom');
+    theme.applyPalette(name);
     applyThemeAtmosphere();
     updateVisualDebugOverlay();
   }

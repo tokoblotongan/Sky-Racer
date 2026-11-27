@@ -74,7 +74,7 @@ export type CourseSegmentConfig =
       readonly style?: TrackStyle;
     };
 
-export type ThemeId = 'toyroom' | 'fantasyland';
+export type ThemeId = string;
 
 export interface CourseMedals {
   readonly gold: number;
@@ -111,6 +111,7 @@ export interface CourseDefinition {
   readonly closed?: boolean;
   readonly laps?: number;
   readonly racers?: number;
+  readonly hasAttractions?: boolean;
   readonly trackWidth?: number;
   readonly startPosition?: { readonly x: number; readonly y: number; readonly z: number };
   readonly startHeadingDeg?: number;

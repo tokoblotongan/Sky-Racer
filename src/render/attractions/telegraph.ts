@@ -108,11 +108,6 @@ export function createTelegraphVisuals(course: Course): TelegraphVisualGroup {
     });
   };
 
-  if (course.getId() === 'fantasy-land') {
-    const planSystem = course.getSegmentList().length > 0;
-    void planSystem;
-  }
-
   // Lazy-populated on first update from AttractionSystem specs so coordinates match 1:1
   let mesh: THREE.InstancedMesh | null = null;
   let built = false;

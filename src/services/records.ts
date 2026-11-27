@@ -240,12 +240,12 @@ function sanitizeRecords(raw: unknown, courseId: string): CourseRecords | null {
   };
 }
 
-const LEGACY_DEFAULT_COURSE_ID = 'sky-circuit';
+export function getRecordsStorageKey(arenaId: string): string {
+  return `${CONFIG.storage.recordsKey}:${arenaId}`;
+}
 
 function getStorageKey(courseId: string): string {
-  return courseId === LEGACY_DEFAULT_COURSE_ID
-    ? CONFIG.storage.recordsKey
-    : `${CONFIG.storage.recordsKey}:${courseId}`;
+  return getRecordsStorageKey(courseId);
 }
 
 function readStorageItem(key: string): string | null {
@@ -318,7 +318,7 @@ function migrateLegacyStage6IfNeeded(
   courseId: string,
   medals?: CourseMedals,
 ): CourseRecords | null {
-  if (courseId !== LEGACY_DEFAULT_COURSE_ID) {
+  if (courseId !== CONFIG.activeCourseId) {
     return null;
   }
 
@@ -369,9 +369,29 @@ function migrateLegacyStage6IfNeeded(
   return migratedRecord;
 }
 
+function migrateLegacyUnsuffixedV1IfNeeded(courseId: string): string | null {
+  const legacyRaw = readStorageItem(CONFIG.storage.recordsKey);
+  if (!legacyRaw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(legacyRaw) as unknown;
+    const sanitized = sanitizeRecords(parsed, courseId);
+    if (sanitized) {
+      const serialized = JSON.stringify(sanitized);
+      writeStorageItem(getStorageKey(courseId), serialized);
+      removeStorageItem(CONFIG.storage.recordsKey);
+      return serialized;
+    }
+  } catch {
+    // Ignore invalid legacy payload
+  }
+  return null;
+}
+
 export function getRecords(courseId: string, medals?: CourseMedals): CourseRecords {
   const key = getStorageKey(courseId);
-  const raw = readStorageItem(key);
+  const raw = readStorageItem(key) ?? migrateLegacyUnsuffixedV1IfNeeded(courseId);
 
   if (raw !== null) {
     try {
@@ -389,7 +409,7 @@ export function getRecords(courseId: string, medals?: CourseMedals): CourseRecor
           }
         }
         // Mark migration done if v1 records already exist
-        if (courseId === LEGACY_DEFAULT_COURSE_ID && readStorageItem(CONFIG.storage.migratedKey) !== '1') {
+        if (courseId === CONFIG.activeCourseId && readStorageItem(CONFIG.storage.migratedKey) !== '1') {
           migrateLegacyStage6IfNeeded(courseId, medals);
           // Re-read only if v1 record didn't exist; existing v1 takes priority
         }
@@ -507,9 +527,10 @@ export function submitRun(courseId: string, run: RunSubmission): SubmitRunResult
 
 export function clearRecords(courseId: string): CourseRecords {
   const fresh = createEmptyRecords(courseId);
-  if (courseId === LEGACY_DEFAULT_COURSE_ID) {
+  if (courseId === CONFIG.activeCourseId) {
     writeStorageItem(CONFIG.storage.migratedKey, '1');
     removeStorageItem(CONFIG.storage.key);
+    removeStorageItem(CONFIG.storage.recordsKey);
   }
   saveRecords(courseId, fresh);
   return fresh;

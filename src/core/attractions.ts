@@ -117,8 +117,9 @@ export function createAttractionSystem(
   course: Course,
   initialEnabled = true,
   initialDifficulty: AiDifficulty = CONFIG.ai.defaultDifficulty,
+  hasAttractions?: boolean,
 ): AttractionSystem {
-  const plan = createFantasyLandAttractionsPlan(course);
+  const plan = createFantasyLandAttractionsPlan(course, hasAttractions);
   let enabled = initialEnabled;
   let difficulty: AiDifficulty = initialDifficulty;
   let lastTimeSec = 0;

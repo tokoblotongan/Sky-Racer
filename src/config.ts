@@ -1594,4 +1594,86 @@ export const CONFIG = {
       bannerPeakEmissive: 1.45,
     },
   },
+  arenaKit: {
+    // Tight upper bounds anchored to measured high/penuh baseline stats:
+    // Sky Circuit: 126 meshes, 13972 tris, 194 instances, 3.50 MB textures
+    // FantasyLand: 60 meshes, 68302 tris, 541 instances, 2.21 MB textures
+    defaultBudgets: {
+      meshes: 140,
+      triangles: 75000,
+      instances: 600,
+      textureMB: 4.0,
+    },
+    maxMusicFileMB: 6.0,
+    requiredFields: [
+      'id',
+      'name',
+      'tagline',
+      'description',
+      'order',
+      'mode',
+      'laps',
+      'opponentCount',
+      'course',
+      'theme',
+      'background',
+      'lightingProfile',
+      'carVisualScale',
+      'capabilities',
+      'budgets',
+    ] as const,
+    introCameraDefaults: {
+      durationSeconds: 4.5,
+      highlightPoints: [
+        {
+          anchor: {
+            kind: 'segmentType' as const,
+            segmentType: 'loop' as const,
+            occurrenceIndex: 0,
+            fallbackFraction: 0.24,
+          },
+          heightScale: 1.2,
+          lateralScale: 1.55,
+          lookDeltaMeters: 10,
+          lookHeightOffset: 4.2,
+        },
+        {
+          anchor: {
+            kind: 'segmentType' as const,
+            segmentType: 'straight' as const,
+            minLength: 90,
+            fraction: 0.45,
+            fallbackType: 'gap' as const,
+            fallbackOccurrenceIndex: 0,
+            fallbackFraction: 0.52,
+          },
+          heightScale: 1.15,
+          lateralScale: -1.3,
+          lookDeltaMeters: 28,
+          lookHeightOffset: 2.0,
+        },
+        {
+          anchor: {
+            kind: 'segmentType' as const,
+            segmentType: 'loop' as const,
+            occurrenceIndex: 1,
+            fallbackType: 'gap' as const,
+            fallbackOccurrenceIndex: 1,
+            fallbackFraction: 0.74,
+          },
+          heightScale: 1.05,
+          lateralScale: 1.45,
+          lookDeltaMeters: -12,
+          lookHeightOffset: 3.8,
+        },
+        {
+          anchor: { kind: 'gridStart' as const, offsetS: 26 },
+          heightScale: 0.65,
+          lateralFixed: -4.5,
+          lookDeltaMeters: -24,
+          lookHeightOffset: 1.5,
+        },
+      ],
+    },
+  },
 } as const;

@@ -1,13 +1,14 @@
 // src/camera/introCamera.ts
 
 import * as THREE from 'three';
+import type { ArenaIntroCameraConfig, IntroCameraWaypointConfig } from '../arenas/types';
 import { CONFIG } from '../config';
 import type { Course, CourseSegmentMeta, TrackFrame } from '../core/course';
 
 export interface IntroCameraController {
   isActive: () => boolean;
   isFinished: () => boolean;
-  start: (course: Course, aspect?: number) => boolean;
+  start: (course: Course, aspect?: number, introConfig?: ArenaIntroCameraConfig) => boolean;
   skip: () => void;
   stop: () => void;
   update: (camera: THREE.PerspectiveCamera, realDt: number) => boolean;
@@ -119,6 +120,52 @@ function findNamedRange(
   return { startS, endS, midS: (startS + endS) * 0.5 };
 }
 
+function resolveWaypointS(
+  wp: IntroCameraWaypointConfig,
+  course: Course,
+  segments: readonly CourseSegmentMeta[],
+  totalLen: number,
+): number {
+  const anchor = wp.anchor;
+  if (anchor.kind === 'namedSegment') {
+    const range = findNamedRange(segments, anchor.namePart);
+    if (range) {
+      const frac = anchor.fraction ?? 0.5;
+      const baseS = range.startS + (range.endS - range.startS) * frac;
+      return baseS + (anchor.offsetS ?? 0);
+    }
+    return totalLen * anchor.fallbackFraction;
+  }
+  if (anchor.kind === 'segmentType') {
+    const matching = segments.filter(
+      (seg) =>
+        seg.type === anchor.segmentType &&
+        (anchor.minLength === undefined || seg.length >= anchor.minLength),
+    );
+    const chosen = matching[anchor.occurrenceIndex ?? 0];
+    if (chosen) {
+      const frac = anchor.fraction ?? 0.5;
+      return chosen.startS + (chosen.endS - chosen.startS) * frac;
+    }
+    if (anchor.fallbackType) {
+      const fbList = segments.filter((seg) => seg.type === anchor.fallbackType);
+      const fbSeg = fbList[anchor.fallbackOccurrenceIndex ?? 0];
+      if (fbSeg) {
+        return fbSeg.startS;
+      }
+    }
+    return totalLen * anchor.fallbackFraction;
+  }
+  if (anchor.kind === 'gridStart') {
+    const startSlotS = course.getGridSlots(course.getRacers())[0].s;
+    return startSlotS + anchor.offsetS;
+  }
+  if (anchor.kind === 'courseEnd') {
+    return Math.max(0, course.isClosed() ? totalLen - anchor.closedOffsetS : anchor.openS);
+  }
+  return totalLen * anchor.fraction;
+}
+
 function buildWaypointFromCourseS(
   course: Course,
   trackS: number,
@@ -151,6 +198,7 @@ function buildIntroSplines(
   course: Course,
   endPos: THREE.Vector3,
   endLook: THREE.Vector3,
+  introConfig?: ArenaIntroCameraConfig,
 ): {
   posCurve: THREE.CatmullRomCurve3;
   lookCurve: THREE.CatmullRomCurve3;
@@ -161,65 +209,28 @@ function buildIntroSplines(
   const posPoints: THREE.Vector3[] = [];
   const lookPoints: THREE.Vector3[] = [];
 
-  const pushWp = (
-    s: number,
-    lift: number,
-    lat: number,
-    lookDelta: number = cfg.lookAheadMeters,
-    lookLift = 1.8,
-  ): void => {
-    const wp = buildWaypointFromCourseS(course, s, lift, lat, lookDelta, lookLift);
-    posPoints.push(wp.pos);
-    lookPoints.push(wp.look);
-  };
+  const waypoints: readonly IntroCameraWaypointConfig[] =
+    introConfig?.highlightPoints && introConfig.highlightPoints.length > 0
+      ? introConfig.highlightPoints
+      : CONFIG.arenaKit.introCameraDefaults.highlightPoints;
 
-  if (course.getId() === 'fantasy-land') {
-    const dragonLoop = findNamedRange(segments, 'Dragon Loop');
-    const bridge = findNamedRange(segments, 'Jembatan Pelangi');
-    const tunnel = findNamedRange(segments, 'Terowongan Kristal');
-
-    const loopS = dragonLoop ? dragonLoop.midS : totalLen * 0.24;
-    const bridgeS = bridge ? bridge.midS : totalLen * 0.37;
-    const tunnelS = tunnel ? tunnel.startS + (tunnel.endS - tunnel.startS) * 0.35 : totalLen * 0.44;
-
-    // 1. Wide establishing view near Dragon Loop entrance
-    pushWp(loopS - 38, cfg.heightOffset * 1.45, -cfg.lateralOffset * 1.5, 42, 4.5);
-    // 2. Orbit outside Dragon Loop to showcase vertical corkscrew silhouette
-    pushWp(loopS, cfg.heightOffset * 1.25, cfg.lateralOffset * 2.1, -6, 6.0);
-    // 3. Glide across Jembatan Pelangi overlooking rainbow arch & park
-    pushWp(bridgeS, cfg.heightOffset * 1.15, -cfg.lateralOffset * 1.35, 34, 2.2);
-    // 4. Frame Terowongan Kristal portal & glowing ribs before sweeping to start straight
-    pushWp(tunnelS, cfg.heightOffset * 1.05, cfg.lateralOffset * 1.25, -18, 2.5);
-    // 5. Elevated approach down the main straight toward grid slot 0
-    pushWp(Math.max(0, course.isClosed() ? totalLen - 34 : 0), cfg.heightOffset * 0.72, 2.5, 42, 1.4);
-  } else {
-    // Acrobatic showcase for Sky Circuit (or any open/custom track):
-    // highlight Loop 1, Jump 1 / Flyover, and Loop 2
-    const loops = segments.filter((seg) => seg.type === 'loop');
-    const gaps = segments.filter((seg) => seg.type === 'gap');
-    const flyover = segments.find((seg) => seg.type === 'straight' && seg.length >= 90);
-
-    const p1S = loops[0] ? (loops[0].startS + loops[0].endS) * 0.5 : totalLen * 0.24;
-    const p2S = flyover
-      ? (flyover.startS + flyover.endS) * 0.45
-      : gaps[0]
-        ? gaps[0].startS
-        : totalLen * 0.52;
-    const p3S = loops[1]
-      ? (loops[1].startS + loops[1].endS) * 0.5
-      : gaps[1]
-        ? gaps[1].startS
-        : totalLen * 0.74;
-
-    // 1. Acrobatic Loop 1 aerial shot
-    pushWp(p1S, cfg.heightOffset * 1.2, cfg.lateralOffset * 1.55, 10, 4.2);
-    // 2. Elevated Flyover / Jump 1 sweep
-    pushWp(p2S, cfg.heightOffset * 1.15, -cfg.lateralOffset * 1.3, 28, 2.0);
-    // 3. Second Loop showcase
-    pushWp(p3S, cfg.heightOffset * 1.05, cfg.lateralOffset * 1.45, -12, 3.8);
-    // 4. Swoop back above opening straight ahead of the grid
-    const startSlotS = course.getGridSlots(course.getRacers())[0].s;
-    pushWp(startSlotS + 26, cfg.heightOffset * 0.65, -4.5, -24, 1.5);
+  for (let i = 0; i < waypoints.length; i++) {
+    const wp = waypoints[i];
+    const s = resolveWaypointS(wp, course, segments, totalLen);
+    const lat =
+      wp.lateralFixed !== undefined
+        ? wp.lateralFixed
+        : cfg.lateralOffset * (wp.lateralScale ?? 0);
+    const built = buildWaypointFromCourseS(
+      course,
+      s,
+      cfg.heightOffset * wp.heightScale,
+      lat,
+      wp.lookDeltaMeters,
+      wp.lookHeightOffset,
+    );
+    posPoints.push(built.pos);
+    lookPoints.push(built.look);
   }
 
   // Final point matches the grid chase camera pose so blend completes seamlessly
@@ -236,6 +247,7 @@ export function createIntroCamera(): IntroCameraController {
   let active = false;
   let finished = false;
   let elapsed = 0;
+  let activeDurationSec: number = CONFIG.intro.durationSeconds;
   let posCurve: THREE.CatmullRomCurve3 | null = null;
   let lookCurve: THREE.CatmullRomCurve3 | null = null;
   const endPos = new THREE.Vector3();
@@ -260,14 +272,22 @@ export function createIntroCamera(): IntroCameraController {
     lookCurve = null;
   };
 
-  const start = (course: Course, aspect = 1.77): boolean => {
+  const start = (
+    course: Course,
+    aspect = 1.77,
+    introConfig?: ArenaIntroCameraConfig,
+  ): boolean => {
     if (isReducedMotionPreferred()) {
       stop();
       finished = true;
       return false;
     }
+    activeDurationSec = Math.max(
+      1.5,
+      introConfig?.durationSeconds ?? CONFIG.arenaKit.introCameraDefaults.durationSeconds,
+    );
     endFov = resolveGridChaseTarget(course, aspect, endPos, endLook, endUp);
-    const curves = buildIntroSplines(course, endPos, endLook);
+    const curves = buildIntroSplines(course, endPos, endLook, introConfig);
     posCurve = curves.posCurve;
     lookCurve = curves.lookCurve;
     elapsed = 0;
@@ -281,7 +301,7 @@ export function createIntroCamera(): IntroCameraController {
       return false;
     }
     const dt = THREE.MathUtils.clamp(realDt, 0, CONFIG.sim.maxFrameDt);
-    const duration = Math.max(1.5, CONFIG.intro.durationSeconds);
+    const duration = activeDurationSec;
     elapsed = Math.min(duration, elapsed + dt);
     const t = THREE.MathUtils.clamp(elapsed / duration, 0, 1);
 

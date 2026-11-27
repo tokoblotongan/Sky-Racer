@@ -359,9 +359,15 @@ function runBranchAutopilotSim(
   };
 }
 
+export interface ValidateCourseOptions {
+  readonly validateDecor?: boolean;
+  readonly validateAttractions?: boolean;
+}
+
 export function validateCourse(
   course: Course,
   physicsConfig: typeof CONFIG.physics = CONFIG.physics,
+  options?: ValidateCourseOptions,
 ): CourseValidationReport {
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -1173,9 +1179,11 @@ export function validateCourse(
     });
   }
 
-  // (i) FantasyLand decor clearance & render budget validation
+  // (i) Theme decor clearance & render budget validation (for closed fantasyland arenas)
   let decorReport: DecorValidationResult | null = null;
-  if (course.getId() === 'fantasy-land') {
+  const shouldCheckDecor =
+    options?.validateDecor ?? (course.getThemeId() === 'fantasyland' && isClosed);
+  if (shouldCheckDecor) {
     const decorPlan = buildFantasyLandDecorPlan(course, 'high');
     const decorBudgets = estimateFantasyDecorBudgets(course);
     const minReqClear = CONFIG.fantasy.minClearance;
@@ -1359,9 +1367,10 @@ export function validateCourse(
     };
   }
 
-  // (j) FantasyLand attractions validation (counts, >=40m clearance, >=40% safe lane)
+  // (j) Attractions validation (counts, >=40m clearance, >=40% safe lane)
   let attractionsReport: AttractionsValidationResult | null = null;
-  if (course.getId() === 'fantasy-land') {
+  const shouldCheckAttractions = options?.validateAttractions ?? course.hasAttractions();
+  if (shouldCheckAttractions) {
     const attrSys = createAttractionSystem(course, true, 'sedang');
     const plan = attrSys.plan;
     const attrErrorsBefore = errors.length;

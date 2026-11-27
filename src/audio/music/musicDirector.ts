@@ -1,5 +1,6 @@
 // src/audio/music/musicDirector.ts
 
+import type { ArenaMusicConfig } from '../../arenas/types';
 import { CONFIG } from '../../config';
 import type { RaceEventBus } from '../../core/raceEvents';
 import type { MusicPlayer, MusicTrackId } from './musicPlayer';
@@ -9,19 +10,46 @@ export interface MusicDirector {
   dispose: () => void;
 }
 
-function resolveRaceTrackForCourse(courseId: string): MusicTrackId {
-  return courseId === 'sky-circuit' ? 'skyCircuitRace' : 'fantasyRace';
+interface ResolvedArenaMusic {
+  title: string;
+  race: string;
+  raceTrackId: MusicTrackId;
+  lastLap?: string;
+  win: string;
+  lose: string;
+}
+
+function resolveTracksForCourse(
+  courseId: string,
+  getArenaMusic?: (courseId: string) => ArenaMusicConfig | undefined,
+): ResolvedArenaMusic {
+  const custom = getArenaMusic?.(courseId);
+  const defaults = CONFIG.audio.music.tracks;
+  const raceFile = custom?.race ?? defaults.fantasyRace;
+  const raceTrackId: MusicTrackId =
+    raceFile === defaults.skyCircuitRace ? 'skyCircuitRace' : 'fantasyRace';
+  return {
+    title: custom?.title ?? defaults.title,
+    race: raceFile,
+    raceTrackId,
+    lastLap: custom?.lastLap,
+    win: custom?.win ?? defaults.fantasyWin,
+    lose: custom?.lose ?? defaults.fantasyLose,
+  };
 }
 
 export function createMusicDirector(
   player: MusicPlayer,
   bus: RaceEventBus,
   initialCourseId: string,
+  getArenaMusic?: (courseId: string) => ArenaMusicConfig | undefined,
 ): MusicDirector {
   const unsubscribers: Array<() => void> = [];
   let activeCourseId = initialCourseId;
   let lastFinishTrack: MusicTrackId | null = null;
   let disposed = false;
+
+  const initialTracks = resolveTracksForCourse(initialCourseId, getArenaMusic);
 
   // Boot strictly loads only the title track (lazy loading per stage)
   player.setIntroScale(1);
@@ -30,6 +58,7 @@ export function createMusicDirector(
     loop: true,
     fadeSeconds: 0,
     introVolumeScale: 1,
+    filename: initialTracks.title,
   });
 
   function onArenaSelected(courseId: string): void {
@@ -37,7 +66,8 @@ export function createMusicDirector(
       return;
     }
     activeCourseId = courseId;
-    player.preloadTrack(resolveRaceTrackForCourse(courseId));
+    const tracks = resolveTracksForCourse(courseId, getArenaMusic);
+    player.preloadTrack(tracks.raceTrackId, tracks.race);
   }
 
   unsubscribers.push(
@@ -46,6 +76,7 @@ export function createMusicDirector(
         return;
       }
       activeCourseId = courseId;
+      const tracks = resolveTracksForCourse(courseId, getArenaMusic);
 
       if (state === 'title') {
         lastFinishTrack = null;
@@ -55,32 +86,35 @@ export function createMusicDirector(
           loop: true,
           fadeSeconds: CONFIG.audio.music.fadeSeconds.crossfade,
           introVolumeScale: 1,
+          filename: tracks.title,
         });
         return;
       }
 
       if (state === 'intro') {
         lastFinishTrack = null;
-        player.preloadTrack(resolveRaceTrackForCourse(courseId));
+        player.preloadTrack(tracks.raceTrackId, tracks.race);
         player.setCountdownDuck(false);
         player.setIntroScale(CONFIG.audio.music.introVolume);
         player.playTrack('title', {
           loop: true,
           fadeSeconds: CONFIG.audio.music.fadeSeconds.crossfade,
           introVolumeScale: CONFIG.audio.music.introVolume,
+          filename: tracks.title,
         });
         return;
       }
 
       if (state === 'countdown') {
         lastFinishTrack = null;
-        player.preloadTrack(resolveRaceTrackForCourse(courseId));
+        player.preloadTrack(tracks.raceTrackId, tracks.race);
         player.setIntroScale(CONFIG.audio.music.introVolume);
         player.setCountdownDuck(true);
         player.playTrack('title', {
           loop: true,
           fadeSeconds: prevState === 'intro' ? 0 : 0.45,
           introVolumeScale: CONFIG.audio.music.introVolume,
+          filename: tracks.title,
         });
         return;
       }
@@ -93,6 +127,7 @@ export function createMusicDirector(
           fadeSeconds: 0.45,
           fadeOutAtEnd: true,
           introVolumeScale: 1,
+          filename: tracks.win,
         });
         lastFinishTrack = 'fantasyWin';
       }
@@ -106,17 +141,18 @@ export function createMusicDirector(
       }
       activeCourseId = courseId;
       lastFinishTrack = null;
+      const tracks = resolveTracksForCourse(courseId, getArenaMusic);
       player.setCountdownDuck(false);
       player.setIntroScale(1);
-      const raceTrack = resolveRaceTrackForCourse(courseId);
-      player.playTrack(raceTrack, {
+      player.playTrack(tracks.raceTrackId, {
         loop: true,
         fadeSeconds: CONFIG.audio.music.fadeSeconds.crossfade,
         introVolumeScale: 1,
+        filename: tracks.race,
       });
 
       if (totalLaps <= 1) {
-        player.preloadTrack('fantasyWin');
+        player.preloadTrack('fantasyWin', tracks.win);
       }
     }),
   );
@@ -126,8 +162,9 @@ export function createMusicDirector(
       if (disposed) {
         return;
       }
-      if (activeCourseId !== 'sky-circuit' && totalLaps >= 3 && lap === 2) {
-        player.preloadTrack('fantasyLastLap');
+      const tracks = resolveTracksForCourse(activeCourseId, getArenaMusic);
+      if (tracks.lastLap && totalLaps >= 3 && lap === 2) {
+        player.preloadTrack('fantasyLastLap', tracks.lastLap);
       }
     }),
   );
@@ -138,16 +175,20 @@ export function createMusicDirector(
         return;
       }
       activeCourseId = courseId;
+      const tracks = resolveTracksForCourse(courseId, getArenaMusic);
       player.setIntroScale(1);
       player.setCountdownDuck(false);
-      player.playTrack('fantasyLastLap', {
-        loop: true,
-        fadeSeconds: CONFIG.audio.music.fadeSeconds.lastLap,
-        forceRestart: true,
-        introVolumeScale: 1,
-      });
-      player.preloadTrack('fantasyWin');
-      player.preloadTrack('fantasyLose');
+      if (tracks.lastLap) {
+        player.playTrack('fantasyLastLap', {
+          loop: true,
+          fadeSeconds: CONFIG.audio.music.fadeSeconds.lastLap,
+          forceRestart: true,
+          introVolumeScale: 1,
+          filename: tracks.lastLap,
+        });
+      }
+      player.preloadTrack('fantasyWin', tracks.win);
+      player.preloadTrack('fantasyLose', tracks.lose);
     }),
   );
 
@@ -156,6 +197,7 @@ export function createMusicDirector(
       if (disposed) {
         return;
       }
+      const tracks = resolveTracksForCourse(activeCourseId, getArenaMusic);
       const isWin = totalRacers <= 1 || position <= 3;
       const track: MusicTrackId = isWin ? 'fantasyWin' : 'fantasyLose';
       lastFinishTrack = track;
@@ -167,6 +209,7 @@ export function createMusicDirector(
         forceRestart: true,
         fadeOutAtEnd: isWin,
         introVolumeScale: 1,
+        filename: isWin ? tracks.win : tracks.lose,
       });
     }),
   );

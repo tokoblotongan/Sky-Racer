@@ -36,3 +36,12 @@ Berkas musik di `public/audio/` terintegrasi penuh melalui `createMusicPlayer()`
 
 - **Ducking**: Penurunan volume musik sementara sebesar 25% selama 400 ms pada kejadian pemain `hazardHit` dan `boostStarted`, serta 15% selama `countdown`.
 - **Kontrol & Diagnostik**: Tombol `M` untuk mute total (`localStorage`), pengaturan `Musik: Nyala/Mati` dan slider `Volume Musik` (default `0.6`, tersimpan di `sky-racer-music-v1`), `?nomusic` untuk menonaktifkan musik, dan `?debug` untuk menampilkan trek aktif, volume, serta status pemutaran.
+
+---
+
+# Skema Arena Kit (`src/arenas/`, `src/themes/`)
+
+- **Kontrak Arena (`ArenaDefinition`)**: Didefinisikan di `src/arenas/types.ts` dan dikumpulkan melalui `createDefaultArenaRegistry()` (`src/arenas/index.ts`, tanpa variabel global). Memuat `id`, `name`, `tagline`, `description`, `order`, `mode`, `laps`, `opponentCount`, pabrik `course`, `routes`, `zones`, `attractions`, `theme` (+ opsional `themeDefinition`), `background`, `lightingProfile`, `carVisualScale`, `music`, `minimap`, `introCamera`, `capabilities`, `budgets`, dan opsional `comingSoon`.
+- **Kunci Rekor Unik**: Setiap arena menyimpan rekor lokal pada kunci terpisah `sky-racer-records-v1:<arenaId>` lewat `getRecordsStorageKey(arenaId)` di `src/services/records.ts`. Data lama tanpa akhiran arena dimigrasikan otomatis saat dibaca pertama kali.
+- **Generator & Validator**: Gunakan `npm run new:arena -- <id> "<Nama>"` untuk membuat kerangka dari `src/arenas/_template/` dan `npm run validate:arenas` untuk validasi otomatis kelengkapan field, geometri/atraksi, uji AI 1 lap, anggaran scene, aset musik, dan keunikan kunci penyimpanan.
+

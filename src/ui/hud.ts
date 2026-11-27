@@ -68,8 +68,10 @@ export interface TitleScreenData {
   medals: CourseMedals;
   records: CourseRecords;
   racers?: number;
+  hasOpponents?: boolean;
   aiDifficulty?: AiDifficulty;
   attractionsEnabled?: boolean;
+  attractionsAvailable?: boolean;
 }
 
 export interface FinishScreenData {
@@ -1583,7 +1585,7 @@ export function updateTitleScreen(hud: HudHandle, data: TitleScreenData): void {
   hud.titleTargetSilverEl.textContent = formatRaceTime(data.medals.silver);
   hud.titleTargetBronzeEl.textContent = formatRaceTime(data.medals.bronze);
 
-  const showDifficulty = (data.racers ?? 1) > 1;
+  const showDifficulty = data.hasOpponents ?? (data.racers ?? 1) > 1;
   hud.titleDiffRowEl.classList.toggle('sr-hud-hidden', !showDifficulty);
   if (showDifficulty) {
     const activeDiff = data.aiDifficulty ?? CONFIG.ai.defaultDifficulty;
@@ -1593,7 +1595,7 @@ export function updateTitleScreen(hud: HudHandle, data: TitleScreenData): void {
     }
   }
 
-  const showAttrRow = data.courseId === 'fantasy-land';
+  const showAttrRow = data.attractionsAvailable ?? false;
   hud.titleAttrRowEl.classList.toggle('sr-hud-hidden', !showAttrRow);
   if (showAttrRow) {
     const enabled = data.attractionsEnabled ?? true;

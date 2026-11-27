@@ -1,6 +1,7 @@
 // src/core/course.ts
 
 import * as THREE from 'three';
+import { arenaToCourseDefinition, type ArenaDefinition } from '../arenas/types';
 import { CONFIG } from '../config';
 import { getCourse, type CourseDefinition } from '../courses';
 import type {
@@ -69,6 +70,7 @@ export interface CourseConfig {
   closed?: boolean;
   laps?: number;
   racers?: number;
+  hasAttractions?: boolean;
   medals?: CourseMedals;
   segments: readonly CourseSegmentConfig[];
   routes?: readonly RouteDefinition[];
@@ -98,6 +100,7 @@ export function buildCourseConfigFromDefinition(
     closed: Boolean(definition.closed),
     laps: Math.max(1, Math.round(definition.laps ?? 1)),
     racers: Math.max(1, Math.round(definition.racers ?? 1)),
+    hasAttractions: Boolean(definition.hasAttractions),
     medals: definition.medals,
     segments: definition.segments,
     routes: definition.routes,
@@ -115,11 +118,19 @@ export function buildCourseConfigFromDefinition(
   };
 }
 
+export function buildCourseConfigFromArena(
+  arena: ArenaDefinition,
+  validate?: boolean,
+): CourseConfig {
+  return buildCourseConfigFromDefinition(arenaToCourseDefinition(arena), validate);
+}
+
 export class Course extends SampledRouteBase implements Route {
   private readonly id: string;
   private readonly themeId: ThemeId;
   private readonly laps: number;
   readonly racers: number;
+  private readonly attractionsEnabled: boolean;
   private readonly medals: CourseMedals;
   private readonly closureReport: ClosureReport | null;
   private readonly checkpoints: CheckpointData[];
@@ -196,6 +207,7 @@ export class Course extends SampledRouteBase implements Route {
     this.themeId = themeId;
     this.laps = laps;
     this.racers = racers;
+    this.attractionsEnabled = Boolean(config.hasAttractions);
     this.medals = medals;
     this.closureReport = sampled.closureReport;
 
@@ -365,6 +377,10 @@ export class Course extends SampledRouteBase implements Route {
 
   getRacers(): number {
     return this.racers;
+  }
+
+  hasAttractions(): boolean {
+    return this.attractionsEnabled;
   }
 
   getClosureReport(): ClosureReport | null {

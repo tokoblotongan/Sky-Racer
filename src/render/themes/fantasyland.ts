@@ -4,6 +4,12 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CONFIG, type GraphicsPreset, type VisualPresetName } from '../../config';
 import type { Course } from '../../core/course';
+import type {
+  ThemeDefinition,
+  ThemeQualityTiers,
+  ThemeSceneryContext,
+  ThemeSceneryHandle,
+} from '../../themes/types';
 import { createFantasyDecorManager } from '../fantasy/decorManager';
 import { createSurfaceMaterial } from '../materialFactory';
 import type { QualityLevel } from '../quality';
@@ -201,43 +207,66 @@ function createSunGlowTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-export const fantasyLandTheme: WorldTheme = {
-  id: 'fantasyland',
+function getFantasySkyColors(presetName: VisualPresetName): ThemeSkyColors {
+  return {
+    skyTop: presetName === 'pastel' ? '#5A96FF' : '#3A7BFF',
+    skyHorizon: presetName === 'pastel' ? '#FFD6F4' : '#FFC8F0',
+    groundBounce: '#1FA84F',
+    fogColor: '#BEE3FF',
+  };
+}
 
-  getSkyColors(presetName: VisualPresetName): ThemeSkyColors {
-    return {
-      skyTop: presetName === 'pastel' ? '#5A96FF' : '#3A7BFF',
-      skyHorizon: presetName === 'pastel' ? '#FFD6F4' : '#FFC8F0',
-      groundBounce: '#1FA84F',
-      fogColor: '#BEE3FF',
-    };
-  },
+function getFantasyLighting(presetName: VisualPresetName): ThemeLightingConfig {
+  return {
+    hemisphereSkyColor: '#78B6FF',
+    hemisphereGroundColor: '#2ED66B',
+    hemisphereIntensity: 0.72,
+    sunColor: '#FFE8B8',
+    sunIntensity: 3.0,
+    exposure: presetName === 'pastel' ? 0.92 : 0.96,
+    envIntensity: 0.42,
+    showRoomShell: false,
+  };
+}
 
-  getLighting(presetName: VisualPresetName): ThemeLightingConfig {
-    return {
-      hemisphereSkyColor: '#78B6FF',
-      hemisphereGroundColor: '#2ED66B',
-      hemisphereIntensity: 0.72,
-      sunColor: '#FFE8B8',
-      sunIntensity: 3.0,
-      exposure: presetName === 'pastel' ? 0.92 : 0.96,
-      envIntensity: 0.42,
-      showRoomShell: false,
-    };
-  },
+function buildFantasyQualityTiers(): ThemeQualityTiers {
+  const levels = CONFIG.quality.levels;
+  return {
+    mobile: {
+      propsDensityScale: levels.mobile.propsDensityScale,
+      cloudDensityScale: levels.mobile.cloudDensityScale,
+      shadowsEnabled: levels.mobile.shadowsEnabled,
+      maxTextureSize: levels.mobile.maxTextureSize,
+    },
+    low: {
+      propsDensityScale: levels.low.propsDensityScale,
+      cloudDensityScale: levels.low.cloudDensityScale,
+      shadowsEnabled: levels.low.shadowsEnabled,
+      maxTextureSize: levels.low.maxTextureSize,
+    },
+    medium: {
+      propsDensityScale: levels.medium.propsDensityScale,
+      cloudDensityScale: levels.medium.cloudDensityScale,
+      shadowsEnabled: levels.medium.shadowsEnabled,
+      maxTextureSize: levels.medium.maxTextureSize,
+    },
+    high: {
+      propsDensityScale: levels.high.propsDensityScale,
+      cloudDensityScale: levels.high.cloudDensityScale,
+      shadowsEnabled: levels.high.shadowsEnabled,
+      maxTextureSize: levels.high.maxTextureSize,
+    },
+  };
+}
 
-  applyPalette(_name: VisualPresetName): void {
-    // Warna langit dan cahaya disinkronkan melalui getSkyColors/getLighting di scene.ts
-  },
-
-  build(
-    course: Course,
-    quality: QualityLevel,
-    _scene: THREE.Scene,
-    maxAnisotropy: number,
-    _presetName: VisualPresetName,
-    graphicsPreset: GraphicsPreset = 'penuh',
-  ): ThemeInstance {
+function buildFantasyLandThemeInstance(
+  course: Course,
+  quality: QualityLevel,
+  _scene: THREE.Scene,
+  maxAnisotropy: number,
+  _presetName: VisualPresetName,
+  graphicsPreset: GraphicsPreset = 'penuh',
+): ThemeInstance {
     const group = new THREE.Group();
     group.name = 'FantasyLandThemeGroup';
 
@@ -859,5 +888,57 @@ export const fantasyLandTheme: WorldTheme = {
       getGroundY,
       dispose,
     };
+}
+
+export const fantasyLandThemeDefinition: ThemeDefinition = {
+  id: 'fantasyland',
+  background: {
+    type: 'meadow-island',
+    params: {
+      vivid: getFantasySkyColors('vivid'),
+      pastel: getFantasySkyColors('pastel'),
+    },
   },
+  lightingProfile: {
+    id: 'fantasyland-meadow',
+    vivid: getFantasyLighting('vivid'),
+    pastel: getFantasyLighting('pastel'),
+  },
+  qualityTiers: buildFantasyQualityTiers(),
+  buildScenery(context: ThemeSceneryContext): ThemeSceneryHandle {
+    const instance = buildFantasyLandThemeInstance(
+      context.course,
+      context.quality,
+      context.scene,
+      context.maxAnisotropy,
+      context.presetName,
+      context.graphicsPreset ?? 'penuh',
+    );
+    const fallbackCamPos = new THREE.Vector3();
+    return {
+      id: 'fantasyland',
+      group: instance.group,
+      update(dt: number, cameraPos?: THREE.Vector3): void {
+        instance.update(cameraPos ?? fallbackCamPos, dt);
+      },
+      applyPalette(name: VisualPresetName): void {
+        instance.applyPalette(name);
+      },
+      getGroundY: instance.getGroundY,
+      dispose(): void {
+        instance.dispose();
+      },
+    };
+  },
+};
+
+export const fantasyLandTheme: WorldTheme = {
+  id: 'fantasyland',
+  definition: fantasyLandThemeDefinition,
+  getSkyColors: getFantasySkyColors,
+  getLighting: getFantasyLighting,
+  applyPalette(_name: VisualPresetName): void {
+    // Sky and lighting colors are synchronized via getSkyColors/getLighting in scene.ts
+  },
+  build: buildFantasyLandThemeInstance,
 };

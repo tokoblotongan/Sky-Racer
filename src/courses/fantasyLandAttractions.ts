@@ -226,9 +226,12 @@ export function distanceSInterval(
   return minD;
 }
 
-export function createFantasyLandAttractionsPlan(course: Course): FantasyLandAttractionsPlan {
-  const isFantasyLand = course.getId() === 'fantasy-land';
-  if (!isFantasyLand) {
+export function createFantasyLandAttractionsPlan(
+  course: Course,
+  enabledOverride?: boolean,
+): FantasyLandAttractionsPlan {
+  const isEnabled = enabledOverride ?? course.hasAttractions();
+  if (!isEnabled) {
     return {
       courseId: course.getId(),
       enabledForCourse: false,

@@ -1,7 +1,7 @@
 // src/courses/index.ts
 
+import { arenaToCourseDefinition, createDefaultArenaRegistry } from '../arenas';
 import { CONFIG } from '../config';
-import { fantasyLandCourse } from './fantasyLand';
 import { skyCircuitCourse } from './skyCircuit';
 import type { CourseDefinition } from './types';
 
@@ -15,47 +15,57 @@ export type {
 
 export const defaultCourseId = CONFIG.activeCourseId;
 
-const COURSES: readonly CourseDefinition[] = [skyCircuitCourse, fantasyLandCourse];
-
-const COURSE_BY_ID = new Map<string, CourseDefinition>(
-  COURSES.map((course) => [course.id, course]),
-);
-
 let memoryLastCourseId: string | null = null;
 
+function buildCourseList(): readonly CourseDefinition[] {
+  const registry = createDefaultArenaRegistry();
+  return registry
+    .listArenas({ includeComingSoon: false })
+    .map((arena) => arenaToCourseDefinition(arena));
+}
+
 export function getCourse(id: string): CourseDefinition {
-  return COURSE_BY_ID.get(id) ?? COURSE_BY_ID.get(defaultCourseId) ?? skyCircuitCourse;
+  const courses = buildCourseList();
+  return (
+    courses.find((course) => course.id === id) ??
+    courses.find((course) => course.id === defaultCourseId) ??
+    courses[0] ??
+    skyCircuitCourse
+  );
 }
 
 export function listCourses(): readonly CourseDefinition[] {
-  return COURSES;
+  return buildCourseList();
 }
 
 export function getLastCourseId(): string {
+  const courses = buildCourseList();
+  const hasId = (candidate: string): boolean => courses.some((c) => c.id === candidate);
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       const saved = window.localStorage.getItem(CONFIG.storage.lastCourseKey);
-      if (saved && COURSE_BY_ID.has(saved)) {
+      if (saved && hasId(saved)) {
         return saved;
       }
     }
   } catch {
-    // Fallback ke memori sesi / defaultCourseId jika localStorage tidak tersedia
+    // Fallback to session memory / defaultCourseId when localStorage is unavailable
   }
-  if (memoryLastCourseId && COURSE_BY_ID.has(memoryLastCourseId)) {
+  if (memoryLastCourseId && hasId(memoryLastCourseId)) {
     return memoryLastCourseId;
   }
-  return COURSE_BY_ID.has(defaultCourseId) ? defaultCourseId : skyCircuitCourse.id;
+  return hasId(defaultCourseId) ? defaultCourseId : (courses[0]?.id ?? skyCircuitCourse.id);
 }
 
 export function setLastCourseId(id: string): void {
-  const validId = COURSE_BY_ID.has(id) ? id : getCourse(defaultCourseId).id;
+  const courses = buildCourseList();
+  const validId = courses.some((c) => c.id === id) ? id : getCourse(defaultCourseId).id;
   memoryLastCourseId = validId;
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.setItem(CONFIG.storage.lastCourseKey, validId);
     }
   } catch {
-    // Abaikan kegagalan penyimpanan jika mode privasi/terbatas
+    // Ignore storage write failure in restricted/private environments
   }
 }

@@ -30,12 +30,13 @@ export interface PlayTrackOptions {
   forceRestart?: boolean;
   fadeOutAtEnd?: boolean;
   introVolumeScale?: number;
+  filename?: string;
 }
 
 export interface MusicPlayer {
   init: () => void;
   playTrack: (trackId: MusicTrackId, options: PlayTrackOptions) => void;
-  preloadTrack: (trackId: MusicTrackId) => void;
+  preloadTrack: (trackId: MusicTrackId, filename?: string) => void;
   setIntroScale: (scale: number) => void;
   setCountdownDuck: (active: boolean) => void;
   triggerEventDuck: () => void;
@@ -62,6 +63,7 @@ interface AudioSlot {
   source: MediaElementAudioSourceNode | null;
   gainNode: GainNode | null;
   trackId: MusicTrackId | null;
+  trackFilename: string | null;
   loop: boolean;
   fadeOutAtEnd: boolean;
   gainValue: number;
@@ -91,13 +93,17 @@ function isNoMusicUrlEnabled(): boolean {
   }
 }
 
-function resolveTrackUrl(trackId: MusicTrackId): string {
+function resolveTrackFilename(trackId: MusicTrackId, filename?: string): string {
+  return filename && filename.trim() ? filename.trim() : CONFIG.audio.music.tracks[trackId];
+}
+
+function resolveTrackUrl(trackId: MusicTrackId, filename?: string): string {
   const base =
     typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.BASE_URL
       ? import.meta.env.BASE_URL
       : '/';
   const cleanBase = base.endsWith('/') ? base : `${base}/`;
-  return `${cleanBase}audio/${CONFIG.audio.music.tracks[trackId]}`;
+  return `${cleanBase}audio/${resolveTrackFilename(trackId, filename)}`;
 }
 
 function loadMusicPrefs(): { enabled: boolean; volume: number } {
@@ -149,6 +155,7 @@ function createAudioSlot(isMobile: boolean): AudioSlot {
     source: null,
     gainNode: null,
     trackId: null,
+    trackFilename: null,
     loop: false,
     fadeOutAtEnd: false,
     gainValue: 0,
@@ -186,7 +193,7 @@ export function createMusicPlayer(
   let unlockUnsub: (() => void) | null = null;
   let gestureListenersAttached = false;
 
-  const preloadElements = new Map<MusicTrackId, HTMLAudioElement>();
+  const preloadElements = new Map<string, HTMLAudioElement>();
 
   let currentIntroScale = 1;
   let targetIntroScale = 1;
@@ -196,6 +203,7 @@ export function createMusicPlayer(
 
   let desiredRequest: {
     trackId: MusicTrackId;
+    filename: string;
     loop: boolean;
     fadeSeconds: number;
     fadeOutAtEnd: boolean;
@@ -325,10 +333,11 @@ export function createMusicPlayer(
       return;
     }
     const failedTrack = slot.trackId;
+    const failedFile = slot.trackFilename ?? resolveTrackFilename(failedTrack);
     if (slot.retryCount < 1) {
       slot.retryCount += 1;
       try {
-        slot.el.src = resolveTrackUrl(failedTrack);
+        slot.el.src = resolveTrackUrl(failedTrack, failedFile);
         slot.el.load();
         if (
           slot === getActiveSlot() &&
@@ -509,23 +518,25 @@ export function createMusicPlayer(
     }
   }
 
-  function preloadTrack(trackId: MusicTrackId): void {
+  function preloadTrack(trackId: MusicTrackId, filename?: string): void {
     if (disposed || noMusic || !musicEnabled) {
       return;
     }
+    const targetFile = resolveTrackFilename(trackId, filename);
     const active = getActiveSlot();
-    if (active.trackId === trackId) {
+    if (active.trackId === trackId && active.trackFilename === targetFile) {
       return;
     }
-    const url = resolveTrackUrl(trackId);
+    const url = resolveTrackUrl(trackId, targetFile);
+    const cacheKey = `${trackId}::${targetFile}`;
     const desiredPreload = isMobile ? 'metadata' : 'auto';
-    let preEl = preloadElements.get(trackId);
+    let preEl = preloadElements.get(cacheKey);
     if (!preEl) {
       preEl = document.createElement('audio');
       preEl.crossOrigin = 'anonymous';
       preEl.preload = desiredPreload;
       preEl.src = url;
-      preloadElements.set(trackId, preEl);
+      preloadElements.set(cacheKey, preEl);
       try {
         preEl.load();
       } catch {
@@ -540,6 +551,7 @@ export function createMusicPlayer(
     if (disposed) {
       return;
     }
+    const targetFile = resolveTrackFilename(trackId, options.filename);
     const loop = options.loop;
     const fadeSeconds = Math.max(0, options.fadeSeconds ?? CONFIG.audio.music.fadeSeconds.crossfade);
     const forceRestart = Boolean(options.forceRestart);
@@ -551,6 +563,7 @@ export function createMusicPlayer(
 
     desiredRequest = {
       trackId,
+      filename: targetFile,
       loop,
       fadeSeconds,
       fadeOutAtEnd,
@@ -564,6 +577,7 @@ export function createMusicPlayer(
     const currentActive = getActiveSlot();
     if (
       currentActive.trackId === trackId &&
+      currentActive.trackFilename === targetFile &&
       !forceRestart &&
       !currentActive.errored &&
       !currentActive.finishedNaturally
@@ -588,6 +602,7 @@ export function createMusicPlayer(
     const prevSlot = currentActive;
 
     targetSlot.trackId = trackId;
+    targetSlot.trackFilename = targetFile;
     targetSlot.loop = loop;
     targetSlot.fadeOutAtEnd = fadeOutAtEnd;
     targetSlot.endFadeTriggered = false;
@@ -598,7 +613,7 @@ export function createMusicPlayer(
     targetSlot.el.preload =
       audioManager.isUnlocked() || !isMobile ? 'auto' : 'metadata';
 
-    const nextUrl = resolveTrackUrl(trackId);
+    const nextUrl = resolveTrackUrl(trackId, targetFile);
     try {
       targetSlot.el.pause();
       if (targetSlot.el.getAttribute('src') !== nextUrl) {
@@ -612,7 +627,7 @@ export function createMusicPlayer(
     const shouldCrossfade =
       fadeSeconds > 0 &&
       prevSlot.trackId !== null &&
-      prevSlot.trackId !== trackId &&
+      (prevSlot.trackId !== trackId || prevSlot.trackFilename !== targetFile) &&
       !prevSlot.el.paused &&
       !prevSlot.errored;
 
@@ -717,11 +732,15 @@ export function createMusicPlayer(
 
     const active = getActiveSlot();
     if (desiredRequest) {
-      if (active.trackId !== desiredRequest.trackId) {
+      if (
+        active.trackId !== desiredRequest.trackId ||
+        active.trackFilename !== desiredRequest.filename
+      ) {
         playTrack(desiredRequest.trackId, {
           loop: desiredRequest.loop,
           fadeSeconds: 0.4,
           fadeOutAtEnd: desiredRequest.fadeOutAtEnd,
+          filename: desiredRequest.filename,
         });
       } else if (!externalPaused && !(typeof document !== 'undefined' && document.hidden)) {
         if (audioManager.isUnlocked()) {
@@ -758,10 +777,15 @@ export function createMusicPlayer(
   }
 
   function getDebugSnapshot(): MusicDebugSnapshot {
+    const active = getActiveSlot();
     const trackId = getCurrentTrackId();
+    const trackLabel =
+      active.trackFilename ??
+      desiredRequest?.filename ??
+      (trackId ? CONFIG.audio.music.tracks[trackId] : 'none');
     return {
       trackId,
-      trackLabel: trackId ? CONFIG.audio.music.tracks[trackId] : 'none',
+      trackLabel,
       volume: userVolume,
       effectiveVolume: computeBusGain(),
       enabled: musicEnabled,
@@ -861,6 +885,7 @@ export function createMusicPlayer(
       s.source = null;
       s.gainNode = null;
       s.trackId = null;
+      s.trackFilename = null;
     }
     try {
       musicBusGain?.disconnect();

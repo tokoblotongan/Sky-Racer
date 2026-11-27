@@ -13,6 +13,7 @@ export const fantasyLandCourse: CourseDefinition = {
   closed: true,
   laps: 3,
   racers: 4,
+  hasAttractions: true,
   trackWidth: 16,
   startPosition: { x: 0, y: 34, z: 120 },
   startHeadingDeg: 0,
