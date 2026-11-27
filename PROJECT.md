@@ -96,6 +96,6 @@ src/
 Pelacak: [x] F1A  [x] F1B  [x] F2 sebagian (F2A)  [x] F3  [x] F4  [x] F5  [x] F6  [x] F7  [x] Musik  [x] Arena Kit
 
 ## ARENA 3: Dapur Raksasa (`kitchen`, 4 pemain: 1 manusia + 3 AI)
-- Sirkuit tertutup, 3 lap, lebar lintasan 14 m, data & tema di `src/arenas/kitchen/`.
-- Meja dapur kotak-kotak toska-putih prosedural, jendela langit cerah tanpa kabut, 6 zona bernama + `Rute Pintas Rak Bumbu`.
-Pelacak: [x] K1 (Definisi, Lintasan, Tema Dasar)  [ ] K2 (Dekor Dapur)  [ ] K3 (Atraksi)
+- Sirkuit tertutup, 3 lap, lebar lintasan 14 m, data & tema di `src/arenas/kitchen/` dan `src/render/themes/kitchen/`.
+- Dunia dapur raksasa tanpa kabut (meja checker toska-putih, dinding ubin, jendela langit cerah, kabinet), 7 zona dekor bernama, dan properti pengisi deterministik tervalidasi jarak bebas.
+Pelacak: [x] K1 (Definisi, Lintasan, Tema Dasar)  [x] K2 (Dekor Dapur)  [ ] K3 (Atraksi)

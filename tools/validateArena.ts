@@ -31,6 +31,8 @@ import { distanceSInterval } from '../src/courses/fantasyLandAttractions';
 import { getThemeDefinition } from '../src/render/themes';
 import { getRecordsStorageKey } from '../src/services/records';
 
+import type { GraphicsPreset } from '../src/config';
+
 interface CheckResult {
   name: string;
   ok: boolean;
@@ -41,6 +43,7 @@ interface BudgetUsage {
   meshes: number;
   triangles: number;
   instances: number;
+  drawCalls: number;
   textureMB: number;
   textureCount: number;
 }
@@ -50,6 +53,7 @@ interface ArenaValidationSummary {
   ok: boolean;
   checks: CheckResult[];
   budgets?: BudgetUsage;
+  tierBudgets?: Record<GraphicsPreset, BudgetUsage>;
 }
 
 function parseArenaIdArg(argv: readonly string[]): string | null {
@@ -412,25 +416,28 @@ function runAiOneLapSmoke(arena: ArenaDefinition): CheckResult {
   };
 }
 
-function checkThemeBudgets(
+function measureThemePresetUsage(
   arena: ArenaDefinition,
   course: Course,
-): { result: CheckResult; usage: BudgetUsage } {
-  const usage: BudgetUsage = withHeadlessDocument(() => {
+  graphicsPreset: GraphicsPreset,
+): BudgetUsage {
+  return withHeadlessDocument(() => {
     const scene = new THREE.Scene();
     const themeDef = arena.themeDefinition ?? getThemeDefinition(arena.theme);
+    const quality = graphicsPreset === 'hemat' ? 'mobile' : graphicsPreset === 'seimbang' ? 'medium' : 'high';
     const handle = themeDef.buildScenery({
       course,
-      quality: 'high',
+      quality,
       scene,
       maxAnisotropy: 1,
       presetName: 'vivid',
-      graphicsPreset: 'penuh',
+      graphicsPreset,
     });
 
     let meshes = 0;
     let triangles = 0;
     let instances = 0;
+    let drawCalls = 0;
     const textures = new Set<THREE.Texture>();
 
     handle.group.traverse((obj) => {
@@ -448,8 +455,10 @@ function checkThemeBudgets(
             const inst = obj as THREE.InstancedMesh;
             instances += inst.count;
             triangles += triBase * inst.count;
+            if (inst.count > 0) drawCalls++;
           } else {
             triangles += triBase;
+            drawCalls++;
           }
         }
         const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -489,10 +498,24 @@ function checkThemeBudgets(
       meshes,
       triangles: Math.round(triangles),
       instances,
+      drawCalls,
       textureMB: Number((textureBytes / (1024 * 1024)).toFixed(2)),
       textureCount: textures.size,
     };
   });
+}
+
+function checkThemeBudgets(
+  arena: ArenaDefinition,
+  course: Course,
+): {
+  result: CheckResult;
+  usage: BudgetUsage;
+  tierBudgets: Record<GraphicsPreset, BudgetUsage>;
+} {
+  const hematUsage = measureThemePresetUsage(arena, course, 'hemat');
+  const seimbangUsage = measureThemePresetUsage(arena, course, 'seimbang');
+  const usage = measureThemePresetUsage(arena, course, 'penuh');
 
   const b = arena.budgets;
   const over: string[] = [];
@@ -503,6 +526,11 @@ function checkThemeBudgets(
 
   return {
     usage,
+    tierBudgets: {
+      hemat: hematUsage,
+      seimbang: seimbangUsage,
+      penuh: usage,
+    },
     result: {
       name: 'Scenery Budgets',
       ok: over.length === 0,
@@ -511,6 +539,78 @@ function checkThemeBudgets(
           ? `meshes=${usage.meshes}/${b.meshes}, tris=${usage.triangles}/${b.triangles}, inst=${usage.instances}/${b.instances}, tex=${usage.textureMB.toFixed(2)}/${b.textureMB.toFixed(2)}MB`
           : `Over budget: ${over.join(', ')}`,
     },
+  };
+}
+
+function checkDecorClearance(arena: ArenaDefinition, course: Course): CheckResult | null {
+  const themeDef = arena.themeDefinition ?? getThemeDefinition(arena.theme);
+  if (!themeDef.getDecorFootprints) {
+    return null;
+  }
+
+  const footprints = withHeadlessDocument(() =>
+    themeDef.getDecorFootprints!({
+      course,
+      quality: 'high',
+      scene: new THREE.Scene(),
+      maxAnisotropy: 1,
+      presetName: 'vivid',
+      graphicsPreset: 'penuh',
+    }),
+  );
+
+  const reqClearance = CONFIG.kitchenDecor.clearanceMeters;
+  const routeSamples: Array<{ routeId: string; x: number; z: number; halfWidth: number }> = [];
+  for (const route of course.getAllRoutes()) {
+    const samples = route.getSamples();
+    for (let i = 0; i < samples.length; i++) {
+      const f = samples[i];
+      routeSamples.push({
+        routeId: route.routeId,
+        x: f.position.x,
+        z: f.position.z,
+        halfWidth: f.width * 0.5,
+      });
+    }
+  }
+
+  const violations: string[] = [];
+  let minEdgeClearance = Number.POSITIVE_INFINITY;
+  let checkedCount = 0;
+  let structureCount = 0;
+
+  for (const fp of footprints) {
+    if (fp.isTrackStructure) {
+      structureCount++;
+      continue;
+    }
+    checkedCount++;
+    let fpMin = Number.POSITIVE_INFINITY;
+    let worstRoute = 'main';
+    for (const sample of routeSamples) {
+      const dist = Math.hypot(fp.x - sample.x, fp.z - sample.z);
+      const edgeClearance = dist - fp.radius - sample.halfWidth;
+      if (edgeClearance < fpMin) {
+        fpMin = edgeClearance;
+        worstRoute = sample.routeId;
+      }
+    }
+    if (fpMin < minEdgeClearance) {
+      minEdgeClearance = fpMin;
+    }
+    if (fpMin < reqClearance - 1e-3) {
+      violations.push(`${fp.id} (${worstRoute}: ${fpMin.toFixed(2)}m < ${reqClearance}m)`);
+    }
+  }
+
+  const minLabel = Number.isFinite(minEdgeClearance) ? `${minEdgeClearance.toFixed(2)}m` : 'n/a';
+  return {
+    name: 'Decor Clearance',
+    ok: violations.length === 0,
+    detail:
+      violations.length === 0
+        ? `${checkedCount} props cleared >= ${reqClearance}m (min=${minLabel}, trackStructures=${structureCount})`
+        : `Clearance violations: ${violations.slice(0, 4).join(', ')}`,
   };
 }
 
@@ -591,6 +691,10 @@ function validateSingleArena(
 
   const budgetOut = checkThemeBudgets(arena, course);
   checks.push(budgetOut.result);
+  const decorClearance = checkDecorClearance(arena, course);
+  if (decorClearance) {
+    checks.push(decorClearance);
+  }
   checks.push(checkMusicAssets(arena));
   checks.push(checkUniqueStorageKeys(arena, allArenas));
 
@@ -599,6 +703,7 @@ function validateSingleArena(
     ok: checks.every((c) => c.ok),
     checks,
     budgets: budgetOut.usage,
+    tierBudgets: budgetOut.tierBudgets,
   };
 }
 
@@ -616,6 +721,19 @@ function writePerArenaReport(outDir: string, summary: ArenaValidationSummary): s
   ];
   for (const c of summary.checks) {
     lines.push(`| ${c.name} | ${c.ok ? 'PASS' : 'FAIL'} | ${c.detail} |`);
+  }
+  if (summary.tierBudgets) {
+    lines.push('');
+    lines.push('## Scenery Stats by Quality Preset');
+    lines.push('');
+    lines.push('| Preset | Meshes | Triangles | Instances | Est. Draw Calls | Texture MB |');
+    lines.push('|---|---|---|---|---|---|');
+    for (const preset of ['hemat', 'seimbang', 'penuh'] as const) {
+      const t = summary.tierBudgets[preset];
+      lines.push(
+        `| \`${preset}\` | ${t.meshes} | ${t.triangles} | ${t.instances} | ${t.drawCalls} | ${t.textureMB.toFixed(2)} |`,
+      );
+    }
   }
   lines.push('');
   fs.writeFileSync(path.join(outDir, filename), lines.join('\n'), 'utf8');

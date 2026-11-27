@@ -1594,6 +1594,23 @@ export const CONFIG = {
       bannerPeakEmissive: 1.45,
     },
   },
+  kitchenDecor: {
+    clearanceMeters: 3,
+    zoneVisibleMeters: 380,
+    zoneVisibleHysteresisMeters: 35,
+    waterScrollSpeed: 0.26,
+    steamCounts: {
+      hemat: 0,
+      seimbang: 10,
+      penuh: 24,
+    },
+    fillPropCounts: {
+      hemat: 12,
+      seimbang: 26,
+      penuh: 40,
+    },
+    fillSeed: 3026,
+  },
   arenaKit: {
     // Tight upper bounds anchored to measured high/penuh baseline stats:
     // Sky Circuit: 126 meshes, 13972 tris, 194 instances, 3.50 MB textures

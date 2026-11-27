@@ -66,10 +66,21 @@ export interface ThemeSceneryHandle {
   dispose: () => void;
 }
 
+export interface DecorFootprint {
+  readonly id: string;
+  readonly zone: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly radius: number;
+  readonly isTrackStructure?: boolean;
+}
+
 export interface ThemeDefinition {
   readonly id: ThemeId;
   readonly background: ThemeBackgroundConfig;
   readonly lightingProfile: ThemeLightingProfile;
   readonly qualityTiers: ThemeQualityTiers;
   buildScenery: (context: ThemeSceneryContext) => ThemeSceneryHandle;
+  getDecorFootprints?: (context: ThemeSceneryContext) => readonly DecorFootprint[];
 }

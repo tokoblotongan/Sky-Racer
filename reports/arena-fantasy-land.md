@@ -12,3 +12,11 @@
 | Scenery Budgets | PASS | meshes=60/80, tris=68302/75000, inst=541/600, tex=2.21/3.00MB |
 | Music Assets | PASS | 5 files <= 6MB [fantasyland-title.mp3 (2.08MB), fantasyland-race.mp3 (3.72MB), fantasyland-lastlap.mp3 (2.43MB), fantasyland-win.mp3 (0.18MB), fantasyland-lose.mp3 (0.21MB)] |
 | Unique Record Key | PASS | key='sky-racer-records-v1:fantasy-land' (unique across 3 arenas) |
+
+## Scenery Stats by Quality Preset
+
+| Preset | Meshes | Triangles | Instances | Est. Draw Calls | Texture MB |
+|---|---|---|---|---|---|
+| `hemat` | 39 | 35000 | 303 | 39 | 1.96 |
+| `seimbang` | 51 | 53380 | 427 | 51 | 2.21 |
+| `penuh` | 60 | 68302 | 541 | 60 | 2.21 |
