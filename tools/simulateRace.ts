@@ -25,7 +25,7 @@ import {
   updateOpponentProgress,
   updateRace,
 } from '../src/core/state';
-import { fantasyLandCourse } from '../src/courses/fantasyLand';
+import { getCourse } from '../src/courses';
 
 interface DifficultySpec {
   difficulty: AiDifficulty;
@@ -91,6 +91,7 @@ function runSingleRace(
   course: Course,
   difficulty: AiDifficulty,
   seed: number,
+  refLap: number,
 ): SingleRaceReport {
   const state = createRaceState(course, { persistRecords: false });
   startCountdown(state, 0, course);
@@ -117,7 +118,7 @@ function runSingleRace(
   state.timer = 0;
 
   const ai = createAiDrivers(course, difficulty, seed);
-  const attractions = createAttractionSystem(course, true, difficulty);
+  const attractions = createAttractionSystem(course, course.hasAttractions(), difficulty);
   const hazardEffects = createHazardEffectsTracker(state.cars.length);
   const standings = createStandingsTracker(course.getRacers());
   const numCars = state.cars.length;
@@ -381,7 +382,6 @@ function runSingleRace(
     aiLapTimes.length > 0
       ? aiLapTimes.reduce((sum, v) => sum + v, 0) / aiLapTimes.length
       : 0;
-  const refLap = fantasyLandCourse.referenceLapTime ?? 65.06;
   const lapRatioToRef = aiAvgLapSec / refLap;
   const avgAiCpuMsPerStep = aiCpuSteps > 0 ? totalAiCpuMs / aiCpuSteps : 0;
   const avgAiCpuMsPerCar = avgAiCpuMsPerStep / Math.max(1, numCars - 1);
@@ -534,14 +534,30 @@ function testFastForwardSettlement(course: Course): {
   };
 }
 
+function parseCourseIdArg(argv: readonly string[]): string {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith('--course=')) {
+      const value = arg.slice('--course='.length).trim();
+      if (value) return value;
+    } else if (arg === '--course' && i + 1 < argv.length) {
+      const value = argv[i + 1].trim();
+      if (value) return value;
+    }
+  }
+  return 'fantasy-land';
+}
+
 function main(): void {
-  const course = new Course(buildCourseConfigFromDefinition(fantasyLandCourse, false));
-  const refLap = fantasyLandCourse.referenceLapTime ?? 65.06;
+  const courseId = parseCourseIdArg(process.argv.slice(2));
+  const courseDef = getCourse(courseId);
+  const course = new Course(buildCourseConfigFromDefinition(courseDef, false));
+  const refLap = courseDef.referenceLapTime ?? 65.06;
 
   const allRuns: SingleRaceReport[] = [];
   for (const spec of DIFFICULTY_SPECS) {
     for (const seed of SEEDS) {
-      allRuns.push(runSingleRace(course, spec.difficulty, seed));
+      allRuns.push(runSingleRace(course, spec.difficulty, seed, refLap));
     }
   }
 
@@ -609,10 +625,11 @@ function main(): void {
   });
   const totalHazardRollovers = allRuns.reduce((s, r) => s + r.hazardRollovers, 0);
   const totalAiRingPasses = allRuns.reduce((s, r) => s + r.aiRingPasses, 0);
+  const hasAttractions = course.hasAttractions();
   const check9Passed =
     totalHazardRollovers === 0 &&
     hazardStatsByDiff.every((h) => h.ok) &&
-    totalAiRingPasses > 0;
+    (!hasAttractions || totalAiRingPasses > 0);
 
   const checks = [
     {
@@ -623,7 +640,7 @@ function main(): void {
     },
     {
       id: 2,
-      name: 'AI Lap Pace vs Ref (65.06s) within ±4%',
+      name: `AI Lap Pace vs Ref (${refLap.toFixed(2)}s) within ±4%`,
       passed: check2Passed,
       detail: difficultySummaries
         .map(
@@ -679,7 +696,7 @@ function main(): void {
   const allPassed = checks.every((c) => c.passed);
 
   console.log('');
-  console.log(`=== SIMULASI AI FANTASYLAND (${SEEDS.length} seeds x ${DIFFICULTY_SPECS.length} kesulitan = ${allRuns.length} balapan) ===`);
+  console.log(`=== SIMULASI AI ${courseDef.name.toUpperCase()} (${SEEDS.length} seeds x ${DIFFICULTY_SPECS.length} kesulitan = ${allRuns.length} balapan) ===`);
   console.log('---------------------------------------------------------------------------------------------');
   for (const c of checks) {
     console.log(
@@ -696,7 +713,7 @@ function main(): void {
     outPath,
     JSON.stringify(
       {
-        courseId: fantasyLandCourse.id,
+        courseId: courseDef.id,
         referenceLapTime: refLap,
         seeds: SEEDS,
         overallPassed: allPassed,

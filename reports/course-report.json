@@ -1,303 +1,94 @@
 {
-  "courseId": "fantasy-land",
-  "courseName": "FantasyLand",
-  "buildMs": 954.79,
+  "courseId": "sky-circuit",
+  "courseName": "Sky Circuit",
+  "buildMs": 60.8,
   "recommendedMedals": {
-    "gold": 214.7,
-    "silver": 253.74,
-    "bronze": 312.29
+    "gold": 28.86,
+    "silver": 34.1,
+    "bronze": 41.97
   },
   "ok": true,
-  "closed": true,
-  "laps": 3,
-  "trackWidth": 16,
-  "lengthM": 2805.89,
-  "referenceTime": 195.183,
-  "referenceLapTime": 65.061,
-  "lapTimes": [
-    65.817,
-    64.683,
-    64.683
-  ],
-  "bestLap": 64.683,
-  "minNonAdjacentClearanceM": 47.53,
-  "minStyleClearanceM": 51.09,
+  "closed": false,
+  "laps": 1,
+  "trackWidth": 7,
+  "lengthM": 1186.9,
+  "referenceTime": 26.233,
+  "referenceLapTime": 26.233,
+  "lapTimes": [],
+  "bestLap": null,
+  "minNonAdjacentClearanceM": 17.84,
+  "minStyleClearanceM": null,
   "tunnelClearance": {
-    "hasTunnel": true,
-    "cameraHeightM": 4.44,
+    "hasTunnel": false,
+    "cameraHeightM": 3.69,
     "interiorHeightM": 11.5,
-    "requiredHeightM": 10.44,
+    "requiredHeightM": 9.69,
     "ok": true
   },
-  "closure": {
-    "converged": true,
-    "iterations": 10,
-    "posErrorM": 7.112020493343886e-12,
-    "dx": -5.739436703677825e-13,
-    "dy": -6.920686246303376e-12,
-    "dz": 1.5347723092418164e-12,
-    "dYawDeg": -0.015345654093922275,
-    "dPitchDeg": 1.1201712709828233,
-    "totalLengthM": 2805.888613183838,
-    "adjustments": [
-      {
-        "segmentIndex": 27,
-        "type": "curve",
-        "field": "angleDeg",
-        "originalValue": 45,
-        "solvedValue": 32.6616
-      },
-      {
-        "segmentIndex": 28,
-        "type": "straight",
-        "field": "length",
-        "originalValue": 350,
-        "solvedValue": 465.726
-      },
-      {
-        "segmentIndex": 29,
-        "type": "slope",
-        "field": "pitchDeg",
-        "originalValue": -6,
-        "solvedValue": 8.5103
-      },
-      {
-        "segmentIndex": 30,
-        "type": "curve",
-        "field": "angleDeg",
-        "originalValue": 45,
-        "solvedValue": 57.3083
-      },
-      {
-        "segmentIndex": 31,
-        "type": "straight",
-        "field": "length",
-        "originalValue": 140,
-        "solvedValue": 66.6785
-      }
-    ],
-    "blendApplied": false,
-    "blendLengthM": 0
-  },
+  "closure": null,
   "checkpointTimes": [
-    5.367,
-    13.733,
-    18.067,
-    27.4,
-    32.2,
-    34.95,
-    43.5,
-    47.4,
-    61.333,
-    70.067,
-    78.417,
-    82.75,
-    92.1,
-    96.883,
-    99.65,
-    108.183,
-    112.083,
-    126.017,
-    134.75,
-    143.1,
-    147.433,
-    156.783,
-    161.567,
-    164.333,
-    172.867,
-    176.767,
-    190.7
+    2.217,
+    5.05,
+    8.9,
+    11.517,
+    15.133,
+    18.283,
+    20.417,
+    22.667,
+    23.833
   ],
   "loops": [
     {
-      "segmentIndex": 4,
-      "startS": 613.07,
-      "endS": 763.87,
-      "radius": 24,
-      "lateralOffset": 24,
-      "approachLengthM": 180,
-      "entrySpeed": 54.68,
-      "topSpeed": 38.48,
-      "minApexSpeedRequired": 25.92,
+      "segmentIndex": 6,
+      "startS": 232.81,
+      "endS": 311.35,
+      "radius": 12.5,
+      "lateralOffset": 9.5,
+      "approachLengthM": 48,
+      "entrySpeed": 51.8,
+      "topSpeed": 43.74,
+      "minApexSpeedRequired": 18.71,
+      "completed": true
+    },
+    {
+      "segmentIndex": 25,
+      "startS": 937.24,
+      "endS": 1003.21,
+      "radius": 10.5,
+      "lateralOffset": -9.5,
+      "approachLengthM": 44,
+      "entrySpeed": 51.8,
+      "topSpeed": 44.65,
+      "minApexSpeedRequired": 17.15,
       "completed": true
     }
   ],
   "jumps": [
     {
-      "segmentIndex": 17,
-      "startS": 1437.27,
-      "endS": 1467.27,
-      "gapLength": 30,
-      "takeoffSpeed": 51.29,
-      "minSpeedRequired": 40.62,
+      "segmentIndex": 12,
+      "startS": 447.34,
+      "endS": 463.34,
+      "gapLength": 16,
+      "takeoffSpeed": 51.12,
+      "minSpeedRequired": 31.59,
       "landed": true,
-      "airtime": 1.2
+      "airtime": 0.933
     },
     {
-      "segmentIndex": 22,
-      "startS": 1864.45,
-      "endS": 1882.45,
+      "segmentIndex": 28,
+      "startS": 1041.21,
+      "endS": 1059.21,
       "gapLength": 18,
-      "takeoffSpeed": 42.4,
-      "minSpeedRequired": 39.88,
+      "takeoffSpeed": 56.31,
+      "minSpeedRequired": 33.53,
       "landed": true,
-      "airtime": 0.6
-    },
-    {
-      "segmentIndex": 25,
-      "startS": 1916.45,
-      "endS": 1936.45,
-      "gapLength": 20,
-      "takeoffSpeed": 50.3,
-      "minSpeedRequired": 38.13,
-      "landed": true,
-      "airtime": 0.95
+      "airtime": 1
     }
   ],
-  "zones": [
-    {
-      "name": "Dragon Loop",
-      "style": "road",
-      "startS": 613.07,
-      "endS": 763.87,
-      "lengthM": 150.8,
-      "passTimeSec": 3.23,
-      "entrySpeedMs": 54.7,
-      "exitSpeedMs": 52.5,
-      "passesRecorded": 3
-    },
-    {
-      "name": "Jembatan Pelangi",
-      "style": "bridge",
-      "startS": 963.5,
-      "endS": 1163.5,
-      "lengthM": 200,
-      "passTimeSec": 4.81,
-      "entrySpeedMs": 42.5,
-      "exitSpeedMs": 41.3,
-      "passesRecorded": 3
-    },
-    {
-      "name": "Terowongan Kristal",
-      "style": "tunnel",
-      "startS": 1163.5,
-      "endS": 1367.27,
-      "lengthM": 203.78,
-      "passTimeSec": 4.79,
-      "entrySpeedMs": 41.3,
-      "exitSpeedMs": 42.3,
-      "passesRecorded": 3
-    },
-    {
-      "name": "Lompatan Naga",
-      "style": "road",
-      "startS": 1367.27,
-      "endS": 1497.27,
-      "lengthM": 130,
-      "passTimeSec": 2.76,
-      "entrySpeedMs": 42.3,
-      "exitSpeedMs": 35.8,
-      "passesRecorded": 3
-    },
-    {
-      "name": "Lompatan Ganda",
-      "style": "road",
-      "startS": 1856.45,
-      "endS": 1976.45,
-      "lengthM": 120,
-      "passTimeSec": 2.63,
-      "entrySpeedMs": 42.7,
-      "exitSpeedMs": 44.6,
-      "passesRecorded": 3
-    }
-  ],
-  "branches": [
-    {
-      "routeId": "shortcut",
-      "name": "Rute Pintas",
-      "fromS": 1387.25,
-      "toS": 1846.45,
-      "mainArcM": 459.2,
-      "branchLengthM": 275.28,
-      "width": 8,
-      "entryWorldErrorM": 0,
-      "entryEndWorldErrorM": 0,
-      "mergeWorldErrorM": 0,
-      "solverConverged": true,
-      "solverPosErrorM": 0.00001,
-      "solverYawErrorDeg": 0,
-      "minCorridorClearanceM": 31.45,
-      "jumps": [
-        {
-          "segmentIndex": 5,
-          "startS": 131.66,
-          "endS": 153.66,
-          "gapLength": 22,
-          "takeoffSpeed": 50.3,
-          "minSpeedRequired": 41.93,
-          "landed": true,
-          "airtime": 0.833
-        }
-      ],
-      "mainTimeSec": 195.183,
-      "shortcutTimeSec": 183.233,
-      "timeSavingSec": 11.95,
-      "perLapSavingSec": 3.983,
-      "shortcutEntries": 3,
-      "shortcutMerges": 3,
-      "shortcutFalls": 0,
-      "shortcutStuck": 0,
-      "shortcutRailHits": 2,
-      "ok": true
-    }
-  ],
-  "decor": {
-    "checked": true,
-    "placementCount": 129,
-    "minLateralClearanceM": 12.14,
-    "minOverTrackClearanceM": 43.2,
-    "rainbowApexAboveTrackM": 48,
-    "blockedJumpOrGateCount": 0,
-    "budgets": [
-      {
-        "tier": "high",
-        "drawCalls": 30,
-        "triangles": 27508,
-        "budgetDrawCalls": 220,
-        "budgetTriangles": 600000,
-        "withinBudget": true
-      },
-      {
-        "tier": "medium",
-        "drawCalls": 26,
-        "triangles": 20268,
-        "budgetDrawCalls": 160,
-        "budgetTriangles": 350000,
-        "withinBudget": true
-      },
-      {
-        "tier": "mobile",
-        "drawCalls": 20,
-        "triangles": 10436,
-        "budgetDrawCalls": 90,
-        "budgetTriangles": 160000,
-        "withinBudget": true
-      }
-    ],
-    "ok": true
-  },
-  "attractions": {
-    "checked": true,
-    "pendulumCount": 2,
-    "ballGroupCount": 2,
-    "windFanCount": 1,
-    "jellyPuddleCount": 1,
-    "mainBoostRingCount": 8,
-    "shortcutBoostRingCount": 3,
-    "minForbiddenClearanceM": 43.4,
-    "minSafeLaneRatio": 0.413,
-    "ok": true
-  },
+  "zones": [],
+  "branches": [],
+  "decor": null,
+  "attractions": null,
   "railHits": 0,
   "stuckEvents": 0,
   "falls": 0,

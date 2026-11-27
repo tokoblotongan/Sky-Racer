@@ -94,3 +94,8 @@ src/
 - Fisika multi-mobil: senggolan, tabrakan, terguling (tahap F4).
 - Sky Circuit tetap tersedia sebagai arena satu arah.
 Pelacak: [x] F1A  [x] F1B  [x] F2 sebagian (F2A)  [x] F3  [x] F4  [x] F5  [x] F6  [x] F7  [x] Musik  [x] Arena Kit
+
+## ARENA 3: Dapur Raksasa (`kitchen`, 4 pemain: 1 manusia + 3 AI)
+- Sirkuit tertutup, 3 lap, lebar lintasan 14 m, data & tema di `src/arenas/kitchen/`.
+- Meja dapur kotak-kotak toska-putih prosedural, jendela langit cerah tanpa kabut, 6 zona bernama + `Rute Pintas Rak Bumbu`.
+Pelacak: [x] K1 (Definisi, Lintasan, Tema Dasar)  [ ] K2 (Dekor Dapur)  [ ] K3 (Atraksi)

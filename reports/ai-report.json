@@ -50,13 +50,13 @@
       "id": 7,
       "name": "AI CPU Cost <= 0.2 ms/car",
       "passed": true,
-      "detail": "avgPerCar=0.0074ms, avgTotal3AI=0.0223ms"
+      "detail": "avgPerCar=0.0075ms, avgTotal3AI=0.0226ms"
     },
     {
       "id": 8,
       "name": "Fast-Forward Finish Settlement <= 30s",
       "passed": true,
-      "detail": "simAdvanced=30.02s, wall=391.0ms, valid=true"
+      "detail": "simAdvanced=30.02s, wall=417.5ms, valid=true"
     },
     {
       "id": 9,
@@ -96,7 +96,7 @@
   ],
   "fastForwardTest": {
     "passed": true,
-    "wallMs": 391.01678899999933,
+    "wallMs": 417.52776000000085,
     "simSecondsAdvanced": 30.016666666666243,
     "allRankedValid": true
   },
@@ -133,8 +133,8 @@
       "aiHazardHitsPerCarLap": 0.444,
       "aiRingPasses": 36,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.03939040600222367,
-      "avgAiCpuMsPerCar": 0.013130135334074556,
+      "avgAiCpuMsPerStep": 0.035669589032972286,
+      "avgAiCpuMsPerCar": 0.011889863010990763,
       "aiTotalTimes": [
         221.13333333340145,
         224.9166666667378,
@@ -174,8 +174,8 @@
       "aiHazardHitsPerCarLap": 0.556,
       "aiRingPasses": 30,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.02545771206081724,
-      "avgAiCpuMsPerCar": 0.008485904020272413,
+      "avgAiCpuMsPerStep": 0.023910059935047148,
+      "avgAiCpuMsPerCar": 0.00797001997834905,
       "aiTotalTimes": [
         225.80000000007183,
         220.2666666667341,
@@ -215,8 +215,8 @@
       "aiHazardHitsPerCarLap": 0.444,
       "aiRingPasses": 37,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.022034672182164813,
-      "avgAiCpuMsPerCar": 0.007344890727388271,
+      "avgAiCpuMsPerStep": 0.019734342314993006,
+      "avgAiCpuMsPerCar": 0.006578114104997669,
       "aiTotalTimes": [
         215.21666666673008,
         219.5166666667335,
@@ -256,8 +256,8 @@
       "aiHazardHitsPerCarLap": 0.333,
       "aiRingPasses": 41,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.020250604489744674,
-      "avgAiCpuMsPerCar": 0.006750201496581558,
+      "avgAiCpuMsPerStep": 0.020669860581893965,
+      "avgAiCpuMsPerCar": 0.006889953527297988,
       "aiTotalTimes": [
         225.70000000007175,
         215.26666666673012,
@@ -297,8 +297,8 @@
       "aiHazardHitsPerCarLap": 0.222,
       "aiRingPasses": 38,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.01928269162799446,
-      "avgAiCpuMsPerCar": 0.006427563875998153,
+      "avgAiCpuMsPerStep": 0.02182019041307826,
+      "avgAiCpuMsPerCar": 0.00727339680435942,
       "aiTotalTimes": [
         226.35000000007227,
         219.78333333340038,
@@ -338,8 +338,8 @@
       "aiHazardHitsPerCarLap": 0.222,
       "aiRingPasses": 39,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.02146284192277986,
-      "avgAiCpuMsPerCar": 0.00715428064092662,
+      "avgAiCpuMsPerStep": 0.02540559148936389,
+      "avgAiCpuMsPerCar": 0.008468530496454631,
       "aiTotalTimes": [
         199.70000000005106,
         211.50000000006045,
@@ -379,8 +379,8 @@
       "aiHazardHitsPerCarLap": 0.333,
       "aiRingPasses": 39,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.020088764969005097,
-      "avgAiCpuMsPerCar": 0.006696254989668366,
+      "avgAiCpuMsPerStep": 0.021803890685085783,
+      "avgAiCpuMsPerCar": 0.007267963561695261,
       "aiTotalTimes": [
         212.3833333333945,
         199.35000000005078,
@@ -420,8 +420,8 @@
       "aiHazardHitsPerCarLap": 0.444,
       "aiRingPasses": 33,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.01996496370207282,
-      "avgAiCpuMsPerCar": 0.00665498790069094,
+      "avgAiCpuMsPerStep": 0.019726081552485147,
+      "avgAiCpuMsPerCar": 0.006575360517495049,
       "aiTotalTimes": [
         209.0500000000585,
         212.1333333333943,
@@ -461,8 +461,8 @@
       "aiHazardHitsPerCarLap": 0.111,
       "aiRingPasses": 39,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.01969517447343642,
-      "avgAiCpuMsPerCar": 0.0065650581578121404,
+      "avgAiCpuMsPerStep": 0.023631947657972392,
+      "avgAiCpuMsPerCar": 0.007877315885990797,
       "aiTotalTimes": [
         212.06666666672757,
         207.566666666724,
@@ -502,8 +502,8 @@
       "aiHazardHitsPerCarLap": 0.222,
       "aiRingPasses": 37,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.02014919704817492,
-      "avgAiCpuMsPerCar": 0.006716399016058306,
+      "avgAiCpuMsPerStep": 0.021407991835450668,
+      "avgAiCpuMsPerCar": 0.007135997278483556,
       "aiTotalTimes": [
         208.1333333333911,
         212.3000000000611,
@@ -543,8 +543,8 @@
       "aiHazardHitsPerCarLap": 0,
       "aiRingPasses": 38,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.02109323197410279,
-      "avgAiCpuMsPerCar": 0.0070310773247009295,
+      "avgAiCpuMsPerStep": 0.02166912437217103,
+      "avgAiCpuMsPerCar": 0.007223041457390344,
       "aiTotalTimes": [
         186.11666666670692,
         195.78333333338128,
@@ -584,8 +584,8 @@
       "aiHazardHitsPerCarLap": 0,
       "aiRingPasses": 38,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.02088336562364045,
-      "avgAiCpuMsPerCar": 0.006961121874546817,
+      "avgAiCpuMsPerStep": 0.01885998379770198,
+      "avgAiCpuMsPerCar": 0.006286661265900661,
       "aiTotalTimes": [
         193.06666666671245,
         192.2833333333785,
@@ -625,8 +625,8 @@
       "aiHazardHitsPerCarLap": 0,
       "aiRingPasses": 35,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.020034847350411254,
-      "avgAiCpuMsPerCar": 0.0066782824501370845,
+      "avgAiCpuMsPerStep": 0.019909332564098943,
+      "avgAiCpuMsPerCar": 0.006636444188032981,
       "aiTotalTimes": [
         195.00000000004732,
         193.55000000004617,
@@ -666,8 +666,8 @@
       "aiHazardHitsPerCarLap": 0,
       "aiRingPasses": 38,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.01939884944678581,
-      "avgAiCpuMsPerCar": 0.006466283148928603,
+      "avgAiCpuMsPerStep": 0.019279555063829397,
+      "avgAiCpuMsPerCar": 0.006426518354609799,
       "aiTotalTimes": [
         195.20000000004748,
         192.10000000004501,
@@ -707,8 +707,8 @@
       "aiHazardHitsPerCarLap": 0,
       "aiRingPasses": 37,
       "hazardRollovers": 0,
-      "avgAiCpuMsPerStep": 0.025307091630425466,
-      "avgAiCpuMsPerCar": 0.008435697210141821,
+      "avgAiCpuMsPerStep": 0.025817933794068607,
+      "avgAiCpuMsPerCar": 0.008605977931356203,
       "aiTotalTimes": [
         194.1166666667133,
         195.016666666714,

@@ -6,9 +6,11 @@ import { createArenaRegistry, type ArenaRegistry } from './registry';
 import { skyCircuitArena } from './skyCircuit/definition';
 import { fantasyLandArena } from './fantasyLand/definition';
 
+import { kitchenArena } from './kitchen/definition';
 export function registerDefaultArenas(registry: ArenaRegistry): ArenaRegistry {
   registry.registerArena(skyCircuitArena);
   registry.registerArena(fantasyLandArena);
+  registry.registerArena(kitchenArena);
   return registry;
 }
 // ARENA-REGISTRY-END
