@@ -31,6 +31,7 @@ export interface ArenaAiTuning {
   readonly rubberBand?: {
     readonly maxBoost?: number;
     readonly maxSlow?: number;
+    readonly rangeMeters?: number;
   };
 }
 
@@ -1703,13 +1704,14 @@ export const CONFIG = {
   },
   kitchenAi: {
     difficulties: {
-      mudah: { skillMultiplier: 0.825 },
-      sedang: { skillMultiplier: 0.902 },
+      mudah: { skillMultiplier: 0.812 },
+      sedang: { skillMultiplier: 0.891 },
       sulit: { skillMultiplier: 1.0 },
     },
     rubberBand: {
-      maxBoost: 0.025,
-      maxSlow: 0.075,
+      maxBoost: 0.036,
+      maxSlow: 0.118,
+      rangeMeters: 38,
     },
   } satisfies ArenaAiTuning,
 } as const;

@@ -163,21 +163,29 @@ export function createAiDrivers(
     }
 
     const t0 = nowHighResMs();
+    const kitchenTuning =
+      course.getId() === 'kitchen' ? CONFIG.kitchenAi : undefined;
     const diffCfg =
       CONFIG.ai.difficulties[currentDifficulty] ?? CONFIG.ai.difficulties.sedang;
+    const skillMultiplier =
+      kitchenTuning?.difficulties?.[currentDifficulty]?.skillMultiplier ??
+      diffCfg.skillMultiplier;
 
     // Gentle bounded rubber-banding relative to player car (car 0)
     let rubberBandFactor = 1.0;
     const rbCfg = CONFIG.ai.rubberBand;
+    const rbMaxBoost = kitchenTuning?.rubberBand?.maxBoost ?? rbCfg.maxBoost;
+    const rbMaxSlow = kitchenTuning?.rubberBand?.maxSlow ?? rbCfg.maxSlow;
+    const rbRangeMeters = kitchenTuning?.rubberBand?.rangeMeters ?? rbCfg.rangeMeters;
     if (rbCfg.enabled && cars[0] && cars[carIndex]) {
       const playerProg = computeProgressMeters(cars[0], course);
       const aiProg = computeProgressMeters(cars[carIndex], course);
       const gap = playerProg - aiProg; // >0 means AI is behind player
-      const ratio = THREE.MathUtils.clamp(gap / Math.max(1, rbCfg.rangeMeters), -1, 1);
+      const ratio = THREE.MathUtils.clamp(gap / Math.max(1, rbRangeMeters), -1, 1);
       if (ratio >= 0) {
-        rubberBandFactor = 1 + ratio * rbCfg.maxBoost;
+        rubberBandFactor = 1 + ratio * rbMaxBoost;
       } else {
-        rubberBandFactor = 1 + ratio * rbCfg.maxSlow;
+        rubberBandFactor = 1 + ratio * rbMaxSlow;
       }
     }
 
@@ -186,7 +194,7 @@ export function createAiDrivers(
       ctx,
       cars,
       course,
-      diffCfg.skillMultiplier,
+      skillMultiplier,
       rubberBandFactor,
       dt,
       out,

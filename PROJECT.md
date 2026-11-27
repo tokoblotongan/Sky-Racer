@@ -96,6 +96,12 @@ src/
 Pelacak: [x] F1A  [x] F1B  [x] F2 sebagian (F2A)  [x] F3  [x] F4  [x] F5  [x] F6  [x] F7  [x] Musik  [x] Arena Kit
 
 ## ARENA 3: Dapur Raksasa (`kitchen`, 4 pemain: 1 manusia + 3 AI)
-- Sirkuit tertutup, 3 lap, lebar lintasan 14 m, data & tema di `src/arenas/kitchen/` dan `src/render/themes/kitchen/`.
-- Dunia dapur raksasa tanpa kabut (meja checker toska-putih, dinding ubin, jendela langit cerah, kabinet), 7 zona dekor bernama, dan properti pengisi deterministik tervalidasi jarak bebas.
-Pelacak: [x] K1 (Definisi, Lintasan, Tema Dasar)  [x] K2 (Dekor Dapur)  [ ] K3 (Atraksi)
+- Closed 3-lap circuit, 14 m track width (`2486.22 m` main route + `414.7 m` spice-rack shortcut), data & theme in `src/arenas/kitchen/` and `src/render/themes/kitchen/`.
+- Fog-free giant kitchen world (teal-white checkered counter, tiled wall, bright sky window, cabinets), 7 named decor zones, instanced kettle steam & scrolling sink water, and deterministic clearance-validated fill props.
+- Kitchen files:
+  - Arena contract & data: `src/arenas/kitchen/{definition.ts, course.ts, theme.ts, decorData.ts, attractions.ts}`
+  - 3D world & props: `src/render/themes/kitchen/{index.ts, backdrop.ts, counter.ts, decorPlacement.ts, steam.ts, textures.ts, zoneVisibility.ts}` and `src/render/themes/kitchen/props/{cookware.ts, food.ts, sink.ts, spiceRack.ts, stove.ts, tableware.ts, utensils.ts}`
+  - Attraction skin: `src/render/attractions/skins/kitchen.ts`
+- Attraction skin system (`src/render/attractions/skins/`): `AttractionSkinId` (`'default' | 'kitchen'`) in `src/arenas/types.ts` and `src/render/attractions/skins/index.ts` swaps attraction meshes, materials, and floor warning stripes (`default.ts` vs `kitchen.ts`: giant spoon pendulum, glass marbles, exhaust hood fan, syrup puddle, donut boost rings) while sharing deterministic core mechanics.
+- Tool `--arena` option & test status: `npm run validate:arenas`, `npm run test:ai`, `npm run test:attractions`, and `npm run balance` accept `--arena <id>` / `--arena=<id>` (`--course=<id>` on `validate:course` and `find:shortcut`). Passing suites: `tsc --noEmit`, `npm run build`, `validate:arenas`, `validate:course` (all 3 arenas), `test:attractions` (all 3 arenas + isolation), `test:ai` (`fantasy-land` & `kitchen`; `sky-circuit` is single-car 1-lap verified via `validate:arenas` + `validate:course`), and `balance -- --arena kitchen`. `npm run test:collisions` is not defined in `package.json` (collision invariants are verified inside `test:ai`).
+Pelacak: [x] K1 (Definisi, Lintasan, Tema Dasar)  [x] K2 (Dekor Dapur)  [x] K3 (Atraksi)

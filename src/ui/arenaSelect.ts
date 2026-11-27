@@ -328,6 +328,9 @@ export function createArenaSelect(
   const cardById = new Map<string, HTMLButtonElement>();
   const recordElById = new Map<string, HTMLElement>();
   const cleanups: Array<() => void> = [];
+  const playableArenas = arenas.filter((a) => !a.comingSoon);
+
+  let suppressNextClick = false;
 
   for (let idx = 0; idx < arenas.length; idx++) {
     const arena = arenas[idx];
@@ -399,10 +402,16 @@ export function createArenaSelect(
     if (!isSoon) {
       const onCardClick = (e: MouseEvent): void => {
         e.stopPropagation();
+        if (suppressNextClick) {
+          suppressNextClick = false;
+          return;
+        }
         card.blur();
         if (arena.id !== currentSelectedId) {
           setSelected(arena.id);
           onSelect(arena.id);
+        } else {
+          ensureCardVisible(card, true);
         }
       };
 
@@ -435,27 +444,226 @@ export function createArenaSelect(
     gridEl.appendChild(card);
   }
 
+  let wrapperEl: HTMLElement = gridEl;
+  let prevBtn: HTMLButtonElement | null = null;
+  let nextBtn: HTMLButtonElement | null = null;
+  let pendingScrollRaf = 0;
+
+  const syncNavButtons = (): void => {
+    if (!prevBtn || !nextBtn) {
+      return;
+    }
+    const idx = playableArenas.findIndex((a) => a.id === currentSelectedId);
+    const hasOverflow = gridEl.scrollWidth > gridEl.clientWidth + 2;
+    const atStart = idx <= 0 && (!hasOverflow || gridEl.scrollLeft <= 4);
+    const atEnd =
+      idx >= playableArenas.length - 1 &&
+      (!hasOverflow || gridEl.scrollLeft >= gridEl.scrollWidth - gridEl.clientWidth - 4);
+    prevBtn.disabled = atStart;
+    nextBtn.disabled = atEnd;
+  };
+
+  function ensureCardVisible(card: HTMLButtonElement, smooth: boolean): void {
+    if (!isCarousel || disposed) {
+      return;
+    }
+    const viewW = gridEl.clientWidth;
+    if (viewW <= 0) {
+      if (!pendingScrollRaf && typeof window !== 'undefined' && window.requestAnimationFrame) {
+        pendingScrollRaf = window.requestAnimationFrame(() => {
+          pendingScrollRaf = 0;
+          ensureCardVisible(card, false);
+        });
+      }
+      return;
+    }
+    const maxScroll = Math.max(0, gridEl.scrollWidth - viewW);
+    if (maxScroll <= 0) {
+      syncNavButtons();
+      return;
+    }
+
+    // Center the selected card when possible, clamped so it is always 100% inside the viewport
+    const cardLeft = card.offsetLeft;
+    const cardWidth = card.offsetWidth;
+    const margin = 8;
+    const centeredLeft = cardLeft - (viewW - cardWidth) * 0.5;
+    let targetLeft = Math.max(0, Math.min(maxScroll, centeredLeft));
+
+    // Guarantee full card visibility even on narrow viewports
+    if (cardLeft - margin < targetLeft) {
+      targetLeft = Math.max(0, cardLeft - margin);
+    } else if (cardLeft + cardWidth + margin > targetLeft + viewW) {
+      targetLeft = Math.min(maxScroll, cardLeft + cardWidth + margin - viewW);
+    }
+
+    if (typeof gridEl.scrollTo === 'function') {
+      gridEl.scrollTo({
+        left: targetLeft,
+        behavior: smooth ? 'smooth' : 'auto',
+      });
+    } else {
+      gridEl.scrollLeft = targetLeft;
+    }
+    syncNavButtons();
+  }
+
+  if (isCarousel) {
+    const carouselEl = document.createElement('div');
+    carouselEl.className = 'sr-arena-carousel';
+
+    prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.className = 'sr-arena-nav sr-arena-nav--prev';
+    prevBtn.setAttribute('aria-label', 'Arena sebelumnya');
+    prevBtn.textContent = '‹';
+
+    nextBtn = document.createElement('button');
+    nextBtn.type = 'button';
+    nextBtn.className = 'sr-arena-nav sr-arena-nav--next';
+    nextBtn.setAttribute('aria-label', 'Arena berikutnya');
+    nextBtn.textContent = '›';
+
+    const stepSelection = (delta: -1 | 1): void => {
+      if (playableArenas.length === 0) return;
+      const curIdx = Math.max(
+        0,
+        playableArenas.findIndex((a) => a.id === currentSelectedId),
+      );
+      const nextIdx = Math.max(0, Math.min(playableArenas.length - 1, curIdx + delta));
+      const target = playableArenas[nextIdx];
+      if (!target) return;
+      if (target.id !== currentSelectedId) {
+        setSelected(target.id);
+        onSelect(target.id);
+      } else {
+        const c = cardById.get(target.id);
+        if (c) ensureCardVisible(c, true);
+      }
+    };
+
+    const onPrevClick = (e: MouseEvent): void => {
+      e.stopPropagation();
+      prevBtn?.blur();
+      stepSelection(-1);
+    };
+    const onNextClick = (e: MouseEvent): void => {
+      e.stopPropagation();
+      nextBtn?.blur();
+      stepSelection(1);
+    };
+    const stopNavPointer = (e: PointerEvent): void => {
+      e.stopPropagation();
+    };
+
+    prevBtn.addEventListener('pointerdown', stopNavPointer);
+    nextBtn.addEventListener('pointerdown', stopNavPointer);
+    prevBtn.addEventListener('click', onPrevClick);
+    nextBtn.addEventListener('click', onNextClick);
+
+    // Mouse drag-to-scroll support on desktop without interfering with touch swipe
+    let dragActive = false;
+    let dragMoved = false;
+    let dragStartX = 0;
+    let dragStartScroll = 0;
+
+    const onGridPointerDown = (e: PointerEvent): void => {
+      if (e.pointerType !== 'mouse' || e.button !== 0) {
+        return;
+      }
+      dragActive = true;
+      dragMoved = false;
+      dragStartX = e.clientX;
+      dragStartScroll = gridEl.scrollLeft;
+    };
+
+    const onWindowPointerMove = (e: PointerEvent): void => {
+      if (!dragActive) {
+        return;
+      }
+      const dx = e.clientX - dragStartX;
+      if (!dragMoved && Math.abs(dx) > 6) {
+        dragMoved = true;
+        gridEl.classList.add('sr-arena-grid--dragging');
+      }
+      if (dragMoved) {
+        gridEl.scrollLeft = dragStartScroll - dx;
+      }
+    };
+
+    const onWindowPointerUp = (): void => {
+      if (!dragActive) {
+        return;
+      }
+      dragActive = false;
+      gridEl.classList.remove('sr-arena-grid--dragging');
+      if (dragMoved) {
+        suppressNextClick = true;
+        window.setTimeout(() => {
+          suppressNextClick = false;
+        }, 0);
+      }
+      syncNavButtons();
+    };
+
+    const onGridScroll = (): void => {
+      syncNavButtons();
+    };
+
+    const onWindowResize = (): void => {
+      const selectedCard = cardById.get(currentSelectedId);
+      if (selectedCard && gridEl.clientWidth > 0) {
+        ensureCardVisible(selectedCard, false);
+      } else {
+        syncNavButtons();
+      }
+    };
+
+    gridEl.addEventListener('pointerdown', onGridPointerDown);
+    gridEl.addEventListener('scroll', onGridScroll, { passive: true });
+    window.addEventListener('pointermove', onWindowPointerMove);
+    window.addEventListener('pointerup', onWindowPointerUp);
+    window.addEventListener('pointercancel', onWindowPointerUp);
+    window.addEventListener('resize', onWindowResize);
+
+    cleanups.push(() => {
+      prevBtn?.removeEventListener('pointerdown', stopNavPointer);
+      nextBtn?.removeEventListener('pointerdown', stopNavPointer);
+      prevBtn?.removeEventListener('click', onPrevClick);
+      nextBtn?.removeEventListener('click', onNextClick);
+      gridEl.removeEventListener('pointerdown', onGridPointerDown);
+      gridEl.removeEventListener('scroll', onGridScroll);
+      window.removeEventListener('pointermove', onWindowPointerMove);
+      window.removeEventListener('pointerup', onWindowPointerUp);
+      window.removeEventListener('pointercancel', onWindowPointerUp);
+      window.removeEventListener('resize', onWindowResize);
+    });
+
+    carouselEl.appendChild(prevBtn);
+    carouselEl.appendChild(gridEl);
+    carouselEl.appendChild(nextBtn);
+    wrapperEl = carouselEl;
+  }
+
   container.textContent = '';
-  container.appendChild(gridEl);
+  container.appendChild(wrapperEl);
 
   function setSelected(id: string): void {
     const targetArena = arenas.find((a) => a.id === id);
     if (targetArena?.comingSoon) {
       return;
     }
+    const isInitial = currentSelectedId === id && !cardById.get(id)?.classList.contains('sr-arena-card--selected');
     currentSelectedId = id;
     for (const [arenaId, card] of cardById) {
       const selected = arenaId === currentSelectedId;
       card.classList.toggle('sr-arena-card--selected', selected);
       card.setAttribute('aria-selected', selected ? 'true' : 'false');
-      if (selected && isCarousel && typeof card.scrollIntoView === 'function') {
-        card.scrollIntoView({
-          block: 'nearest',
-          inline: 'center',
-          behavior: 'auto',
-        });
+      if (selected && isCarousel) {
+        ensureCardVisible(card, !isInitial);
       }
     }
+    syncNavButtons();
   }
 
   function refreshRecords(): void {
@@ -509,14 +717,18 @@ export function createArenaSelect(
       return;
     }
     disposed = true;
+    if (pendingScrollRaf && typeof window !== 'undefined' && window.cancelAnimationFrame) {
+      window.cancelAnimationFrame(pendingScrollRaf);
+      pendingScrollRaf = 0;
+    }
     for (const fn of cleanups) {
       fn();
     }
     cleanups.length = 0;
     cardById.clear();
     recordElById.clear();
-    if (gridEl.parentElement === container) {
-      container.removeChild(gridEl);
+    if (wrapperEl.parentElement === container) {
+      container.removeChild(wrapperEl);
     }
   }
 

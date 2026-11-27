@@ -1,97 +1,259 @@
 {
-  "courseId": "sky-circuit",
-  "courseName": "Sky Circuit",
-  "buildMs": 48,
+  "courseId": "bedroom",
+  "courseName": "Kamar Tidur Raksasa",
+  "buildMs": 257.61,
   "recommendedMedals": {
-    "gold": 28.86,
-    "silver": 34.1,
-    "bronze": 41.97
+    "gold": 186.07,
+    "silver": 219.9,
+    "bronze": 270.64
   },
-  "ok": true,
-  "closed": false,
-  "laps": 1,
-  "trackWidth": 7,
-  "lengthM": 1186.9,
-  "referenceTime": 26.233,
-  "referenceLapTime": 26.233,
-  "lapTimes": [],
-  "bestLap": null,
-  "minNonAdjacentClearanceM": 17.84,
-  "minStyleClearanceM": null,
+  "ok": false,
+  "closed": true,
+  "laps": 3,
+  "trackWidth": 14,
+  "lengthM": 2411.12,
+  "referenceTime": 169.15,
+  "referenceLapTime": 56.384,
+  "lapTimes": [
+    57.117,
+    56.017,
+    56.017
+  ],
+  "bestLap": 56.017,
+  "minNonAdjacentClearanceM": 42.22,
+  "minStyleClearanceM": 44.41,
   "tunnelClearance": {
-    "hasTunnel": false,
-    "cameraHeightM": 3.69,
+    "hasTunnel": true,
+    "cameraHeightM": 4.27,
     "interiorHeightM": 11.5,
-    "requiredHeightM": 9.69,
+    "requiredHeightM": 10.27,
     "ok": true
   },
-  "closure": null,
+  "closure": {
+    "converged": true,
+    "iterations": 3,
+    "posErrorM": 4.368692134413689e-8,
+    "dx": 2.4405186164317538e-8,
+    "dy": 9.839240533437987e-11,
+    "dz": 3.623429734034289e-8,
+    "dYawDeg": -1.5916896387051705e-8,
+    "dPitchDeg": -4.489792422958895e-14,
+    "totalLengthM": 2411.1245730448677,
+    "adjustments": [
+      {
+        "segmentIndex": 22,
+        "type": "curve",
+        "field": "angleDeg",
+        "originalValue": 155,
+        "solvedValue": 158.4262
+      },
+      {
+        "segmentIndex": 23,
+        "type": "slope",
+        "field": "pitchDeg",
+        "originalValue": 1,
+        "solvedValue": 0.0532
+      },
+      {
+        "segmentIndex": 24,
+        "type": "straight",
+        "field": "length",
+        "originalValue": 45,
+        "solvedValue": 44.0667
+      },
+      {
+        "segmentIndex": 25,
+        "type": "curve",
+        "field": "angleDeg",
+        "originalValue": -65,
+        "solvedValue": -68.4262
+      },
+      {
+        "segmentIndex": 26,
+        "type": "straight",
+        "field": "length",
+        "originalValue": 85,
+        "solvedValue": 42.0164
+      }
+    ],
+    "blendApplied": false,
+    "blendLengthM": 0
+  },
   "checkpointTimes": [
-    2.217,
-    5.05,
-    8.9,
-    11.517,
-    15.133,
-    18.283,
-    20.417,
-    22.667,
-    23.833
+    0.617,
+    10.417,
+    12.933,
+    15.433,
+    21.567,
+    25.917,
+    34.2,
+    38.15,
+    45.533,
+    53.25,
+    57.117,
+    66.433,
+    68.95,
+    71.45,
+    77.583,
+    81.933,
+    90.217,
+    94.167,
+    101.533,
+    109.267,
+    113.133,
+    122.45,
+    124.967,
+    127.467,
+    133.6,
+    137.95,
+    146.233,
+    150.183,
+    157.567,
+    165.283
   ],
   "loops": [
     {
-      "segmentIndex": 6,
-      "startS": 232.81,
-      "endS": 311.35,
-      "radius": 12.5,
-      "lateralOffset": 9.5,
-      "approachLengthM": 48,
-      "entrySpeed": 51.8,
-      "topSpeed": 43.74,
-      "minApexSpeedRequired": 18.71,
-      "completed": true
-    },
-    {
-      "segmentIndex": 25,
-      "startS": 937.24,
-      "endS": 1003.21,
-      "radius": 10.5,
-      "lateralOffset": -9.5,
-      "approachLengthM": 44,
-      "entrySpeed": 51.8,
-      "topSpeed": 44.65,
-      "minApexSpeedRequired": 17.15,
+      "segmentIndex": 10,
+      "startS": 948.24,
+      "endS": 1086.47,
+      "radius": 22,
+      "lateralOffset": 22,
+      "approachLengthM": 325,
+      "entrySpeed": 53,
+      "topSpeed": 38.02,
+      "minApexSpeedRequired": 24.82,
       "completed": true
     }
   ],
   "jumps": [
     {
-      "segmentIndex": 12,
-      "startS": 447.34,
-      "endS": 463.34,
-      "gapLength": 16,
-      "takeoffSpeed": 51.12,
-      "minSpeedRequired": 31.59,
+      "segmentIndex": 4,
+      "startS": 492.44,
+      "endS": 516.44,
+      "gapLength": 24,
+      "takeoffSpeed": 51.91,
+      "minSpeedRequired": 40.3,
       "landed": true,
-      "airtime": 0.933
-    },
-    {
-      "segmentIndex": 28,
-      "startS": 1041.21,
-      "endS": 1059.21,
-      "gapLength": 18,
-      "takeoffSpeed": 56.31,
-      "minSpeedRequired": 33.53,
-      "landed": true,
-      "airtime": 1
+      "airtime": 1.017
     }
   ],
-  "zones": [],
-  "branches": [],
+  "zones": [
+    {
+      "name": "Kasur Start",
+      "style": "road",
+      "startS": 0,
+      "endS": 210,
+      "lengthM": 210,
+      "passTimeSec": 5.09,
+      "entrySpeedMs": 34.8,
+      "exitSpeedMs": 42.4,
+      "passesRecorded": 3
+    },
+    {
+      "name": "Lompatan Bantal",
+      "style": "road",
+      "startS": 395.44,
+      "endS": 546.44,
+      "lengthM": 151,
+      "passTimeSec": 3.14,
+      "entrySpeedMs": 42.4,
+      "exitSpeedMs": 38.5,
+      "passesRecorded": 3
+    },
+    {
+      "name": "Terowongan Selimut",
+      "style": "tunnel",
+      "startS": 623.24,
+      "endS": 818.24,
+      "lengthM": 195,
+      "passTimeSec": 4.6,
+      "entrySpeedMs": 42.1,
+      "exitSpeedMs": 42.4,
+      "passesRecorded": 3
+    },
+    {
+      "name": "Loop Jam Weker",
+      "style": "road",
+      "startS": 948.24,
+      "endS": 1086.47,
+      "lengthM": 138.23,
+      "passTimeSec": 2.99,
+      "entrySpeedMs": 53,
+      "exitSpeedMs": 52.4,
+      "passesRecorded": 3
+    },
+    {
+      "name": "Jembatan Rak Buku",
+      "style": "bridge",
+      "startS": 1374.98,
+      "endS": 1564.98,
+      "lengthM": 190,
+      "passTimeSec": 4.53,
+      "entrySpeedMs": 42.4,
+      "exitSpeedMs": 42.7,
+      "passesRecorded": 3
+    },
+    {
+      "name": "Tikungan Karpet",
+      "style": "road",
+      "startS": 1609.98,
+      "endS": 1922.04,
+      "lengthM": 312.06,
+      "passTimeSec": 7.38,
+      "entrySpeedMs": 42.5,
+      "exitSpeedMs": 42.3,
+      "passesRecorded": 3
+    }
+  ],
+  "branches": [
+    {
+      "routeId": "shortcut",
+      "name": "Rute Pintas Kolong Ranjang",
+      "fromS": 1837.04,
+      "toS": 2406.08,
+      "mainArcM": 569.04,
+      "branchLengthM": 396.79,
+      "width": 8,
+      "entryWorldErrorM": 0,
+      "entryEndWorldErrorM": 0,
+      "mergeWorldErrorM": 0,
+      "solverConverged": true,
+      "solverPosErrorM": 0.00005,
+      "solverYawErrorDeg": 0,
+      "minCorridorClearanceM": 0.86,
+      "jumps": [
+        {
+          "segmentIndex": 4,
+          "startS": 197.8,
+          "endS": 213.8,
+          "gapLength": 16,
+          "takeoffSpeed": 50.19,
+          "minSpeedRequired": 37.67,
+          "landed": true,
+          "airtime": 0.767
+        }
+      ],
+      "mainTimeSec": 169.15,
+      "shortcutTimeSec": 156.283,
+      "timeSavingSec": 12.867,
+      "perLapSavingSec": 4.289,
+      "shortcutEntries": 3,
+      "shortcutMerges": 3,
+      "shortcutFalls": 0,
+      "shortcutStuck": 0,
+      "shortcutRailHits": 3,
+      "ok": false
+    }
+  ],
   "decor": null,
   "attractions": null,
   "railHits": 0,
   "stuckEvents": 0,
   "falls": 0,
-  "warnings": [],
-  "errors": []
+  "warnings": [
+    "Penghematan waktu rute 'shortcut' per pengambilan (4.29 s/lap, total 12.87 s) > target 4.0 s (pertimbangkan sedikit memperpanjang jalur jembatan pintas)."
+  ],
+  "errors": [
+    "Koridor rute 'shortcut' terlalu dekat jalur utama (0.9 m < 24 m)."
+  ]
 }

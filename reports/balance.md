@@ -9,21 +9,19 @@
 
 | Kesulitan | Peluang Menang Proksi | Target Menang | Selisih Finis Rata-rata (P1-P2 / P2-P3 / P3-P4) | Salip / Balapan | Kena Rintangan / Lap | Macet | Terguling / Balapan | Rasio Lap AI |
 |---|---:|---:|---|---:|---:|---:|---:|---:|
-| **mudah** | 100.0% (PASS) | >= 70% | 7.58s / 1.85s / 1.40s | 0.87 | 0.45 | 0 | 0.67 | 1.133x (65.90s) |
-| **sedang** | 40.0% (PASS) | 40–60% | 0.54s / 0.31s / 0.37s | 12.77 | 0.42 | 0 | 0.17 | 1.091x (63.43s) |
-| **sulit** | 0.0% (PASS) | <= 25% | 1.06s / 0.97s / 10.48s | 2.70 | 0.29 | 0 | 0.33 | 1.011x (58.80s) |
+| **mudah** | 100.0% (PASS) | >= 70% | 7.04s / 1.52s / 1.60s | 1.10 | 0.46 | 0 | 0.87 | 1.130x (65.71s) |
+| **sedang** | 50.0% (PASS) | 40–60% | 0.20s / 0.19s / 0.30s | 13.63 | 0.42 | 0 | 0.00 | 1.089x (63.35s) |
+| **sulit** | 0.0% (PASS) | <= 25% | 1.26s / 1.02s / 10.18s | 2.77 | 0.28 | 0 | 0.27 | 1.013x (58.91s) |
 
-## Perubahan Nilai Tuning di `src/config.ts` (`CONFIG.ai`)
+## Perubahan Nilai Tuning di `src/config.ts` (`CONFIG.kitchenAi`)
 
 | Parameter | Nilai Lama | Nilai Baru |
-|---|---|---|
-| `ai.difficulties.mudah.skillMultiplier` | `0.82` | `0.82` |
-| `ai.difficulties.sedang.skillMultiplier` | `0.92` | `0.892` |
-| `ai.difficulties.sulit.skillMultiplier` | `1.0` | `1` |
-| `ai.cruiseReferenceSpeed` | `43.5` | `44.6` |
-| `ai.rubberBand.maxBoost` | `0.05` | `0.02` |
-| `ai.rubberBand.maxSlow` | `0.06` | `0.115` |
-| `ai.startReactionMaxSec` | `0.24` | `0.28` |
-| `ai.rivals[0..2].skill` | `0.90 / 0.95 / 0.98` | `0.8 / 0.84 / 0.87` |
+|---|---:|---:|
+| `kitchenAi.difficulties.mudah.skillMultiplier` | `0.825` | `0.812` |
+| `kitchenAi.difficulties.sedang.skillMultiplier` | `0.902` | `0.891` |
+| `kitchenAi.difficulties.sulit.skillMultiplier` | `1.0` | `1.0` |
+| `kitchenAi.rubberBand.maxBoost` | `0.025` | `0.036` |
+| `kitchenAi.rubberBand.maxSlow` | `0.075` | `0.118` |
+| `kitchenAi.rubberBand.rangeMeters` | `75` (global `CONFIG.ai.rubberBand`) | `38` |
 
-Status target keseluruhan: **BELUM MEMENUHI SEMUA SASARAN**.
+Status target keseluruhan: **MEMENUHI SEMUA SASARAN**.

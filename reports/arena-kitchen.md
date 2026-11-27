@@ -8,7 +8,7 @@
 |---|---|---|
 | Field Completeness | PASS | All 15 required fields present (28 segments) |
 | Course & Attractions | PASS | len=2486.2m, autopilot=174.50s, pendulums=2, balls=2, wind=1, jelly=1, rings=7+3 |
-| AI Smoke Test (1 Lap) | PASS | 0 stuck, 0 obstacle rollovers (mudah=66.9s, sedang=63.4s, sulit=60.2s) |
+| AI Smoke Test (1 Lap) | PASS | 0 stuck, 0 obstacle rollovers (mudah=66.9s, sedang=63.0s, sulit=60.1s) |
 | Scenery Budgets | PASS | meshes=61/64, tris=29820/60000, inst=241/480, tex=1.31/2.40MB |
 | Decor Clearance | PASS | 59 props cleared >= 3m (min=4.00m, trackStructures=6) |
 | Music Assets | PASS | Uses default fallback tracks (no custom music overrides) |
