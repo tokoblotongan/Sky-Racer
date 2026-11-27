@@ -10,6 +10,8 @@ export interface GatesVisual {
   group: THREE.Group;
   setActive: (index: number) => void;
   setPassed: (index: number) => void;
+  triggerFinishFlash: () => void;
+  update: (dt: number) => void;
   reset: () => void;
   dispose: () => void;
 }
@@ -309,7 +311,42 @@ export function buildGates(
     }
   }
 
+  const baseFinishTrimEmissive = 0.45;
+  const baseBannerEmissive = 0.28;
+  let finishFlashTimer = 0;
+
+  function triggerFinishFlash(): void {
+    finishFlashTimer = CONFIG.polish.finishFlash.durationSeconds;
+  }
+
+  function update(dt: number): void {
+    if (finishFlashTimer <= 0) {
+      return;
+    }
+    finishFlashTimer = Math.max(0, finishFlashTimer - Math.max(0, dt));
+    const norm =
+      finishFlashTimer / Math.max(0.01, CONFIG.polish.finishFlash.durationSeconds);
+    const pulse = norm * (0.55 + 0.45 * Math.abs(Math.sin(norm * Math.PI * 3.5)));
+    finishTrimMat.emissiveIntensity = THREE.MathUtils.lerp(
+      baseFinishTrimEmissive,
+      CONFIG.polish.finishFlash.trimPeakEmissive,
+      pulse,
+    );
+    bannerMaterial.emissiveIntensity = THREE.MathUtils.lerp(
+      baseBannerEmissive,
+      CONFIG.polish.finishFlash.bannerPeakEmissive,
+      pulse,
+    );
+    if (finishFlashTimer <= 0) {
+      finishTrimMat.emissiveIntensity = baseFinishTrimEmissive;
+      bannerMaterial.emissiveIntensity = baseBannerEmissive;
+    }
+  }
+
   function reset(): void {
+    finishFlashTimer = 0;
+    finishTrimMat.emissiveIntensity = baseFinishTrimEmissive;
+    bannerMaterial.emissiveIntensity = baseBannerEmissive;
     for (let i = 0; i < entries.length; i++) {
       applyCheckpointStatus(entries[i], i === 0 ? 'active' : 'upcoming');
     }
@@ -341,6 +378,8 @@ export function buildGates(
     group,
     setActive,
     setPassed,
+    triggerFinishFlash,
+    update,
     reset,
     dispose,
   };

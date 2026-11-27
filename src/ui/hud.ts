@@ -8,7 +8,6 @@ import type { TouchControlPrefs } from '../input/touch';
 import {
   formatMedalLabel,
   type CourseRecords,
-  type MedalType,
 } from '../services/records';
 import { createToastQueue, type ToastQueue } from './toastQueue';
 import { getBuildId, isDebugUrlEnabled } from './errorOverlay';
@@ -18,12 +17,18 @@ import {
   type MinimapController,
   type MinimapSizeMode,
 } from './minimap';
+import {
+  hideResultScreen,
+  showResultScreen,
+  syncResultDifficultyUi,
+} from './resultScreen';
 import type { QualityLevel } from '../render/quality';
 import './hud.css';
 
 export interface HudViewModel {
   phase: RacePhase;
   resultReady: boolean;
+  introActive?: boolean;
   speedKmh: number;
   boost01: number;
   progress01: number;
@@ -71,6 +76,8 @@ export interface FinishScreenData {
   courseName: string;
   finish: FinishResultData;
   records: CourseRecords;
+  aiDifficulty?: AiDifficulty;
+  podiumActive?: boolean;
 }
 
 export interface HudCallbacks {
@@ -253,6 +260,8 @@ export interface HudHandle {
   finishStatsGridEl: HTMLElement;
   finishStandingsBoxEl: HTMLElement;
   finishStandingsEl: HTMLElement;
+  finishDiffRowEl: HTMLElement;
+  finishDiffBtns: Record<AiDifficulty, HTMLButtonElement>;
   finishLapsBoxEl: HTMLElement;
   finishLapsEl: HTMLElement;
   finishSplitsEl: HTMLElement;
@@ -260,6 +269,7 @@ export interface HudHandle {
   finishRetryBtnEl: HTMLButtonElement;
   finishMenuBtnEl: HTMLButtonElement;
   finishCopyBtnEl: HTMLButtonElement;
+  speedLinesEl: HTMLElement;
   audioBtnEl: HTMLButtonElement;
   countdownHideTimerId: number | null;
   copyResetTimerId: number | null;
@@ -269,10 +279,12 @@ export interface HudHandle {
   arcTotalLen: number;
   lastPhase: RacePhase | null;
   lastResultReady: boolean | null;
+  lastIntroActive: boolean | null;
   lastSpeedInt: number;
   lastSpeedQuantized: number;
   lastBoostQuantized: number;
   lastBoostActive: boolean;
+  lastSpeedLinesOpacity: number;
   lastProgressQuantized: number;
   lastCpPassed: number;
   lastTimeText: string;
@@ -314,58 +326,9 @@ export function formatRaceTime(totalSeconds: number): string {
   return `${mm}:${ss}.${cc}`;
 }
 
-function formatSplitSeconds(seconds: number): string {
-  return `${Math.max(0, seconds).toFixed(2)} s`;
-}
-
 function formatDelta(delta: number): string {
   const sign = delta > 0 ? '+' : '-';
   return `${sign}${Math.abs(delta).toFixed(2)} s`;
-}
-
-function createMedalBadgeSvg(medal: MedalType): string {
-  let fillMain = '#475569';
-  let fillShade = '#334155';
-  let strokeColor = '#94A3B8';
-  let starColor = '#CBD5E1';
-  let ribbonLeft = '#334155';
-  let ribbonRight = '#475569';
-
-  if (medal === 'gold') {
-    fillMain = '#FFD23F';
-    fillShade = '#E59500';
-    strokeColor = '#FFFDF7';
-    starColor = '#FFFDF7';
-    ribbonLeft = '#1E6BFF';
-    ribbonRight = '#35D4FF';
-  } else if (medal === 'silver') {
-    fillMain = '#E2E8F0';
-    fillShade = '#94A3B8';
-    strokeColor = '#FFFDF7';
-    starColor = '#FFFDF7';
-    ribbonLeft = '#1E6BFF';
-    ribbonRight = '#64748B';
-  } else if (medal === 'bronze') {
-    fillMain = '#F4A261';
-    fillShade = '#B45309';
-    strokeColor = '#FFE8CC';
-    starColor = '#FFFDF7';
-    ribbonLeft = '#9A3412';
-    ribbonRight = '#EA580C';
-  }
-
-  return `
-    <svg class="sr-medal-svg" viewBox="0 0 64 64" aria-hidden="true">
-      <polygon points="18,4 28,4 32,22 22,22" fill="${ribbonLeft}" />
-      <polygon points="46,4 36,4 32,22 42,22" fill="${ribbonRight}" />
-      <circle cx="32" cy="38" r="20" fill="${fillShade}" stroke="${strokeColor}" stroke-width="2.6" />
-      <circle cx="32" cy="36" r="16" fill="${fillMain}" />
-      <polygon
-        points="32,24 35.4,31.2 43.3,32.2 37.5,37.7 39,45.5 32,41.6 25,45.5 26.5,37.7 20.7,32.2 28.6,31.2"
-        fill="${starColor}"
-      />
-    </svg>
-  `;
 }
 
 function applyHudConfigCssVars(root: HTMLElement): void {
@@ -412,6 +375,8 @@ export function createHud(
     : 'sr-hud-hidden';
 
   root.innerHTML = `
+    <div class="sr-speed-lines" aria-hidden="true"></div>
+
     <div class="sr-hud-top sr-hud-hidden">
       <div class="sr-hud-panel sr-pos-slot sr-hud-hidden" data-slot="pos">P1 / 4</div>
       <div class="sr-hud-panel sr-lap-slot sr-hud-hidden" data-slot="lap">LAP 1 / 1</div>
@@ -710,6 +675,15 @@ export function createHud(
 
           <div class="sr-finish-stats-grid"></div>
 
+          <div class="sr-finish-diff-row sr-hud-hidden">
+            <span class="sr-finish-diff-label">Ganti kesulitan</span>
+            <div class="sr-preset-seg sr-finish-diff-seg">
+              <button type="button" class="sr-preset-btn sr-diff-btn" data-diff="mudah">Mudah</button>
+              <button type="button" class="sr-preset-btn sr-diff-btn" data-diff="sedang">Sedang</button>
+              <button type="button" class="sr-preset-btn sr-diff-btn" data-diff="sulit">Sulit</button>
+            </div>
+          </div>
+
           <div class="sr-finish-actions">
             <button type="button" class="sr-btn sr-btn-primary sr-finish-retry-btn">Balapan lagi</button>
             <button type="button" class="sr-btn sr-btn-secondary sr-finish-menu-btn">Menu</button>
@@ -816,9 +790,16 @@ export function createHud(
   const benchCloseBtnEl = root.querySelector('.sr-bench-close-btn') as HTMLButtonElement;
 
   const safeBannerEl = root.querySelector('.sr-safe-banner') as HTMLElement;
+  const finishDiffRowEl = root.querySelector('.sr-finish-diff-row') as HTMLElement;
+  const finishDiffBtns: Record<AiDifficulty, HTMLButtonElement> = {
+    mudah: root.querySelector('.sr-finish-diff-seg [data-diff="mudah"]') as HTMLButtonElement,
+    sedang: root.querySelector('.sr-finish-diff-seg [data-diff="sedang"]') as HTMLButtonElement,
+    sulit: root.querySelector('.sr-finish-diff-seg [data-diff="sulit"]') as HTMLButtonElement,
+  };
   const finishRetryBtnEl = root.querySelector('.sr-finish-retry-btn') as HTMLButtonElement;
   const finishMenuBtnEl = root.querySelector('.sr-finish-menu-btn') as HTMLButtonElement;
   const finishCopyBtnEl = root.querySelector('.sr-finish-copy-btn') as HTMLButtonElement;
+  const speedLinesEl = root.querySelector('.sr-speed-lines') as HTMLElement;
 
   const debugModeEnabled = isDebugUrlEnabled();
   if (debugModeEnabled) {
@@ -915,17 +896,23 @@ export function createHud(
   const diffKeys: AiDifficulty[] = ['mudah', 'sedang', 'sulit'];
   const diffClickHandlers: Array<{ el: HTMLButtonElement; fn: (e: MouseEvent) => void }> = [];
   for (const diff of diffKeys) {
-    const onDiffClick = (e: MouseEvent): void => {
+    const applyDiffSelection = (btn: HTMLButtonElement) => (e: MouseEvent): void => {
       e.stopPropagation();
-      titleDiffBtns[diff].blur();
+      btn.blur();
       for (const dk of diffKeys) {
         titleDiffBtns[dk].classList.toggle('sr-preset-btn--active', dk === diff);
+        finishDiffBtns[dk].classList.toggle('sr-preset-btn--active', dk === diff);
       }
       callbacks.onSelectAiDifficulty?.(diff);
     };
+    const onTitleDiffClick = applyDiffSelection(titleDiffBtns[diff]);
+    const onFinishDiffClick = applyDiffSelection(finishDiffBtns[diff]);
     titleDiffBtns[diff].addEventListener('pointerdown', stopProp);
-    titleDiffBtns[diff].addEventListener('click', onDiffClick);
-    diffClickHandlers.push({ el: titleDiffBtns[diff], fn: onDiffClick });
+    titleDiffBtns[diff].addEventListener('click', onTitleDiffClick);
+    finishDiffBtns[diff].addEventListener('pointerdown', stopProp);
+    finishDiffBtns[diff].addEventListener('click', onFinishDiffClick);
+    diffClickHandlers.push({ el: titleDiffBtns[diff], fn: onTitleDiffClick });
+    diffClickHandlers.push({ el: finishDiffBtns[diff], fn: onFinishDiffClick });
   }
 
   const handleBrightnessInput = (slider: HTMLInputElement) => (e: Event): void => {
@@ -1292,6 +1279,8 @@ export function createHud(
     finishStatsGridEl: root.querySelector('.sr-finish-stats-grid') as HTMLElement,
     finishStandingsBoxEl: root.querySelector('.sr-finish-standings-box') as HTMLElement,
     finishStandingsEl: root.querySelector('.sr-finish-standings') as HTMLElement,
+    finishDiffRowEl,
+    finishDiffBtns,
     finishLapsBoxEl: root.querySelector('.sr-finish-laps-box') as HTMLElement,
     finishLapsEl: root.querySelector('.sr-finish-laps') as HTMLElement,
     finishSplitsEl: root.querySelector('.sr-finish-splits') as HTMLElement,
@@ -1299,6 +1288,7 @@ export function createHud(
     finishRetryBtnEl,
     finishMenuBtnEl,
     finishCopyBtnEl,
+    speedLinesEl,
     audioBtnEl: root.querySelector('.sr-audio-btn') as HTMLButtonElement,
     countdownHideTimerId: null,
     copyResetTimerId: null,
@@ -1308,10 +1298,12 @@ export function createHud(
     arcTotalLen: arcLen,
     lastPhase: null,
     lastResultReady: null,
+    lastIntroActive: null,
     lastSpeedInt: 0,
     lastSpeedQuantized: 0,
     lastBoostQuantized: 0,
     lastBoostActive: false,
+    lastSpeedLinesOpacity: 0,
     lastProgressQuantized: 0,
     lastCpPassed: 0,
     lastTimeText: '00:00.00',
@@ -1442,6 +1434,7 @@ export function createHud(
     }
     for (const dk of diffKeys) {
       titleDiffBtns[dk].removeEventListener('pointerdown', stopProp);
+      finishDiffBtns[dk].removeEventListener('pointerdown', stopProp);
     }
     for (const entry of diffClickHandlers) {
       entry.el.removeEventListener('click', entry.fn);
@@ -1706,6 +1699,15 @@ export function hideLapPopup(hud: HudHandle): void {
   hud.toastQueue.clearKind('lap');
 }
 
+export function showLastLapBanner(hud: HudHandle): void {
+  hud.toastQueue.push({
+    kind: 'lastLap',
+    text: 'LAP TERAKHIR!',
+    priority: CONFIG.hud.toastPriorities.lastLap,
+    durationMs: CONFIG.hud.lastLapToastDurationMs,
+  });
+}
+
 export function showZoneToast(hud: HudHandle, title: string): void {
   hud.toastQueue.push({
     kind: 'zone',
@@ -1796,227 +1798,24 @@ export function hideCountdownOverlay(hud: HudHandle): void {
   hud.countdownEl.classList.add('sr-hud-hidden');
 }
 
+export function syncFinishDifficulty(hud: HudHandle, difficulty: AiDifficulty): void {
+  syncResultDifficultyUi(hud, difficulty);
+}
+
 export function showFinishScreen(hud: HudHandle, data: FinishScreenData): void {
-  const { finish, records, courseName } = data;
   hud.toastQueue.clear();
-
-  hud.finishCourseNameEl.textContent = courseName;
-  hud.finishBadgeEl.classList.toggle('sr-hud-hidden', !finish.isNewBest);
-
-  const isMultiRacer = (finish.totalRacers ?? 1) > 1 && typeof finish.playerPosition === 'number';
-  hud.finishPosBannerEl.classList.toggle('sr-hud-hidden', !isMultiRacer);
-  if (isMultiRacer && finish.playerPosition) {
-    const pos = finish.playerPosition;
-    hud.finishPosBannerEl.textContent =
-      pos === 1 ? 'JUARA P1!' : pos <= 3 ? `PODIUM P${pos}` : `POSISI P${pos}`;
-    hud.finishPosBannerEl.classList.toggle('sr-finish-pos-banner--win', pos === 1);
-  }
-
-  hud.finishMedalIconEl.innerHTML = createMedalBadgeSvg(finish.medal);
-  hud.finishMedalLabelEl.textContent = formatMedalLabel(finish.medal);
-  hud.finishTimeEl.textContent = formatRaceTime(finish.time);
-  hud.finishCopyBtnEl.textContent = 'Salin hasil';
-
-  hud.finishDeltaEl.className = 'sr-finish-delta';
-  if (finish.deltaToBest === null) {
-    hud.finishDeltaEl.classList.add('sr-split-delta-neutral');
-    hud.finishDeltaEl.textContent = 'Catatan Waktu Pertama';
-  } else if (finish.deltaToBest <= 0) {
-    hud.finishDeltaEl.classList.add('sr-split-delta-fast');
-    hud.finishDeltaEl.textContent = `${formatDelta(finish.deltaToBest)} lebih cepat`;
-  } else {
-    hud.finishDeltaEl.classList.add('sr-split-delta-slow');
-    hud.finishDeltaEl.textContent = `${formatDelta(finish.deltaToBest)} dari rekor`;
-  }
-
-  // Stats grid
-  const stats = finish.stats;
-  const statItems: Array<{ label: string; value: string }> = [
-    ...(isMultiRacer
-      ? [{ label: 'Posisi Akhir', value: `P${finish.playerPosition} / ${finish.totalRacers}` }]
-      : []),
-    { label: 'Top Speed', value: `${Math.round(stats.topSpeedKmh)} km/h` },
-    { label: 'Total Udara', value: `${stats.totalAirtime.toFixed(2)} s` },
-    { label: 'Lompatan Terlama', value: `${stats.longestAirtime.toFixed(2)} s` },
-    { label: 'Boost', value: String(stats.boostCount) },
-    { label: 'Bentur Pagar', value: String(stats.railHits) },
-    { label: 'Reset', value: String(stats.resets) },
-    { label: 'Jatuh', value: String(stats.falls) },
-  ];
-  hud.finishStatsGridEl.textContent = '';
-  for (const item of statItems) {
-    const tile = document.createElement('div');
-    tile.className = 'sr-stat-tile';
-    const labelEl = document.createElement('span');
-    labelEl.className = 'sr-stat-label';
-    labelEl.textContent = item.label;
-    const valEl = document.createElement('span');
-    valEl.className = 'sr-stat-value';
-    valEl.textContent = item.value;
-    tile.appendChild(labelEl);
-    tile.appendChild(valEl);
-    hud.finishStatsGridEl.appendChild(tile);
-  }
-
-  // Classification table for multi-racer courses
-  const classification = finish.classification ?? [];
-  const showStandingsBox = isMultiRacer && classification.length > 1;
-  hud.finishStandingsBoxEl.classList.toggle('sr-hud-hidden', !showStandingsBox);
-  hud.finishStandingsEl.textContent = '';
-  if (showStandingsBox) {
-    for (const rowItem of classification) {
-      const row = document.createElement('div');
-      row.className = rowItem.isPlayer
-        ? 'sr-finish-standing-row sr-finish-standing-row--player'
-        : 'sr-finish-standing-row';
-
-      const rankEl = document.createElement('span');
-      rankEl.className = 'sr-finish-standing-rank';
-      rankEl.textContent = `P${rowItem.rank}`;
-      row.appendChild(rankEl);
-
-      const nameWrap = document.createElement('span');
-      nameWrap.className = 'sr-finish-standing-name';
-      const dot = document.createElement('span');
-      dot.className = 'sr-racer-dot';
-      dot.style.backgroundColor = rowItem.color;
-      nameWrap.appendChild(dot);
-      const nameText = document.createElement('span');
-      nameText.textContent = rowItem.name;
-      nameWrap.appendChild(nameText);
-      row.appendChild(nameWrap);
-
-      const totalEl = document.createElement('span');
-      totalEl.className = 'sr-finish-standing-time';
-      totalEl.textContent =
-        rowItem.dnf || rowItem.totalTime === null
-          ? 'DNF'
-          : formatRaceTime(rowItem.totalTime);
-      row.appendChild(totalEl);
-
-      const bestLapEl = document.createElement('span');
-      bestLapEl.className = 'sr-finish-standing-bl';
-      bestLapEl.textContent =
-        rowItem.bestLap !== null && Number.isFinite(rowItem.bestLap)
-          ? `BL ${formatRaceTime(rowItem.bestLap)}`
-          : '--';
-      row.appendChild(bestLapEl);
-
-      hud.finishStandingsEl.appendChild(row);
-    }
-  }
-
-  // Per-lap breakdown (shown for multi-lap courses)
-  const hasMultipleLaps = finish.lapTimes.length > 1;
-  hud.finishLapsBoxEl.classList.toggle('sr-hud-hidden', !hasMultipleLaps);
-  hud.finishLapsEl.textContent = '';
-  if (hasMultipleLaps) {
-    const runMinLap = Math.min(...finish.lapTimes);
-    for (let i = 0; i < finish.lapTimes.length; i++) {
-      const lapVal = finish.lapTimes[i];
-      const isRunBest = Math.abs(lapVal - runMinLap) <= 1e-4;
-      const isRecordBest = finish.bestLap !== null && lapVal <= finish.bestLap + 1e-4;
-
-      const row = document.createElement('div');
-      row.className = isRunBest ? 'sr-finish-lap-row sr-finish-lap-row--best' : 'sr-finish-lap-row';
-
-      const labelEl = document.createElement('span');
-      labelEl.className = 'sr-finish-lap-label';
-      labelEl.textContent = `Lap ${i + 1}`;
-      row.appendChild(labelEl);
-
-      const valEl = document.createElement('span');
-      valEl.className = 'sr-finish-lap-val';
-      valEl.textContent = formatRaceTime(lapVal);
-      row.appendChild(valEl);
-
-      if (isRecordBest || isRunBest) {
-        const tagEl = document.createElement('span');
-        tagEl.className = 'sr-finish-split-best-tag';
-        tagEl.textContent = isRecordBest ? 'TERBAIK' : 'TERCEPAT';
-        row.appendChild(tagEl);
-      }
-
-      hud.finishLapsEl.appendChild(row);
-    }
-  }
-
-  // Checkpoint splits table
-  const cpPerLap =
-    hasMultipleLaps && finish.splits.length % finish.lapTimes.length === 0
-      ? finish.splits.length / finish.lapTimes.length
-      : 0;
-  hud.finishSplitsEl.textContent = '';
-  for (let i = 0; i < finish.splits.length; i++) {
-    const splitVal = finish.splits[i];
-    const delta = i < finish.splitDeltas.length ? finish.splitDeltas[i] : null;
-    const isSplitBest = i < finish.isNewSplitBest.length ? finish.isNewSplitBest[i] : false;
-
-    const row = document.createElement('div');
-    row.className = 'sr-finish-split-row';
-
-    const labelEl = document.createElement('span');
-    labelEl.className = 'sr-finish-split-label';
-    if (cpPerLap > 0) {
-      const lapNum = Math.floor(i / cpPerLap) + 1;
-      const cpNum = (i % cpPerLap) + 1;
-      labelEl.textContent = `L${lapNum}·CP${cpNum}`;
-    } else {
-      labelEl.textContent = `CP ${i + 1}`;
-    }
-    row.appendChild(labelEl);
-
-    const valEl = document.createElement('span');
-    valEl.className = 'sr-finish-split-val';
-    valEl.textContent = formatSplitSeconds(splitVal);
-    row.appendChild(valEl);
-
-    const deltaEl = document.createElement('span');
-    if (delta === null) {
-      deltaEl.className = 'sr-finish-split-delta sr-split-delta-neutral';
-      deltaEl.textContent = '--';
-    } else if (delta <= 0) {
-      deltaEl.className = 'sr-finish-split-delta sr-split-delta-fast';
-      deltaEl.textContent = formatDelta(delta);
-    } else {
-      deltaEl.className = 'sr-finish-split-delta sr-split-delta-slow';
-      deltaEl.textContent = formatDelta(delta);
-    }
-    row.appendChild(deltaEl);
-
-    if (isSplitBest) {
-      const bestTag = document.createElement('span');
-      bestTag.className = 'sr-finish-split-best-tag';
-      bestTag.textContent = 'TERBAIK';
-      row.appendChild(bestTag);
-    }
-
-    hud.finishSplitsEl.appendChild(row);
-  }
-
-  // Top 5 list
-  renderTopRecordsList(hud.finishTopListEl, records, finish.rank);
-
-  hud.finishCardEl.classList.remove('sr-finish-enter');
-  void hud.finishCardEl.offsetWidth;
-  hud.finishCardEl.classList.add('sr-finish-enter');
-  hud.finishScreenEl.style.pointerEvents = '';
-  hud.finishScreenEl.classList.remove('sr-hud-hidden');
+  showResultScreen(hud, data);
 }
 
 export function hideFinishScreen(hud: HudHandle): void {
-  hud.finishScreenEl.classList.add('sr-hud-hidden');
-  hud.finishScreenEl.style.pointerEvents = 'none';
-  hud.finishCardEl.classList.remove('sr-finish-enter');
+  hideResultScreen(hud);
 }
 
 export function hideModalScreens(hud: HudHandle): void {
   hud.root.classList.remove('sr-hud--modal');
   hud.titleScreenEl.classList.add('sr-hud-hidden');
   hud.titleScreenEl.style.pointerEvents = 'none';
-  hud.finishScreenEl.classList.add('sr-hud-hidden');
-  hud.finishScreenEl.style.pointerEvents = 'none';
-  hud.finishCardEl.classList.remove('sr-finish-enter');
+  hideResultScreen(hud);
   hud.clearHoldCleanup();
   hud.toastQueue.clear();
 }
@@ -2182,15 +1981,21 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     );
   }
 
-  if (viewModel.phase !== hud.lastPhase || viewModel.resultReady !== hud.lastResultReady) {
+  const isIntro = Boolean(viewModel.introActive);
+  if (
+    viewModel.phase !== hud.lastPhase ||
+    viewModel.resultReady !== hud.lastResultReady ||
+    isIntro !== hud.lastIntroActive
+  ) {
     const prevPhase = hud.lastPhase;
     hud.lastPhase = viewModel.phase;
     hud.lastResultReady = viewModel.resultReady;
-    const isTitle = viewModel.phase === 'TITLE';
-    const isFinish = viewModel.phase === 'FINISH';
+    hud.lastIntroActive = isIntro;
+    const isTitle = !isIntro && viewModel.phase === 'TITLE';
+    const isFinish = !isIntro && viewModel.phase === 'FINISH';
     const showResults = isFinish && viewModel.resultReady;
 
-    if (viewModel.phase === 'COUNTDOWN' && prevPhase !== 'COUNTDOWN') {
+    if (!isIntro && viewModel.phase === 'COUNTDOWN' && prevPhase !== 'COUNTDOWN') {
       hud.hintManualExpanded = null;
       hud.lastHintCollapsed = null;
     }
@@ -2200,22 +2005,23 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     hud.titleScreenEl.style.pointerEvents = isTitle ? '' : 'none';
     hud.finishScreenEl.classList.toggle('sr-hud-hidden', !showResults);
     hud.finishScreenEl.style.pointerEvents = showResults ? '' : 'none';
-    hud.topBarEl.classList.toggle('sr-hud-hidden', isTitle || showResults);
-    hud.progressWrapEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
-    hud.bottomRightEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
-    hud.minimap.setVisible(!isTitle && !isFinish);
-    if (isTitle || isFinish) {
+    hud.topBarEl.classList.toggle('sr-hud-hidden', isTitle || showResults || isIntro);
+    hud.progressWrapEl.classList.toggle('sr-hud-hidden', isTitle || isFinish || isIntro);
+    hud.bottomRightEl.classList.toggle('sr-hud-hidden', isTitle || isFinish || isIntro);
+    hud.minimap.setVisible(!isTitle && !isFinish && !isIntro);
+    if (isTitle || isFinish || isIntro) {
       hud.standingsPanelEl.classList.add('sr-hud-hidden');
     }
 
-    const isDriving = viewModel.phase === 'COUNTDOWN' || viewModel.phase === 'RACING';
-    hud.gearWrapEl.classList.toggle('sr-hud-hidden', showResults);
+    const isDriving =
+      !isIntro && (viewModel.phase === 'COUNTDOWN' || viewModel.phase === 'RACING');
+    hud.gearWrapEl.classList.toggle('sr-hud-hidden', showResults || isIntro);
     hud.gearRaceActionsEl.classList.toggle(
       'sr-hud-hidden',
       !(viewModel.touchActive && isDriving),
     );
-    hud.gearCpBtnEl.classList.toggle('sr-hud-hidden', viewModel.phase !== 'RACING');
-    if (showResults) {
+    hud.gearCpBtnEl.classList.toggle('sr-hud-hidden', isIntro || viewModel.phase !== 'RACING');
+    if (showResults || isIntro) {
       hud.gearPopoverEl.classList.add('sr-hud-hidden');
       hud.gearOpen = false;
       if (hud.gearAutoCloseTimerId !== null) {
@@ -2225,13 +2031,13 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     }
 
     if (CONFIG.hud.showControlsHint) {
-      hud.bottomLeftEl.classList.toggle('sr-hud-hidden', isTitle || isFinish);
+      hud.bottomLeftEl.classList.toggle('sr-hud-hidden', isTitle || isFinish || isIntro);
     }
 
-    if (isTitle || isFinish) {
+    if (isTitle || isFinish || isIntro) {
       hideCountdownOverlay(hud);
     }
-    if (isTitle || showResults) {
+    if (isTitle || showResults || isIntro) {
       hud.toastQueue.clear();
     }
     if (!isTitle) {
@@ -2239,7 +2045,7 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     }
   }
 
-  const showWrongWay = viewModel.phase === 'RACING' && viewModel.wrongWay;
+  const showWrongWay = !isIntro && viewModel.phase === 'RACING' && viewModel.wrongWay;
   if (showWrongWay !== hud.lastWrongWay) {
     hud.lastWrongWay = showWrongWay;
     if (showWrongWay) {
@@ -2257,7 +2063,12 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
 
   hud.toastQueue.update(dt);
 
-  if (viewModel.phase === 'TITLE') {
+  if (viewModel.phase === 'TITLE' || isIntro) {
+    if (hud.lastSpeedLinesOpacity !== 0) {
+      hud.lastSpeedLinesOpacity = 0;
+      hud.speedLinesEl.classList.remove('sr-speed-lines--active');
+      hud.speedLinesEl.style.setProperty('--sr-speed-lines-opacity', '0');
+    }
     return;
   }
 
@@ -2301,6 +2112,16 @@ export function updateHud(hud: HudHandle, viewModel: HudViewModel): void {
     hud.lastBoostActive = boostActive;
     hud.boostWrapEl.classList.toggle('sr-boost-active', boostActive);
     hud.boostStateEl.textContent = boostActive ? 'BOOST!' : 'Siap';
+  }
+  const boostSurging = viewModel.phase === 'RACING' && boostActive;
+  const speedLinesOpacity = boostSurging
+    ? Math.min(1, Math.max(0.35, boostClamped)) * CONFIG.polish.speedLines.maxOpacity
+    : 0;
+  const speedLinesQuantized = Math.round(speedLinesOpacity * 50) / 50;
+  if (speedLinesQuantized !== hud.lastSpeedLinesOpacity) {
+    hud.lastSpeedLinesOpacity = speedLinesQuantized;
+    hud.speedLinesEl.classList.toggle('sr-speed-lines--active', speedLinesQuantized > 0);
+    hud.speedLinesEl.style.setProperty('--sr-speed-lines-opacity', speedLinesQuantized.toFixed(2));
   }
 
   const totalRacers = viewModel.totalRacers ?? 1;

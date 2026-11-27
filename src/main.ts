@@ -56,12 +56,15 @@ import {
   createAttractionManager,
   type AttractionManager,
 } from './render/attractions/attractionManager';
+import { createRaceEventBus, type GameFlowState } from './core/raceEvents';
+import { createIntroCamera, isReducedMotionPreferred } from './camera/introCamera';
 import { buildBridgeMesh, type BridgeVisual } from './render/bridge';
 import { createCarFleet, type CarFleetVisual } from './render/carFleet';
 import type { CarDesignId } from './render/carDesigns';
 import { ChaseCamera } from './render/chaseCamera';
 import { buildGates, type GatesVisual } from './render/gates';
 import { createParticles } from './render/particles';
+import { createPodiumScene, type PodiumSceneHandle } from './render/podium/podiumScene';
 import { createPostFx } from './render/postfx';
 import { createQualityManager, detectInitialQuality, type QualityLevel } from './render/quality';
 import { createSceneContext, RendererInitError, type SceneContext } from './render/scene';
@@ -104,6 +107,7 @@ import {
   showFinishScreen,
   showHazardToast,
   showLapPopup,
+  showLastLapBanner,
   showLoadingOverlay,
   showOvertakeToast,
   showRingBoostToast,
@@ -111,12 +115,15 @@ import {
   showShortcutToast,
   showSplitPopup,
   showZoneToast,
+  syncFinishDifficulty,
   updateDebugMetricsOverlay,
   updateHud,
   updateTitleScreen,
   type HudViewModel,
   type PresetBenchmarkEntry,
 } from './ui/hud';
+import { createIntroBanner } from './ui/introBanner';
+import { createScreenTransition } from './ui/transitions';
 import {
   disposeReportOverlay,
   isReportOverlayOpen,
@@ -757,10 +764,40 @@ export async function bootstrap(): Promise<void> {
     window.addEventListener('keydown', handleDebugKey);
   }
 
+  const raceEventBus = createRaceEventBus();
+  const introCamera = createIntroCamera();
+  const introBanner = createIntroBanner(container);
+  const screenTransition = createScreenTransition(container);
+  let podiumScene: PodiumSceneHandle | null = null;
+  let introActive = false;
+  let introPlayedForCourseId: string | null = null;
+  let currentFlowState: GameFlowState = 'title';
+
+  function setFlowState(nextState: GameFlowState): void {
+    if (nextState === currentFlowState) {
+      return;
+    }
+    const prevState = currentFlowState;
+    currentFlowState = nextState;
+    raceEventBus.emit('gameStateChanged', {
+      state: nextState,
+      prevState,
+      courseId: course.getId(),
+    });
+  }
+
+  function disposePodiumScene(): void {
+    if (podiumScene) {
+      podiumScene.dispose();
+      podiumScene = null;
+    }
+  }
+
   let resizeOrientationTimer = 0;
   function handleWindowResize(): void {
     const { width, height } = sceneCtx.getViewportSize();
     postfx.resize(width, height);
+    podiumScene?.resize(width, height);
     updateHud(hud, hudViewModel);
   }
   function handleWindowOrientationChange(): void {
@@ -790,6 +827,7 @@ export async function bootstrap(): Promise<void> {
     sound.unlock();
     sound.handleEvents([{ type: 'uiMove' }]);
     syncTitleUi();
+    syncFinishDifficulty(hud, diff);
   };
 
   onToggleAttractionsFromUi = (): void => {
@@ -849,6 +887,7 @@ export async function bootstrap(): Promise<void> {
   const hudViewModel: HudViewModel = {
     phase: raceState.phase,
     resultReady: raceState.resultReady,
+    introActive: false,
     speedKmh: 0,
     boost01: 0,
     progress01: 0,
@@ -1414,6 +1453,7 @@ export async function bootstrap(): Promise<void> {
     }
     selectedCourseId = nextDef.id;
     setLastCourseId(nextDef.id);
+    introPlayedForCourseId = null;
     sound.unlock();
     sound.handleEvents([{ type: 'uiMove' }]);
     syncTitleUi();
@@ -1508,6 +1548,7 @@ export async function bootstrap(): Promise<void> {
     const prevCanvas = prevSceneCtx.renderer.domElement;
     unbindCanvasContextEvents(prevCanvas);
 
+    disposePodiumScene();
     disposeCurrentCourseVisuals();
     particles.dispose();
     postfx.dispose();
@@ -1956,6 +1997,53 @@ export async function bootstrap(): Promise<void> {
     return false;
   }
 
+  function showResolvedResults(finishData: FinishResultData): void {
+    const isMulti = (finishData.totalRacers ?? 1) > 1;
+    const records = lastFinishRecords ?? getRecords(course.getId(), course.getMedals());
+    const presentResults = (): void => {
+      if (isMulti && !podiumScene) {
+        podiumScene = createPodiumScene({
+          classification: finishData.classification ?? [],
+          playerDesignId: activeCarDesign,
+          presetName: activePreset,
+          graphicsPreset,
+          maxAnisotropy: sceneCtx.maxAnisotropy,
+          isMobile: isMobileDevice,
+          environment: sceneCtx.scene.environment,
+        });
+        const vp = sceneCtx.getViewportSize();
+        podiumScene.resize(vp.width, vp.height);
+        setFlowState('podium');
+      }
+
+      showFinishScreen(hud, {
+        courseName: course.getName(),
+        finish: finishData,
+        records,
+        aiDifficulty,
+        podiumActive: Boolean(podiumScene),
+      });
+
+      const won = isMulti
+        ? (finishData.playerPosition ?? 1) === 1
+        : finishData.medal !== 'none';
+      const outcomePayload = {
+        position: finishData.playerPosition ?? 1,
+        totalRacers: finishData.totalRacers ?? course.getRacers(),
+        time: finishData.time,
+        medal: finishData.medal,
+        courseId: course.getId(),
+      };
+      raceEventBus.emit(won ? 'resultWin' : 'resultLose', outcomePayload);
+    };
+
+    if (isMulti && !podiumScene) {
+      screenTransition.flashFade(presentResults);
+    } else {
+      presentResults();
+    }
+  }
+
   function stepFastForwardBatch(step: number): void {
     if (fastForwardSettled || !hasUnfinishedAi()) {
       if (!fastForwardSettled) {
@@ -2022,11 +2110,7 @@ export async function bootstrap(): Promise<void> {
       fastForwardSettled = true;
       hideLoadingOverlay(hud);
       if (raceState.resultReady && lastFinishData) {
-        showFinishScreen(hud, {
-          courseName: course.getName(),
-          finish: lastFinishData,
-          records: lastFinishRecords ?? getRecords(course.getId(), course.getMedals()),
-        });
+        showResolvedResults(lastFinishData);
       }
     }
   }
@@ -2046,6 +2130,12 @@ export async function bootstrap(): Promise<void> {
       } else if (ev.type === 'go') {
         clearWallCountdownTimer();
         showCountdownOverlay(hud, 'GO!', true);
+        setFlowState('racing');
+        raceEventBus.emit('raceStart', {
+          courseId: course.getId(),
+          totalLaps: raceState.laps,
+          totalRacers: course.getRacers(),
+        });
         updateHud(hud, hudViewModel);
       } else if (ev.type === 'checkpoint') {
         gates.setPassed(ev.index);
@@ -2054,7 +2144,31 @@ export async function bootstrap(): Promise<void> {
       } else if (ev.type === 'lap') {
         gates.reset();
         showLapPopup(hud, ev);
+        raceEventBus.emit('lapChanged', {
+          lap: ev.lap + 1,
+          totalLaps: ev.totalLaps,
+          completedLap: ev.lap,
+          lapTime: ev.lapTime,
+          isBestLap: ev.isBestLap,
+        });
+        if (ev.totalLaps > 1 && ev.lap === ev.totalLaps - 1) {
+          showLastLapBanner(hud);
+          raceEventBus.emit('lastLapStarted', {
+            lap: ev.lap + 1,
+            totalLaps: ev.totalLaps,
+            courseId: course.getId(),
+          });
+        }
       } else if (ev.type === 'finish') {
+        gates.triggerFinishFlash();
+        setFlowState('finished');
+        raceEventBus.emit('playerFinished', {
+          position: ev.playerPosition ?? 1,
+          totalRacers: ev.totalRacers ?? course.getRacers(),
+          time: ev.time,
+          medal: ev.medal,
+          isNewBest: ev.isNewBest,
+        });
         lastFinishData = ev;
         lastFinishRecords = getRecords(course.getId(), course.getMedals());
         fastForwardSimElapsed = 0;
@@ -2065,18 +2179,72 @@ export async function bootstrap(): Promise<void> {
         if (!fastForwardSettled) {
           showLoadingOverlay(hud, 'Menghitung hasil...');
         } else if (lastFinishData) {
-          showFinishScreen(hud, {
-            courseName: course.getName(),
-            finish: lastFinishData,
-            records: lastFinishRecords ?? getRecords(course.getId(), course.getMedals()),
-          });
+          showResolvedResults(lastFinishData);
         }
       }
     }
   }
 
+  function beginCountdownAfterIntro(useFade: boolean): void {
+    introActive = false;
+    introBanner.hide();
+    introCamera.stop();
+    const enterCountdown = (): void => {
+      if (disposed || contextLost) {
+        return;
+      }
+      const events = startCountdown(raceState, performance.now(), course);
+      const stInit = standingsTracker.update(raceState.cars, course, raceState, 0);
+      latestStandings = stInit.entries;
+      latestPlayerRank = stInit.playerRank;
+      chaseCamera.setMode('chase');
+      if (!CONFIG.camera.debugOrbitMode) {
+        carFleet.snapFromCars(raceState.cars, course, renderPose);
+        chaseCamera.snapTo(renderPose, raceState.cars[0], course);
+      }
+      setFlowState('countdown');
+      handleRaceEvents(events);
+      syncGraphicsUi();
+      hudViewModel.introActive = false;
+      updateHud(hud, hudViewModel);
+      pumpWallCountdown();
+      startRenderWatchdog();
+    };
+
+    if (useFade) {
+      screenTransition.flashFade(enterCountdown);
+    } else {
+      enterCountdown();
+    }
+  }
+
+  function skipIntro(): void {
+    if (!introActive || disposed || contextLost) {
+      return;
+    }
+    introCamera.skip();
+    sound.handleEvents([{ type: 'uiMove' }]);
+    beginCountdownAfterIntro(true);
+  }
+
+  function handleIntroSkipKey(event: KeyboardEvent): void {
+    if (!introActive || event.repeat) {
+      return;
+    }
+    if (event.code === 'Space' || event.code === 'Enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      skipIntro();
+    }
+  }
+  window.addEventListener('keydown', handleIntroSkipKey);
+
   function handleConfirmAction(): void {
     if (disposed || contextLost) {
+      return;
+    }
+    if (introActive) {
+      skipIntro();
       return;
     }
     const nowMs = performance.now();
@@ -2099,6 +2267,7 @@ export async function bootstrap(): Promise<void> {
       }
 
       lastConfirmAtMs = nowMs;
+      disposePodiumScene();
       hideModalScreens(hud);
       hideLoadingOverlay(hud);
       touchControls.consumePresses();
@@ -2125,62 +2294,92 @@ export async function bootstrap(): Promise<void> {
       hazardEffects.reset(course.getRacers());
       standingsTracker.reset();
       carFleet.snapFromCars(raceState.cars, course, renderPose);
-      const events = startCountdown(raceState, nowMs, course);
-      const stInit = standingsTracker.update(raceState.cars, course, raceState, 0);
-      latestStandings = stInit.entries;
-      latestPlayerRank = stInit.playerRank;
-      chaseCamera.setMode('chase');
-      handleRaceEvents(events);
-      syncGraphicsUi();
-      updateHud(hud, hudViewModel);
-      pumpWallCountdown();
-      startRenderWatchdog();
+
+      const shouldPlayIntro =
+        introPlayedForCourseId !== course.getId() && !isReducedMotionPreferred();
+      introPlayedForCourseId = course.getId();
+
+      if (shouldPlayIntro) {
+        const vp = sceneCtx.getViewportSize();
+        const started = introCamera.start(course, vp.width / Math.max(1, vp.height));
+        if (started) {
+          introActive = true;
+          setFlowState('intro');
+          const subtitle = course.isClosed()
+            ? `${course.getLaps()} Lap \u2022 ${course.getRacers()} Pembalap`
+            : 'Time Trial \u2022 1 Lap';
+          introBanner.show(activeCourseDef.displayName || course.getName(), subtitle, () => {
+            skipIntro();
+          });
+          hudViewModel.introActive = true;
+          syncGraphicsUi();
+          updateHud(hud, hudViewModel);
+          return;
+        }
+      }
+
+      beginCountdownAfterIntro(false);
       return;
     }
 
     lastConfirmAtMs = nowMs;
-    hideModalScreens(hud);
-    hideLoadingOverlay(hud);
-    touchControls.consumePresses();
-    lastFinishData = null;
-    lastFinishRecords = null;
-    wrongWayDetector.reset();
-    wrongWayActive = false;
-    fastForwardSettled = true;
-    fastForwardSimElapsed = 0;
+    introActive = false;
+    introBanner.hide();
+    introCamera.stop();
+    hudViewModel.introActive = false;
 
-    applyGridStart(raceState.cars, course, prevCars);
-    syncCarStateArrays();
-    aiRaceSeed = (aiRaceSeed + 1013) >>> 0;
-    aiController.reset(course, aiDifficulty, aiRaceSeed);
-    attractionSystem.reset();
-    hazardEffects.reset(course.getRacers());
-    standingsTracker.reset();
-    gates.reset();
-    particles.reset();
-    postfx.setSpeedIntensity(0);
-    hideAirtimePopup(hud);
-    hideSplitPopup(hud);
-    hideLapPopup(hud);
-    hideCountdownOverlay(hud);
+    const runRetry = (): void => {
+      disposePodiumScene();
+      hideModalScreens(hud);
+      hideLoadingOverlay(hud);
+      touchControls.consumePresses();
+      lastFinishData = null;
+      lastFinishRecords = null;
+      wrongWayDetector.reset();
+      wrongWayActive = false;
+      fastForwardSettled = true;
+      fastForwardSimElapsed = 0;
 
-    sound.reset();
-    const events = restartRace(raceState, nowMs, course);
-    resetZoneTracking();
-    const stRestart = standingsTracker.update(raceState.cars, course, raceState, 0);
-    latestStandings = stRestart.entries;
-    latestPlayerRank = stRestart.playerRank;
-    chaseCamera.setMode('chase');
-    carFleet.snapFromCars(raceState.cars, course, renderPose);
+      applyGridStart(raceState.cars, course, prevCars);
+      syncCarStateArrays();
+      aiRaceSeed = (aiRaceSeed + 1013) >>> 0;
+      aiController.reset(course, aiDifficulty, aiRaceSeed);
+      attractionSystem.reset();
+      hazardEffects.reset(course.getRacers());
+      standingsTracker.reset();
+      gates.reset();
+      particles.reset();
+      postfx.setSpeedIntensity(0);
+      hideAirtimePopup(hud);
+      hideSplitPopup(hud);
+      hideLapPopup(hud);
+      hideCountdownOverlay(hud);
 
-    if (CONFIG.camera.snapOnReset && !CONFIG.camera.debugOrbitMode) {
-      chaseCamera.snapTo(renderPose, raceState.cars[0], course);
+      sound.reset();
+      const events = restartRace(raceState, performance.now(), course);
+      resetZoneTracking();
+      const stRestart = standingsTracker.update(raceState.cars, course, raceState, 0);
+      latestStandings = stRestart.entries;
+      latestPlayerRank = stRestart.playerRank;
+      chaseCamera.setMode('chase');
+      carFleet.snapFromCars(raceState.cars, course, renderPose);
+
+      if (CONFIG.camera.snapOnReset && !CONFIG.camera.debugOrbitMode) {
+        chaseCamera.snapTo(renderPose, raceState.cars[0], course);
+      }
+
+      setFlowState('countdown');
+      handleRaceEvents(events);
+      updateHud(hud, hudViewModel);
+      pumpWallCountdown();
+      startRenderWatchdog();
+    };
+
+    if (raceState.phase === 'FINISH') {
+      screenTransition.flashFade(runRetry);
+    } else {
+      runRetry();
     }
-
-    handleRaceEvents(events);
-    updateHud(hud, hudViewModel);
-    pumpWallCountdown();
-    startRenderWatchdog();
   }
 
   function handleReturnToTitle(): void {
@@ -2189,51 +2388,62 @@ export async function bootstrap(): Promise<void> {
     clearWallCountdownTimer();
     clearStartWatchdog();
     pendingStartAfterLoad = false;
-    lastFinishData = null;
-    lastFinishRecords = null;
-    lastThrottle = 0;
-    wrongWayDetector.reset();
-    wrongWayActive = false;
-    fastForwardSettled = true;
-    fastForwardSimElapsed = 0;
-    hideLoadingOverlay(hud);
+    introActive = false;
+    introBanner.hide();
+    introCamera.stop();
+    hudViewModel.introActive = false;
 
-    applyGridStart(raceState.cars, course, prevCars);
-    syncCarStateArrays();
-    aiController.reset(course, aiDifficulty, aiRaceSeed);
-    attractionSystem.reset();
-    hazardEffects.reset(course.getRacers());
-    standingsTracker.reset();
-    latestStandings = [];
-    latestPlayerRank = 1;
-    gates.reset();
-    particles.reset();
-    postfx.setSpeedIntensity(0);
-    hideAirtimePopup(hud);
-    hideSplitPopup(hud);
-    hideLapPopup(hud);
-    hideCountdownOverlay(hud);
-    hideFinishScreen(hud);
+    const finishReturn = (): void => {
+      disposePodiumScene();
+      lastFinishData = null;
+      lastFinishRecords = null;
+      lastThrottle = 0;
+      wrongWayDetector.reset();
+      wrongWayActive = false;
+      fastForwardSettled = true;
+      fastForwardSimElapsed = 0;
+      hideLoadingOverlay(hud);
 
-    sound.reset();
-    const events = returnToTitle(raceState, course);
-    resetZoneTracking();
-    chaseCamera.setMode('title');
-    carFleet.snapFromCars(raceState.cars, course, renderPose);
+      applyGridStart(raceState.cars, course, prevCars);
+      syncCarStateArrays();
+      aiController.reset(course, aiDifficulty, aiRaceSeed);
+      attractionSystem.reset();
+      hazardEffects.reset(course.getRacers());
+      standingsTracker.reset();
+      latestStandings = [];
+      latestPlayerRank = 1;
+      gates.reset();
+      particles.reset();
+      postfx.setSpeedIntensity(0);
+      hideAirtimePopup(hud);
+      hideSplitPopup(hud);
+      hideLapPopup(hud);
+      hideCountdownOverlay(hud);
+      hideFinishScreen(hud);
 
-    if (!CONFIG.camera.debugOrbitMode) {
-      chaseCamera.snapTo(renderPose, raceState.cars[0], course);
-    }
+      sound.reset();
+      const events = returnToTitle(raceState, course);
+      resetZoneTracking();
+      chaseCamera.setMode('title');
+      carFleet.snapFromCars(raceState.cars, course, renderPose);
 
-    handleRaceEvents(events);
-    updateHud(hud, hudViewModel);
-    sound.handleEvents([{ type: 'uiConfirm' }]);
-    syncTitleUi();
-    if (pendingAutoDowngradePreset && pendingAutoDowngradePreset !== graphicsPreset) {
-      const target = pendingAutoDowngradePreset;
-      pendingAutoDowngradePreset = null;
-      void rebuildGraphicsPipeline(target, 'deferred-auto-downgrade');
-    }
+      if (!CONFIG.camera.debugOrbitMode) {
+        chaseCamera.snapTo(renderPose, raceState.cars[0], course);
+      }
+
+      setFlowState('title');
+      handleRaceEvents(events);
+      updateHud(hud, hudViewModel);
+      sound.handleEvents([{ type: 'uiConfirm' }]);
+      syncTitleUi();
+      if (pendingAutoDowngradePreset && pendingAutoDowngradePreset !== graphicsPreset) {
+        const target = pendingAutoDowngradePreset;
+        pendingAutoDowngradePreset = null;
+        void rebuildGraphicsPipeline(target, 'deferred-auto-downgrade');
+      }
+    };
+
+    screenTransition.flashFade(finishReturn);
   }
 
   onConfirmFromUi = handleConfirmAction;
@@ -2280,6 +2490,11 @@ export async function bootstrap(): Promise<void> {
     if (input.minimapPressed) {
       hud.minimap.cycleSizeMode();
       syncGraphicsUi();
+    }
+
+    if (introActive) {
+      lastThrottle = 0;
+      return;
     }
 
     if (input.navPressed !== 0 && raceState.phase === 'TITLE') {
@@ -2378,6 +2593,12 @@ export async function bootstrap(): Promise<void> {
         touchControls.onHaptic(hitEvt);
         particles.emit(hitEvt);
         sound.handleEvents([hitEvt]);
+        if (!isReducedMotionPreferred() && graphicsPreset !== 'hemat') {
+          chaseCamera.addShake(
+            CONFIG.polish.shake.collisionAmplitude * THREE.MathUtils.clamp(ev.intensity, 0.45, 1),
+            CONFIG.polish.shake.durationSeconds,
+          );
+        }
       }
     }
 
@@ -2409,6 +2630,11 @@ export async function bootstrap(): Promise<void> {
             sound.handleEvents([{ type: 'ringPass' }]);
             touchControls.onHaptic({ type: 'ringPass' });
             showRingBoostToast(hud);
+            raceEventBus.emit('ringPass', {
+              carIndex: 0,
+              boostSeconds: CONFIG.attractions.ring.boostDuration,
+            });
+            raceEventBus.emit('boostStarted', { carIndex: 0, source: 'ring' });
           }
         } else if (ae.type === 'hazardHit') {
           particles.emit({
@@ -2421,6 +2647,13 @@ export async function bootstrap(): Promise<void> {
             sound.handleEvents([{ type: 'hazardHit' }]);
             touchControls.onHaptic({ type: 'hazardHit' });
             showHazardToast(hud);
+            raceEventBus.emit('hazardHit', { carIndex: 0, kind: ae.hazardKind });
+            if (!isReducedMotionPreferred() && graphicsPreset !== 'hemat') {
+              chaseCamera.addShake(
+                CONFIG.polish.shake.hazardAmplitude,
+                CONFIG.polish.shake.durationSeconds,
+              );
+            }
           }
         }
       }
@@ -2451,6 +2684,9 @@ export async function bootstrap(): Promise<void> {
           right: eventPose.right,
           up: eventPose.up,
         });
+        if (raceState.phase === 'RACING') {
+          raceEventBus.emit('boostStarted', { carIndex: 0, source: 'pad' });
+        }
       } else if (ev.type === 'respawn') {
         const currentRoute = course.getRoute(currPlayer.routeId);
         activePlayerRoute = currentRoute;
@@ -2565,6 +2801,19 @@ export async function bootstrap(): Promise<void> {
   }
 
   function render(alpha: number, realDt: number): void {
+    gates.update(realDt);
+
+    if (podiumScene && raceState.phase === 'FINISH' && raceState.resultReady && fastForwardSettled) {
+      podiumScene.update(realDt);
+      hudViewModel.introActive = false;
+      hudViewModel.phase = raceState.phase;
+      hudViewModel.resultReady = true;
+      updateHud(hud, hudViewModel);
+      sound.update(soundSnapshot, realDt);
+      sceneCtx.renderer.render(podiumScene.scene, podiumScene.camera);
+      return;
+    }
+
     trackVisual.update(realDt);
     tunnelVisual.update(realDt);
     trackAccentsVisual.update(realDt);
@@ -2575,7 +2824,7 @@ export async function bootstrap(): Promise<void> {
       interpolateCarState(prevCars[i], raceState.cars[i], alpha, renderCars[i]);
     }
     const showNametags =
-      raceState.phase === 'COUNTDOWN' || raceState.phase === 'RACING';
+      !introActive && (raceState.phase === 'COUNTDOWN' || raceState.phase === 'RACING');
     carFleet.updateFromCars(
       renderCars,
       course,
@@ -2587,6 +2836,21 @@ export async function bootstrap(): Promise<void> {
 
     const renderPlayer = renderCars[0];
     const renderRoute = course.getRoute(renderPlayer.routeId);
+
+    if (introActive) {
+      const introDone = introCamera.update(sceneCtx.camera, realDt);
+      sceneCtx.updateSunShadowTarget(renderPose.position);
+      sceneCtx.updateTheme(sceneCtx.camera.position, realDt);
+      attractionManager.update(attractionSystem, sceneCtx.camera.position);
+      hudViewModel.introActive = true;
+      updateHud(hud, hudViewModel);
+      postfx.setSpeedIntensity(0);
+      postfx.render(realDt);
+      if (introDone) {
+        beginCountdownAfterIntro(false);
+      }
+      return;
+    }
 
     const boostBonusDeg = renderPlayer.boostTimeLeft > 0 ? CONFIG.boost.fovBonus : 0;
     chaseCamera.setBoostFovBonus(boostBonusDeg);
@@ -2943,12 +3207,17 @@ export async function bootstrap(): Promise<void> {
     if (debugFlagActive) {
       window.removeEventListener('keydown', handleDebugKey);
     }
+    window.removeEventListener('keydown', handleIntroSkipKey);
     window.removeEventListener('resize', handleWindowResize);
     window.removeEventListener('orientationchange', handleWindowOrientationChange);
     window.visualViewport?.removeEventListener('resize', handleWindowResize);
     document.removeEventListener('visibilitychange', syncPauseState);
     unbindTouchStatus();
     hud.audioBtnEl.removeEventListener('click', handleAudioButtonClick);
+    disposePodiumScene();
+    introBanner.dispose();
+    screenTransition.dispose();
+    raceEventBus.dispose();
     courseSelect.dispose();
     controls.dispose();
     touchControls.dispose();

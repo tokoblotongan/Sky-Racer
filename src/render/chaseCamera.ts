@@ -39,6 +39,9 @@ const _worldUp = new THREE.Vector3(0, 1, 0);
 const _upDeltaQuat = new THREE.Quaternion();
 const _identityQuat = new THREE.Quaternion();
 const _rollQuat = new THREE.Quaternion();
+const _shakePos = new THREE.Vector3();
+const _shakeLook = new THREE.Vector3();
+const _shakeRight = new THREE.Vector3();
 
 function smoothDampComponent(
   current: number,
@@ -186,6 +189,9 @@ export class ChaseCamera {
   private titleTransitionTimer = 0;
   private finishOrbitAngle = 0;
   private finishOrbitInitialized = false;
+  private shakeTimer = 0;
+  private shakeDuration = 0.28;
+  private shakeAmplitude = 0;
 
   constructor(camera: THREE.PerspectiveCamera) {
     this.camera = camera;
@@ -206,6 +212,24 @@ export class ChaseCamera {
 
   setBoostFovBonus(bonusDeg: number): void {
     this.boostFovBonusDeg = bonusDeg;
+  }
+
+  addShake(amplitude: number, durationSeconds = CONFIG.polish.shake.durationSeconds): void {
+    if (amplitude <= 0 || durationSeconds <= 0) {
+      return;
+    }
+    if (this.shakeTimer <= 0 || amplitude >= this.shakeAmplitude) {
+      this.shakeAmplitude = amplitude;
+    } else {
+      this.shakeAmplitude = Math.min(amplitude * 1.35, this.shakeAmplitude + amplitude * 0.4);
+    }
+    this.shakeDuration = Math.max(0.05, durationSeconds);
+    this.shakeTimer = this.shakeDuration;
+  }
+
+  clearShake(): void {
+    this.shakeTimer = 0;
+    this.shakeAmplitude = 0;
   }
 
   private computeTitleOrbitTargets(pose: CarPose): void {
@@ -253,6 +277,7 @@ export class ChaseCamera {
 
     this.rollSpring.value = 0;
     this.rollSpring.velocity = 0;
+    this.clearShake();
 
     const baseFov = cfg.fovBase + this.boostFovBonusDeg;
     this.fovSpring.value = baseFov;
@@ -388,8 +413,23 @@ export class ChaseCamera {
       this.camera.updateProjectionMatrix();
     }
 
-    this.camera.position.copy(this.currentPos);
+    _shakePos.copy(this.currentPos);
+    _shakeLook.copy(this.currentLook);
+    if (this.shakeTimer > 0 && this.mode === 'chase') {
+      this.shakeTimer = Math.max(0, this.shakeTimer - dt);
+      const decay = this.shakeTimer / Math.max(1e-4, this.shakeDuration);
+      const env = decay * decay * this.shakeAmplitude;
+      const phase = (this.shakeDuration - this.shakeTimer) * CONFIG.polish.shake.frequencyHz * Math.PI * 2;
+      _lookDir.subVectors(this.currentLook, this.currentPos).normalize();
+      _shakeRight.crossVectors(_lookDir, _rolledUp).normalize();
+      const offsetX = Math.sin(phase) * env;
+      const offsetY = Math.cos(phase * 1.37) * env * 0.72;
+      _shakePos.addScaledVector(_shakeRight, offsetX).addScaledVector(_rolledUp, offsetY);
+      _shakeLook.addScaledVector(_shakeRight, offsetX * 0.55).addScaledVector(_rolledUp, offsetY * 0.55);
+    }
+
+    this.camera.position.copy(_shakePos);
     this.camera.up.copy(_rolledUp);
-    this.camera.lookAt(this.currentLook);
+    this.camera.lookAt(_shakeLook);
   }
 }

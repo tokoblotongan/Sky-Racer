@@ -4,6 +4,7 @@ import { CONFIG } from '../config';
 
 export type ToastKind =
   | 'wrongWay'
+  | 'lastLap'
   | 'lap'
   | 'zone'
   | 'airtime'
@@ -45,6 +46,7 @@ interface PendingToast {
 
 const KIND_CLASS: Record<ToastKind, string> = {
   wrongWay: 'sr-toast--wrong-way',
+  lastLap: 'sr-toast--last-lap',
   lap: 'sr-toast--lap',
   zone: 'sr-toast--zone',
   airtime: 'sr-toast--airtime',
