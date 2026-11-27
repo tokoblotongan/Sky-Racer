@@ -27,6 +27,11 @@ export interface DeviceReportSnapshot {
   gameStatus?: string;
   countdownSec?: number;
   diagnostics?: Partial<WebGlDiagnostics>;
+  music?: {
+    trackLabel: string;
+    volume: number;
+    status: string;
+  };
   extraNote?: string;
 }
 
@@ -146,6 +151,7 @@ export function formatDeviceReportText(snapshot: DeviceReportSnapshot): string {
     `MAX_TEX    : ${diag?.maxTextureSize ?? 'unknown'}`,
     `EXT FLOAT  : cb_float=${ext?.EXT_color_buffer_float ? 'Y' : 'N'} cb_half=${ext?.EXT_color_buffer_half_float ? 'Y' : 'N'} oes_half=${ext?.OES_texture_half_float ? 'Y' : 'N'}`,
     `EXT PAR_SC : ${ext?.KHR_parallel_shader_compile ? 'Y' : 'N'}`,
+    `MUSIC      : ${snapshot.music ? `${snapshot.music.trackLabel} | vol=${snapshot.music.volume.toFixed(2)} | ${snapshot.music.status}` : 'n/a'}`,
     `USER AGENT : ${ua}`,
   ];
 

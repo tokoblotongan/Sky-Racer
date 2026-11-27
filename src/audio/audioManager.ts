@@ -21,6 +21,8 @@ export interface AudioManager {
   getMasterVolume: () => number;
   getBuses: () => AudioBuses | null;
   getContext: () => AudioContext | null;
+  getOutputNode: () => AudioNode | null;
+  onUnlock: (listener: () => void) => () => void;
   getNoiseBuffer: (type: NoiseType) => AudioBuffer | null;
   isUnlocked: () => boolean;
   isReady: () => boolean;
@@ -125,6 +127,21 @@ export function createAudioManager(): AudioManager {
   let unlocked = false;
   let externalPaused = false;
   let unlockListenersAttached = false;
+  const unlockCallbacks = new Set<() => void>();
+
+  function notifyUnlock(): void {
+    if (disposed || unlockCallbacks.size === 0) {
+      return;
+    }
+    const list = Array.from(unlockCallbacks);
+    for (let i = 0; i < list.length; i++) {
+      try {
+        list[i]();
+      } catch {
+        // Never allow unlock listener errors to break audio unlock
+      }
+    }
+  }
 
   const prefs = loadAudioPrefs();
   let muted = prefs.muted;
@@ -167,6 +184,7 @@ export function createAudioManager(): AudioManager {
       if (ctx.state === 'running') {
         unlocked = true;
         removeUnlockListeners();
+        notifyUnlock();
         return;
       }
       if (ctx.state === 'suspended' && !externalPaused && !document.hidden) {
@@ -177,6 +195,7 @@ export function createAudioManager(): AudioManager {
               if (ctx && ctx.state === 'running') {
                 unlocked = true;
                 removeUnlockListeners();
+                notifyUnlock();
               }
             })
             .catch(() => {
@@ -308,6 +327,7 @@ export function createAudioManager(): AudioManager {
     if (ctx.state === 'running') {
       unlocked = true;
       removeUnlockListeners();
+      notifyUnlock();
       return;
     }
     if (!unlockListenersAttached) {
@@ -354,6 +374,27 @@ export function createAudioManager(): AudioManager {
     return ctx;
   }
 
+  function getOutputNode(): AudioNode | null {
+    return limiter;
+  }
+
+  function onUnlock(listener: () => void): () => void {
+    if (disposed) {
+      return () => {};
+    }
+    unlockCallbacks.add(listener);
+    if (ctx && ctx.state === 'running') {
+      try {
+        listener();
+      } catch {
+        // Ignore callback error
+      }
+    }
+    return () => {
+      unlockCallbacks.delete(listener);
+    };
+  }
+
   function getNoiseBuffer(type: NoiseType): AudioBuffer | null {
     if (!ctx) {
       return null;
@@ -387,6 +428,8 @@ export function createAudioManager(): AudioManager {
       return;
     }
     disposed = true;
+    unlockListenersAttached = false;
+    unlockCallbacks.clear();
     activeAudioManagers.delete(instanceRegistration);
     removeUnlockListeners();
     document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -430,6 +473,8 @@ export function createAudioManager(): AudioManager {
     getMasterVolume,
     getBuses,
     getContext,
+    getOutputNode,
+    onUnlock,
     getNoiseBuffer,
     isUnlocked,
     isReady,

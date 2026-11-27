@@ -1486,11 +1486,11 @@
   }
 }
 
-/* Top-right: compact audio mute indicator */
+/* Top-right: compact audio mute indicator (positioned left of gear button) */
 .sr-audio-btn {
   position: absolute;
   top: clamp(12px, 2.2vh, 24px);
-  right: clamp(12px, 2.4vw, 28px);
+  right: calc(clamp(12px, 2.4vw, 28px) + clamp(36px, 4.2vw, 42px) + 8px);
   width: clamp(36px, 4.2vw, 42px);
   height: clamp(36px, 4.2vw, 42px);
   padding: 0;
@@ -1502,6 +1502,7 @@
   border-color: rgba(var(--sr-cyan-rgb), 0.45);
   pointer-events: auto;
   cursor: pointer;
+  z-index: 35;
   transition: transform 0.12s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
@@ -1548,26 +1549,26 @@
   max-width: 440px;
 }
 
-/* Top-right gear button & quick popover (shown in compact/mobile HUD only) */
+/* Top-right gear button & quick popover */
 .sr-gear-wrap {
-  display: none;
+  display: block;
   position: absolute;
-  top: max(6px, env(safe-area-inset-top, 0px));
-  right: max(8px, env(safe-area-inset-right, 0px));
+  top: clamp(12px, 2.2vh, 24px);
+  right: clamp(12px, 2.4vw, 28px);
   z-index: 36;
   pointer-events: auto;
 }
 
 .sr-gear-btn {
-  width: 38px;
-  height: 38px;
+  width: clamp(36px, 4.2vw, 42px);
+  height: clamp(36px, 4.2vw, 42px);
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 12px;
   color: var(--sr-accent-cyan);
-  background: rgba(15, 23, 42, var(--sr-mobile-panel-opacity, 0.68));
+  background: rgba(15, 23, 42, var(--sr-panel-opacity, 0.55));
   border-color: rgba(var(--sr-cyan-rgb), 0.45);
   cursor: pointer;
   pointer-events: auto;
@@ -1575,8 +1576,8 @@
 }
 
 .sr-gear-icon {
-  width: 20px;
-  height: 20px;
+  width: clamp(18px, 2.2vw, 22px);
+  height: clamp(18px, 2.2vw, 22px);
   display: block;
 }
 
@@ -1650,6 +1651,49 @@
 .sr-gear-action-btn--muted {
   color: #94a3b8;
   border-color: rgba(148, 163, 184, 0.25);
+}
+
+.sr-gear-mute-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.sr-gear-speaker-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  display: block;
+}
+
+.sr-gear-speaker-off {
+  display: none;
+}
+
+.sr-gear-mute-btn.sr-gear-action-btn--muted .sr-gear-speaker-on {
+  display: none;
+}
+
+.sr-gear-mute-btn.sr-gear-action-btn--muted .sr-gear-speaker-off {
+  display: block;
+}
+
+.sr-music-ctrl-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+}
+
+.sr-gear-music-toggle-btn {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.sr-gear-music-slider {
+  min-width: 72px;
 }
 
 .sr-gear-preset-seg {
@@ -1743,14 +1787,43 @@
 .sr-hud.hud--touch .sr-hud-bottom-left,
 .sr-hud.hud--touch .sr-title-controls,
 .sr-hud.hud--touch .sr-title-prompt-key,
-.sr-hud.hud--touch .sr-finish-key-hint,
-.sr-hud.hud--compact .sr-audio-btn,
-.sr-hud.hud--touch .sr-audio-btn {
+.sr-hud.hud--touch .sr-finish-key-hint {
   display: none !important;
 }
 
-.sr-hud.hud--compact .sr-gear-wrap {
-  display: block;
+.sr-hud.hud--compact .sr-gear-wrap,
+.sr-hud.hud--touch .sr-gear-wrap {
+  top: max(6px, env(safe-area-inset-top, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+}
+
+.sr-hud.hud--compact .sr-gear-btn,
+.sr-hud.hud--touch .sr-gear-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, var(--sr-mobile-panel-opacity, 0.68));
+}
+
+.sr-hud.hud--compact .sr-gear-icon,
+.sr-hud.hud--touch .sr-gear-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.sr-hud.hud--compact .sr-audio-btn,
+.sr-hud.hud--touch .sr-audio-btn {
+  top: max(6px, env(safe-area-inset-top, 0px));
+  right: calc(max(8px, env(safe-area-inset-right, 0px)) + 44px);
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.sr-hud.hud--compact .sr-audio-icon,
+.sr-hud.hud--touch .sr-audio-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .sr-hud.hud--touch .sr-title-prompt-touch {
@@ -1765,11 +1838,11 @@
   background: rgba(15, 23, 42, var(--sr-mobile-panel-opacity, 0.68));
 }
 
-/* Compact top bar: single row <= 7dvh, clear of top-right gear button */
+/* Compact top bar: single row <= 7dvh, clear of top-right speaker + gear buttons */
 .sr-hud.hud--compact .sr-hud-top {
   top: max(6px, env(safe-area-inset-top, 0px));
   left: max(8px, env(safe-area-inset-left, 0px));
-  right: calc(max(8px, env(safe-area-inset-right, 0px)) + 46px);
+  right: calc(max(8px, env(safe-area-inset-right, 0px)) + 90px);
   transform: none;
   justify-content: center;
   flex-wrap: nowrap;

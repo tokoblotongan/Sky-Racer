@@ -1130,6 +1130,30 @@ export const CONFIG = {
       level: 0.14, // level brown noise ruangan tipis (naik = ruangan lebih bergema, turun = lebih hening)
       filterFreq: 220, // cutoff lowpass brown noise ambience Hz
     },
+    music: {
+      storageKey: 'sky-racer-music-v1',
+      defaultEnabled: true,
+      defaultVolume: 0.6,
+      introVolume: 0.6,
+      fadeSeconds: {
+        crossfade: 1.2,
+        lastLap: 1.5,
+        end: 1.0,
+      },
+      duck: {
+        hazard: 0.25,
+        countdown: 0.15,
+        ms: 400,
+      },
+      tracks: {
+        title: 'fantasyland-title.mp3',
+        fantasyRace: 'fantasyland-race.mp3',
+        fantasyLastLap: 'fantasyland-lastlap.mp3',
+        fantasyWin: 'fantasyland-win.mp3',
+        fantasyLose: 'fantasyland-lose.mp3',
+        skyCircuitRace: 'skycircuit-race.mp3',
+      },
+    },
   },
   checkpointGate: {
     widthMargin: 0.85,

@@ -102,6 +102,8 @@ export interface HudCallbacks {
   onGearToggleSteerMode?: () => void;
   onGearToggleAutoThrottle?: () => void;
   onGearToggleFullscreen?: () => void;
+  onToggleMusic?: () => void;
+  onChangeMusicVolume?: (value: number) => void;
   onOpenReport?: () => void;
 }
 
@@ -112,6 +114,8 @@ export interface GraphicsUiState {
   minimapMode?: MinimapSizeMode;
   attractionsEnabled?: boolean;
   attractionsAvailable?: boolean;
+  musicEnabled?: boolean;
+  musicVolume?: number;
   probeActive?: boolean;
   benchmarkRunning?: boolean;
   raceActive?: boolean;
@@ -160,6 +164,11 @@ export interface DebugMetricsSnapshot {
   carCount: number;
   aiStepMs?: number;
   cars?: DebugCarStatus[];
+  music?: {
+    trackLabel: string;
+    volume: number;
+    status: string;
+  };
 }
 
 export interface HudHandle {
@@ -226,11 +235,15 @@ export interface HudHandle {
   gearCpBtnEl: HTMLButtonElement;
   gearRestartBtnEl: HTMLButtonElement;
   gearMuteBtnEl: HTMLButtonElement;
+  gearMuteTextEl: HTMLElement;
   gearSteerBtnEl: HTMLButtonElement;
   gearAutoBtnEl: HTMLButtonElement;
   gearFsBtnEl: HTMLButtonElement;
   gearMinimapBtnEl: HTMLButtonElement;
   gearAttrBtnEl: HTMLButtonElement;
+  gearMusicToggleBtnEl: HTMLButtonElement;
+  gearMusicSliderEl: HTMLInputElement;
+  gearMusicValEl: HTMLElement;
   gearPresetBtns: Record<GraphicsPreset, HTMLButtonElement>;
   gearBrightnessInputEl: HTMLInputElement;
   gearBrightnessValEl: HTMLElement;
@@ -487,7 +500,17 @@ export function createHud(
           <div class="sr-gear-action-grid">
             <button type="button" class="sr-gear-action-btn sr-gear-cp-btn">CP</button>
             <button type="button" class="sr-gear-action-btn sr-gear-restart-btn">ULANG</button>
-            <button type="button" class="sr-gear-action-btn sr-gear-mute-btn">SUARA</button>
+            <button type="button" class="sr-gear-action-btn sr-gear-mute-btn">
+              <svg class="sr-gear-speaker-icon sr-gear-speaker-on" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 9.5v5h4l5 4.5V5L8 9.5H4z" fill="currentColor" />
+                <path d="M16.2 8.8a4.8 4.8 0 0 1 0 6.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" />
+              </svg>
+              <svg class="sr-gear-speaker-icon sr-gear-speaker-off" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 9.5v5h4l5 4.5V5L8 9.5H4z" fill="currentColor" />
+                <path d="M16.5 9l4.5 6M21 9l-4.5 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              </svg>
+              <span class="sr-gear-mute-label">SUARA</span>
+            </button>
             <button type="button" class="sr-gear-action-btn sr-gear-steer-btn">STIK</button>
             <button type="button" class="sr-gear-action-btn sr-gear-auto-btn">AUTO</button>
             <button type="button" class="sr-gear-action-btn sr-gear-fs-btn">FULL</button>
@@ -498,6 +521,16 @@ export function createHud(
           <div class="sr-gear-f6-grid">
             <button type="button" class="sr-gear-action-btn sr-gear-minimap-btn">DENAH: KECIL</button>
             <button type="button" class="sr-gear-action-btn sr-gear-attr-btn sr-hud-hidden">ATRAKSI: NYALA</button>
+          </div>
+        </div>
+        <div class="sr-gear-section">
+          <div class="sr-gear-row-between">
+            <label class="sr-gear-label" for="srGearMusicVol">Volume Musik</label>
+            <span class="sr-brightness-val sr-gear-music-val">${CONFIG.audio.music.defaultVolume.toFixed(2)}</span>
+          </div>
+          <div class="sr-music-ctrl-row">
+            <button type="button" class="sr-gear-action-btn sr-gear-music-toggle-btn sr-gear-action-btn--on">MUSIK: NYALA</button>
+            <input id="srGearMusicVol" class="sr-brightness-slider sr-gear-music-slider" type="range" min="0" max="1" step="0.05" value="${CONFIG.audio.music.defaultVolume}" />
           </div>
         </div>
         <div class="sr-gear-section">
@@ -760,11 +793,15 @@ export function createHud(
   const gearCpBtnEl = root.querySelector('.sr-gear-cp-btn') as HTMLButtonElement;
   const gearRestartBtnEl = root.querySelector('.sr-gear-restart-btn') as HTMLButtonElement;
   const gearMuteBtnEl = root.querySelector('.sr-gear-mute-btn') as HTMLButtonElement;
+  const gearMuteTextEl = root.querySelector('.sr-gear-mute-label') as HTMLElement;
   const gearSteerBtnEl = root.querySelector('.sr-gear-steer-btn') as HTMLButtonElement;
   const gearAutoBtnEl = root.querySelector('.sr-gear-auto-btn') as HTMLButtonElement;
   const gearFsBtnEl = root.querySelector('.sr-gear-fs-btn') as HTMLButtonElement;
   const gearMinimapBtnEl = root.querySelector('.sr-gear-minimap-btn') as HTMLButtonElement;
   const gearAttrBtnEl = root.querySelector('.sr-gear-attr-btn') as HTMLButtonElement;
+  const gearMusicToggleBtnEl = root.querySelector('.sr-gear-music-toggle-btn') as HTMLButtonElement;
+  const gearMusicSliderEl = root.querySelector('.sr-gear-music-slider') as HTMLInputElement;
+  const gearMusicValEl = root.querySelector('.sr-gear-music-val') as HTMLElement;
 
   const minimap = createMinimap((mode) => {
     gearMinimapBtnEl.textContent = `DENAH: ${getMinimapModeLabel(mode)}`;
@@ -1013,6 +1050,20 @@ export function createHud(
     gearAttrBtnEl.blur();
     callbacks.onToggleAttractions?.();
   };
+  const onGearMusicToggle = (e: MouseEvent): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+    gearMusicToggleBtnEl.blur();
+    callbacks.onToggleMusic?.();
+  };
+  const onGearMusicVolumeInput = (e: Event): void => {
+    e.stopPropagation();
+    bumpGearAutoCloseTimer();
+    const val = Number.parseFloat(gearMusicSliderEl.value);
+    if (Number.isFinite(val)) {
+      callbacks.onChangeMusicVolume?.(val);
+    }
+  };
 
   titleAttrBtnEl.addEventListener('pointerdown', stopProp);
   titleAttrBtnEl.addEventListener('click', onAttrToggle);
@@ -1029,6 +1080,9 @@ export function createHud(
   gearFsBtnEl.addEventListener('click', onGearFs);
   gearMinimapBtnEl.addEventListener('click', onGearMinimap);
   gearAttrBtnEl.addEventListener('click', onAttrToggle);
+  gearMusicToggleBtnEl.addEventListener('click', onGearMusicToggle);
+  gearMusicSliderEl.addEventListener('pointerdown', handleGearPopoverInteract);
+  gearMusicSliderEl.addEventListener('input', onGearMusicVolumeInput);
 
   let versionTapTimestamps: number[] = [];
   const handleVersionPointerDown = (e: PointerEvent): void => {
@@ -1245,11 +1299,15 @@ export function createHud(
     gearCpBtnEl,
     gearRestartBtnEl,
     gearMuteBtnEl,
+    gearMuteTextEl,
     gearSteerBtnEl,
     gearAutoBtnEl,
     gearFsBtnEl,
     gearMinimapBtnEl,
     gearAttrBtnEl,
+    gearMusicToggleBtnEl,
+    gearMusicSliderEl,
+    gearMusicValEl,
     gearPresetBtns,
     gearBrightnessInputEl,
     gearBrightnessValEl,
@@ -1468,6 +1526,9 @@ export function createHud(
     gearFsBtnEl.removeEventListener('click', onGearFs);
     gearMinimapBtnEl.removeEventListener('click', onGearMinimap);
     gearAttrBtnEl.removeEventListener('click', onAttrToggle);
+    gearMusicToggleBtnEl.removeEventListener('click', onGearMusicToggle);
+    gearMusicSliderEl.removeEventListener('pointerdown', handleGearPopoverInteract);
+    gearMusicSliderEl.removeEventListener('input', onGearMusicVolumeInput);
     titleAttrBtnEl.removeEventListener('pointerdown', stopProp);
     titleAttrBtnEl.removeEventListener('click', onAttrToggle);
   };
@@ -1595,7 +1656,10 @@ export function updateDebugMetricsOverlay(
     return;
   }
   hud.debugMetricsEl.classList.remove('sr-hud-hidden');
-  const stateKey = `${metrics.status}:${metrics.courseId}:${metrics.routeId}:${metrics.quality}:${metrics.carCount}`;
+  const musicKey = metrics.music
+    ? `${metrics.music.trackLabel}:${metrics.music.volume.toFixed(2)}:${metrics.music.status}`
+    : '';
+  const stateKey = `${metrics.status}:${metrics.courseId}:${metrics.routeId}:${metrics.quality}:${metrics.carCount}:${musicKey}`;
   const elapsedMs = nowMs - hud.lastDebugMetricsSampleMs;
   if (elapsedMs < CONFIG.debugOverlay.sampleIntervalMs && stateKey === hud.lastDebugMetricsKey) {
     return;
@@ -1621,10 +1685,13 @@ export function updateDebugMetricsOverlay(
     typeof metrics.aiStepMs === 'number' && metrics.carCount > 1
       ? ` | AI ${metrics.aiStepMs.toFixed(2)}ms`
       : '';
+  const musicPart = metrics.music
+    ? `\nMUSIC: ${metrics.music.trackLabel} | VOL ${metrics.music.volume.toFixed(2)} | ${metrics.music.status.toUpperCase()}`
+    : '';
   hud.debugMetricsEl.textContent =
     `${Math.round(metrics.fps)} FPS | ${metrics.avgFrameMs.toFixed(1)} ms | ${metrics.quality.toUpperCase()}\n` +
     `DC ${metrics.drawCalls} | TRI ${metrics.triangles} | GEO ${metrics.geometries} TEX ${metrics.textures}\n` +
-    `${metrics.status} ${cdPart}| ${metrics.courseId} (${metrics.routeId}) | CARS ${metrics.carCount}${aiPart}${carSummary}`;
+    `${metrics.status} ${cdPart}| ${metrics.courseId} (${metrics.routeId}) | CARS ${metrics.carCount}${aiPart}${musicPart}${carSummary}`;
 }
 
 export function setHudProgressCheckpoints(
@@ -1864,9 +1931,21 @@ export function setGraphicsUiState(hud: HudHandle, state: GraphicsUiState): void
     hud.gearSteerBtnEl.textContent = p.steerMode === 'stick' ? 'STIK' : 'TOMBOL';
     hud.gearAutoBtnEl.classList.toggle('sr-gear-action-btn--on', p.autoThrottle);
     hud.gearMuteBtnEl.classList.toggle('sr-gear-action-btn--muted', p.muted);
-    hud.gearMuteBtnEl.textContent = p.muted ? 'BISU' : 'SUARA';
+    hud.gearMuteTextEl.textContent = p.muted ? 'BISU' : 'SUARA';
     hud.gearFsBtnEl.classList.toggle('sr-hud-hidden', !p.fullscreenSupported);
     hud.gearFsBtnEl.classList.toggle('sr-gear-action-btn--on', p.fullscreen);
+  }
+
+  if (typeof state.musicEnabled === 'boolean') {
+    hud.gearMusicToggleBtnEl.textContent = state.musicEnabled ? 'MUSIK: NYALA' : 'MUSIK: MATI';
+    hud.gearMusicToggleBtnEl.classList.toggle('sr-gear-action-btn--on', state.musicEnabled);
+    hud.gearMusicToggleBtnEl.classList.toggle('sr-gear-action-btn--muted', !state.musicEnabled);
+  }
+  if (typeof state.musicVolume === 'number' && Number.isFinite(state.musicVolume)) {
+    const mv = Math.max(0, Math.min(1, state.musicVolume));
+    const mvStr = mv.toFixed(2);
+    hud.gearMusicSliderEl.value = mvStr;
+    hud.gearMusicValEl.textContent = mvStr;
   }
 
   const mmMode = state.minimapMode ?? hud.minimap.getSizeMode();

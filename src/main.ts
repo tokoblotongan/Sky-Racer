@@ -2,6 +2,8 @@
 
 import * as THREE from 'three';
 import { setAudioPaused } from './audio/audioManager';
+import { createMusicDirector } from './audio/music/musicDirector';
+import { createMusicPlayer } from './audio/music/musicPlayer';
 import { createSound, type SoundSnapshot } from './audio/sound';
 import {
   CONFIG,
@@ -398,6 +400,8 @@ export async function bootstrap(): Promise<void> {
   const sound = createSound();
   sound.init();
   sound.unlock();
+  const musicPlayer = createMusicPlayer(sound.getAudioManager(), isMobileDevice);
+  musicPlayer.init();
 
   const touchControls = createTouchControls(container, CONFIG.touch);
   touchControls.setMutedVisual(sound.getMuted());
@@ -451,6 +455,8 @@ export async function bootstrap(): Promise<void> {
   let onMeasureLumaFromUi: () => number | null = () => null;
   let onRunBenchFromUi: () => void = () => {};
   let onGearMuteFromUi: () => void = () => {};
+  let onToggleMusicFromUi: () => void = () => {};
+  let onChangeMusicVolumeFromUi: (value: number) => void = () => {};
   let onOpenReportFromUi: () => void = () => {};
 
   const hud = createHud(container, {
@@ -528,6 +534,12 @@ export async function bootstrap(): Promise<void> {
     onGearToggleFullscreen: () => {
       void touchControls.toggleFullscreen();
     },
+    onToggleMusic: () => {
+      onToggleMusicFromUi();
+    },
+    onChangeMusicVolume: (value) => {
+      onChangeMusicVolumeFromUi(value);
+    },
     onOpenReport: () => {
       onOpenReportFromUi();
     },
@@ -538,6 +550,7 @@ export async function bootstrap(): Promise<void> {
   function handleAudioButtonClick(): void {
     sound.unlock();
     const nextMuted = sound.toggleMute();
+    musicPlayer.setTotalMuted(nextMuted);
     touchControls.setMutedVisual(nextMuted);
     hud.audioBtnEl.blur();
   }
@@ -765,6 +778,7 @@ export async function bootstrap(): Promise<void> {
   }
 
   const raceEventBus = createRaceEventBus();
+  const musicDirector = createMusicDirector(musicPlayer, raceEventBus, selectedCourseId);
   const introCamera = createIntroCamera();
   const introBanner = createIntroBanner(container);
   const screenTransition = createScreenTransition(container);
@@ -1026,6 +1040,8 @@ export async function bootstrap(): Promise<void> {
       minimapMode: hud.minimap.getSizeMode(),
       attractionsEnabled,
       attractionsAvailable: course.getId() === 'fantasy-land',
+      musicEnabled: musicPlayer.isMusicEnabled(),
+      musicVolume: musicPlayer.getVolume(),
       probeActive: initialProbeActive,
       benchmarkRunning,
       raceActive: raceState.phase !== 'TITLE',
@@ -1041,6 +1057,7 @@ export async function bootstrap(): Promise<void> {
     } catch {
       diag = probeCapabilitiesFromGl(null);
     }
+    const musicSnap = musicPlayer.getDebugSnapshot();
     return {
       safeMode,
       safeReasons: [...safeReasons],
@@ -1050,6 +1067,11 @@ export async function bootstrap(): Promise<void> {
       countdownSec:
         raceState.phase === 'COUNTDOWN' ? raceState.countdownDisplayNumber : undefined,
       diagnostics: diag,
+      music: {
+        trackLabel: musicSnap.trackLabel,
+        volume: musicSnap.volume,
+        status: musicSnap.status,
+      },
       ...overrides,
     };
   }
@@ -1077,6 +1099,7 @@ export async function bootstrap(): Promise<void> {
       };
     });
     const aiMetrics = aiController.getMetrics();
+    const musicSnap = musicPlayer.getDebugSnapshot();
     updateDebugMetricsOverlay(
       hud,
       {
@@ -1095,6 +1118,11 @@ export async function bootstrap(): Promise<void> {
         carCount: raceState.cars.length,
         aiStepMs: aiMetrics.lastStepMs,
         cars: carsStatus,
+        music: {
+          trackLabel: musicSnap.trackLabel,
+          volume: musicSnap.volume,
+          status: musicSnap.status,
+        },
       },
       nowMs,
     );
@@ -1144,6 +1172,7 @@ export async function bootstrap(): Promise<void> {
     cancelScheduledLoop();
     try {
       setAudioPaused(true);
+      musicPlayer.setPaused(true);
     } catch {
       // Ignore audio pause errors during context loss
     }
@@ -1161,6 +1190,7 @@ export async function bootstrap(): Promise<void> {
     hud.contextLostOverlayEl.classList.add('sr-hud-hidden');
     try {
       setAudioPaused(paused);
+      musicPlayer.setPaused(paused);
     } catch {
       // Ignore audio resume errors
     }
@@ -1456,6 +1486,7 @@ export async function bootstrap(): Promise<void> {
     introPlayedForCourseId = null;
     sound.unlock();
     sound.handleEvents([{ type: 'uiMove' }]);
+    musicDirector.onArenaSelected(nextDef.id);
     syncTitleUi();
 
     clearPendingCourseSwitch();
@@ -1779,7 +1810,21 @@ export async function bootstrap(): Promise<void> {
   onGearMuteFromUi = (): void => {
     sound.unlock();
     const nextMuted = sound.toggleMute();
+    musicPlayer.setTotalMuted(nextMuted);
     touchControls.setMutedVisual(nextMuted);
+    syncGraphicsUi();
+  };
+
+  onToggleMusicFromUi = (): void => {
+    sound.unlock();
+    musicPlayer.toggleMusicEnabled();
+    sound.handleEvents([{ type: 'uiMove' }]);
+    syncGraphicsUi();
+  };
+
+  onChangeMusicVolumeFromUi = (value: number): void => {
+    sound.unlock();
+    musicPlayer.setVolume(value);
     syncGraphicsUi();
   };
 
@@ -1954,6 +1999,7 @@ export async function bootstrap(): Promise<void> {
     paused = resolved;
     try {
       setAudioPaused(paused);
+      musicPlayer.setPaused(paused);
     } catch {
       // Ignore audio pause failures
     }
@@ -2484,6 +2530,7 @@ export async function bootstrap(): Promise<void> {
     if (input.mutePressed) {
       sound.unlock();
       const nextMuted = sound.toggleMute();
+      musicPlayer.setTotalMuted(nextMuted);
       touchControls.setMutedVisual(nextMuted);
     }
 
@@ -2802,6 +2849,7 @@ export async function bootstrap(): Promise<void> {
 
   function render(alpha: number, realDt: number): void {
     gates.update(realDt);
+    musicPlayer.update(realDt);
 
     if (podiumScene && raceState.phase === 'FINISH' && raceState.resultReady && fastForwardSettled) {
       podiumScene.update(realDt);
@@ -3217,6 +3265,8 @@ export async function bootstrap(): Promise<void> {
     disposePodiumScene();
     introBanner.dispose();
     screenTransition.dispose();
+    musicDirector.dispose();
+    musicPlayer.dispose();
     raceEventBus.dispose();
     courseSelect.dispose();
     controls.dispose();

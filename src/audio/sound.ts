@@ -30,6 +30,7 @@ export interface SoundSystem {
   getMuted: () => boolean;
   setPhase: (phase: RacePhase) => void;
   reset: () => void;
+  getAudioManager: () => AudioManager;
   dispose: () => void;
 }
 
@@ -224,6 +225,7 @@ export function createSound(): SoundSystem {
     getMuted,
     setPhase,
     reset,
+    getAudioManager: () => manager,
     dispose,
   };
 }

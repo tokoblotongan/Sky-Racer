@@ -14,7 +14,8 @@
     "find:shortcut": "tsx tools/findShortcutCandidates.ts --course=fantasy-land",
     "test:ai": "tsx tools/simulateRace.ts",
     "test:attractions": "tsx tools/testAttractions.ts",
-    "balance": "tsx tools/balanceReport.ts"
+    "balance": "tsx tools/balanceReport.ts",
+    "validate:audio": "tsx tools/validateAudio.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
